@@ -53,6 +53,7 @@ import { ArrowRight } from "../ui/icons";
 import { Notice } from "../ui/notice";
 import { StripeRule } from "../ui/stripe-rule";
 import { useWallets } from "../wallet/wallet-provider";
+import { BeneficiaryPicker } from "./beneficiary-picker";
 import { ChainPicker, PickerLabel } from "./chain-picker";
 import { EvmQuotePanel } from "./evm-quote-panel";
 import { MaxAmount, QUICK_AMOUNTS, QuickAmount } from "./quick-amount";
@@ -60,6 +61,7 @@ import { type ReceiptRoute, SubmittedNotice } from "./receipt";
 import { ArcRecipientPanel, RecipientPanel, UseMyWallet } from "./recipient-panels";
 import { RouteTrack } from "./route-track";
 import { type Speed, SpeedPicker } from "./speed-picker";
+import { useBeneficiaries } from "./use-beneficiaries";
 
 /**
  * Moving USDC between Arc and another EVM chain, or from Arc to Solana, by calling Circle's
@@ -146,6 +148,7 @@ export function EvmBridgeForm({
 
   const [amountInput, setAmountInput] = useState("5");
   const [recipientInput, setRecipientInput] = useState("");
+  const book = useBeneficiaries();
 
   // A link's fields go in once; a destination this source does not send to is skipped, and so is
   // the recipient written for it.
@@ -533,6 +536,9 @@ export function EvmBridgeForm({
         at: Date.now(),
       });
       setTxHash(hash);
+      // Remembered once the burn is on chain: only an address that was actually sent to belongs
+      // in the list.
+      book.remember(destination.evm ? "evm" : "solana", recipientInput);
       // Only a revert changes what the page says, so that is all this waits to hear.
       void watchBurn(provider, hash)
         .then((outcome) => {
@@ -710,6 +716,14 @@ export function EvmBridgeForm({
           disabled={busy}
           onUse={setRecipientInput}
           onConnect={openWallets}
+        />
+
+        <BeneficiaryPicker
+          book={book}
+          family={dest.evm ? "evm" : "solana"}
+          address={recipientInput}
+          disabled={busy}
+          onPick={setRecipientInput}
         />
 
         {dest.evm ? (

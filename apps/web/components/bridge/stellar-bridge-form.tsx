@@ -40,12 +40,14 @@ import { ArrowRight } from "../ui/icons";
 import { Notice } from "../ui/notice";
 import { StripeRule } from "../ui/stripe-rule";
 import { useWallets } from "../wallet/wallet-provider";
+import { BeneficiaryPicker } from "./beneficiary-picker";
 import { ChainPicker, PickerLabel } from "./chain-picker";
 import { MaxAmount, QUICK_AMOUNTS, QuickAmount } from "./quick-amount";
 import { SubmittedNotice } from "./receipt";
 import { ArcRecipientPanel, RecipientPanel, UseMyWallet } from "./recipient-panels";
 import { RouteTrack } from "./route-track";
 import { QuotePanel } from "./stellar-quote-panel";
+import { useBeneficiaries } from "./use-beneficiaries";
 
 /**
  * One job: move USDC from Stellar to Solana or an EVM chain over Circle's CCTP, through Xebra's
@@ -137,6 +139,7 @@ export function StellarBridgeForm({
   // The wrapper's fee and floor, which set how small a transfer to this destination can be.
   const [feeParams, setFeeParams] = useState<FeeParams | null>(null);
   const [recipient, setRecipient] = useState<RecipientResolution | null>(null);
+  const book = useBeneficiaries();
   /** Null while unknown — an unread balance must not read as "you have nothing". */
   const [balance, setBalance] = useState<bigint | null>(null);
   const [resolving, setResolving] = useState(false);
@@ -650,6 +653,9 @@ export function StellarBridgeForm({
       // The burn is on chain and irreversible from here. Circle attests it and its forwarding
       // service mints on the destination; the effect above watches for the outcome.
       setTxHash(hash);
+      // Remembered once the burn is on chain, not when the field is filled: only an address that was
+      // actually sent to belongs in the list.
+      book.remember(dest.evm ? "evm" : "solana", destination);
     } catch (err) {
       setSubmitError(reportError("transfer failed", err));
     } finally {
@@ -775,6 +781,14 @@ export function StellarBridgeForm({
           disabled={submitting || Boolean(txHash)}
           onUse={setDestination}
           onConnect={openWallets}
+        />
+
+        <BeneficiaryPicker
+          book={book}
+          family={dest.evm ? "evm" : "solana"}
+          address={destination}
+          disabled={submitting || Boolean(txHash)}
+          onPick={setDestination}
         />
 
         {dest.needsAccountResolution ? (
