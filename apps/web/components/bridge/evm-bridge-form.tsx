@@ -3,9 +3,10 @@
 import type { CircleHealth } from "@xebra/cctp-client";
 import type { BurnRecipient } from "@xebra/cctp-evm";
 import type React from "react";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { bytesToHex } from "viem";
 import { type DeliveryView, getDelivery, getRouteHealth } from "../../lib/circle-status";
+import type { DeepLink } from "../../lib/deep-link";
 import { env } from "../../lib/env";
 import { checkAddressOn } from "../../lib/evm-address";
 import {
@@ -111,6 +112,7 @@ export function EvmBridgeForm({
   routes,
   sourcePicker,
   onBusyChange,
+  prefill,
 }: {
   source: EvmChain;
   routes: EnabledRoutes;
@@ -118,6 +120,8 @@ export function EvmBridgeForm({
   sourcePicker?: React.ReactNode;
   /** True while a transfer is being signed or its receipt is on show. */
   onBusyChange?: (busy: boolean) => void;
+  /** What a link asked to have filled in. Applied once; never submits. */
+  prefill?: DeepLink | null;
 }) {
   const { connections, open: openWallets, syncEvmChain } = useWallets();
   const wallet = connections.evm ?? null;
@@ -142,6 +146,18 @@ export function EvmBridgeForm({
 
   const [amountInput, setAmountInput] = useState("5");
   const [recipientInput, setRecipientInput] = useState("");
+
+  // A link's fields go in once; a destination this source does not send to is skipped, and so is
+  // the recipient written for it.
+  const prefillApplied = useRef(false);
+  useEffect(() => {
+    if (!prefill || prefillApplied.current) return;
+    prefillApplied.current = true;
+    if (prefill.amount) setAmountInput(prefill.amount);
+    const target = prefill.to && destinations.some((d) => d.id === prefill.to) ? prefill.to : null;
+    if (target) setDestId(target);
+    if (prefill.recipient && (!prefill.to || target)) setRecipientInput(prefill.recipient);
+  }, [prefill, destinations]);
   const [speed, setSpeed] = useState<Speed>("fast");
   const [healthState, setHealthState] = useState<{
     key: string;

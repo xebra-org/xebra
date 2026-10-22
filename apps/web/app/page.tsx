@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { CHAIN_NAMES, type Chain } from "../components/bridge/chain-glyph";
 import { ChainPicker, PickerLabel } from "../components/bridge/chain-picker";
 import { EvmBridgeForm } from "../components/bridge/evm-bridge-form";
@@ -13,6 +13,7 @@ import { Fingerprint, Spark, Vault } from "../components/ui/icons";
 import { Notice } from "../components/ui/notice";
 import { Reveal } from "../components/ui/reveal";
 import { useWallets } from "../components/wallet/wallet-provider";
+import { type DeepLink, hasDeepLink, parseDeepLink } from "../lib/deep-link";
 import { env, isCctpRailConfigured } from "../lib/env";
 import { EVM_CHAINS, type EvmChainId, evmSources } from "../lib/evm-chains";
 
@@ -37,6 +38,17 @@ export default function HomePage() {
   // A transfer being signed, or a receipt on show, belongs to the source it started from.
   // Changing the source then would throw away the only place its hash is displayed.
   const [busy, setBusy] = useState(false);
+  // What a link asked to have filled in (`lib/deep-link.ts`). Read once after mount, because the
+  // server render cannot know the query. Prefill only: the person still reviews and signs.
+  const [link, setLink] = useState<DeepLink | null>(null);
+  useEffect(() => {
+    const parsed = parseDeepLink(window.location.search);
+    if (!hasDeepLink(parsed)) return;
+    setLink(parsed);
+    if (parsed.from && sources.includes(parsed.from)) setFrom(parsed.from);
+  }, [sources]);
+  // A link speaks for the source it named (Stellar when it named none).
+  const prefill = link && (link.from ?? "stellar") === from ? link : null;
 
   const sourcePicker = manyRoutes ? (
     <div className="mb-6">
@@ -46,7 +58,10 @@ export default function HomePage() {
         name="source-chain"
         options={sources.map((id) => ({ id, name: CHAIN_NAMES[id] }))}
         value={from}
-        onChange={(id) => setFrom(id as SourceId)}
+        onChange={(id) => {
+          setFrom(id as SourceId);
+          setLink(null);
+        }}
         disabled={busy}
       />
     </div>
@@ -100,8 +115,18 @@ export default function HomePage() {
 
         <Reveal delay={140} className="mt-12">
           <GlassCard id="bridge" labelledBy="bridge-heading" className="scroll-mt-24">
+            {prefill && (
+              <Notice tone="info" title="Filled in from a link" className="mb-6">
+                Check the amount and the recipient address before you sign. Nothing is sent until
+                you approve it in your wallet.
+              </Notice>
+            )}
             {from === "stellar" ? (
-              <StellarBridgeForm sourcePicker={sourcePicker} onBusyChange={setBusy} />
+              <StellarBridgeForm
+                sourcePicker={sourcePicker}
+                onBusyChange={setBusy}
+                prefill={prefill}
+              />
             ) : (
               // Keyed by source: a different chain is a different transfer, and nothing typed for
               // one (least of all a receipt) should survive into another.
@@ -111,6 +136,7 @@ export default function HomePage() {
                 routes={env.evmRoutes}
                 sourcePicker={sourcePicker}
                 onBusyChange={setBusy}
+                prefill={prefill}
               />
             )}
           </GlassCard>

@@ -2,7 +2,7 @@
 
 import type { CircleHealth } from "@xebra/cctp-client";
 import type React from "react";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   type BridgeChainConfig,
   type BridgeQuote,
@@ -15,6 +15,7 @@ import {
   submitBridge,
 } from "../../lib/cctp-bridge";
 import { type DeliveryView, getDelivery, getRouteHealth } from "../../lib/circle-status";
+import type { DeepLink } from "../../lib/deep-link";
 import {
   type DestinationId,
   STELLAR_CCTP_DOMAIN,
@@ -91,11 +92,14 @@ const REQUEST_TTL_SECONDS = 600;
 export function StellarBridgeForm({
   sourcePicker,
   onBusyChange,
+  prefill,
 }: {
   /** The "Send from" control, owned by the screen because it chooses which form this is. */
   sourcePicker?: React.ReactNode;
   /** True while a transfer is being signed or its receipt is on show. */
   onBusyChange?: (busy: boolean) => void;
+  /** What a link asked to have filled in. Applied once; never submits. */
+  prefill?: DeepLink | null;
 } = {}) {
   // Wallets live in <WalletProvider>: Stellar signs and pays; a Solana or EVM wallet can fill in the
   // recipient. Only the Stellar connection is the sender.
@@ -153,6 +157,20 @@ export function StellarBridgeForm({
       }),
     [domains],
   );
+
+  // A link's fields go in once. The destination waits for the contract's first answer, because an
+  // EVM chain is only on offer once its domain is committed; a chain that is not on offer is
+  // skipped, and so is the recipient written for it.
+  const prefillApplied = useRef(false);
+  useEffect(() => {
+    if (!prefill || prefillApplied.current) return;
+    if (prefill.to && domains === undefined) return;
+    prefillApplied.current = true;
+    if (prefill.amount) setAmountInput(prefill.amount);
+    const target = prefill.to && destinations.some((d) => d.id === prefill.to) ? prefill.to : null;
+    if (target) setDestId(target);
+    if (prefill.recipient && (!prefill.to || target)) setDestination(prefill.recipient);
+  }, [prefill, domains, destinations]);
 
   // Always present. With no wrapper configured, `wrapperContractId` is null and nothing can be
   // sent: there is no direct path around the wrapper (see `lib/cctp-bridge.ts`).
