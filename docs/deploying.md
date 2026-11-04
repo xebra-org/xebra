@@ -142,6 +142,27 @@ message whose attestation expired, and `/api/solana-rpc` is a method-restricted 
 Solana's public RPC answers the CORS preflight with 200 and then **403s the actual POST** whenever an
 `Origin` header is present.
 
+## Search engines and assistants
+
+The site is https://xebra.exchange. `xebra-sandy.vercel.app` and `www.xebra.exchange` redirect to it;
+set both redirects to **308 (permanent)** in Vercel → Domains, since a 307 tells search engines the move
+is temporary. The canonical address is pinned in `apps/web/lib/site.ts`, not read from the environment.
+
+What it serves for them, all built from the documents in `apps/web/lib/seo/docs.ts`:
+
+- The written pages (`/how-it-works`, `/fees`, `/routes`, `/security`, `/faq`, `/claim`) and one page per
+  live route (`/bridge/stellar-to-solana`…). Stellar routes appear when the wrapper commits their
+  domain; route pages, the sitemap and `llms.txt` are re-read hourly.
+- Each page's Markdown at `<page>.md` (`/index.md` for the home page), `/llms.txt` and
+  `/llms-full.txt`, for assistants.
+- `/robots.txt` (AI crawlers named and allowed; previews closed), `/sitemap.xml`, a canonical URL,
+  link-preview image (`/og/...`, drawn on first request and cached) and JSON-LD on every page.
+
+Only a build with `VERCEL_ENV=production` is indexable. Once per new domain: verify it in Google Search
+Console and Bing Webmaster Tools (a DNS TXT record) and submit `https://xebra.exchange/sitemap.xml`. When a
+fee or limit changes on the contracts, update `apps/web/lib/seo/facts.ts` (its test compares it with
+`deployments/mainnet.json`) and `CONTENT_UPDATED` in `lib/site.ts`.
+
 ## Watching it
 
 There is no hot wallet to drain, so the old balance alerts went with the relay. What is left to

@@ -4,6 +4,8 @@ import type React from "react";
 import { AmbientBackground } from "../components/site/ambient-background";
 import { env } from "../lib/env";
 import { hasEvmRoutes } from "../lib/evm-chains";
+import { JsonLd, organizationLd, websiteLd } from "../lib/seo/json-ld";
+import { IS_PRODUCTION_DEPLOYMENT, SITE_NAME, SITE_URL, SOURCE_URL } from "../lib/site";
 import { Providers } from "./providers";
 import "./globals.css";
 
@@ -48,18 +50,41 @@ const DESCRIPTION = MANY_ROUTES
   : `Move native USDC from Stellar to ${STELLAR_DESTINATIONS} over Circle's CCTP. One signature, no wrapped assets, no custody.`;
 
 export const metadata: Metadata = {
+  // Every relative URL in metadata (canonical, Open Graph, images) resolves against the real site,
+  // whichever address served the page.
+  metadataBase: new URL(SITE_URL),
   title: { default: TITLE, template: "%s · Xebra" },
   description: DESCRIPTION,
-  applicationName: "Xebra",
-  // Served from `public/` rather than as an `app/icon.svg` convention file: Next's static
-  // metadata handler tries to register that path as a route and fails page-data collection
-  // for it at build time.
-  icons: { icon: [{ url: "/icon.svg", type: "image/svg+xml" }] },
+  applicationName: SITE_NAME,
+  category: "finance",
+  creator: SITE_NAME,
+  authors: [{ name: SITE_NAME, url: SOURCE_URL }],
+  // Previews and local builds are never indexed; see `app/robots.ts`.
+  robots: IS_PRODUCTION_DEPLOYMENT
+    ? {
+        index: true,
+        follow: true,
+        googleBot: { index: true, follow: true, "max-image-preview": "large", "max-snippet": -1 },
+      }
+    : { index: false, follow: false },
+  // Served from `public/` rather than as `app/icon.*` convention files: Next's static metadata
+  // handler tries to register that path as a route and fails page-data collection for it at
+  // build time.
+  icons: {
+    icon: [
+      { url: "/favicon.ico", sizes: "48x48" },
+      { url: "/icon.svg", type: "image/svg+xml" },
+    ],
+    apple: [{ url: "/apple-touch-icon.png", sizes: "180x180" }],
+  },
   openGraph: {
     title: TITLE,
     description: DESCRIPTION,
-    siteName: "Xebra",
+    siteName: SITE_NAME,
     type: "website",
+    locale: "en_US",
+    url: "/",
+    images: [{ url: "/og/home", width: 1200, height: 630, alt: TITLE }],
   },
   twitter: {
     card: "summary_large_image",
@@ -67,6 +92,7 @@ export const metadata: Metadata = {
     description: MANY_ROUTES
       ? "Native USDC between chains, over Circle's CCTP."
       : `Native USDC, Stellar to ${STELLAR_DESTINATIONS}, over Circle's CCTP.`,
+    images: ["/og/home"],
   },
 };
 
@@ -89,6 +115,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         </a>
         <AmbientBackground />
         <Providers>{children}</Providers>
+        <JsonLd data={[organizationLd(), websiteLd()]} />
         {/* Entry animations start hidden in the server-rendered markup so the page does not
             flash on load (see components/ui/reveal.tsx). Without JavaScript nothing would
             ever reveal them, so without JavaScript they are simply never hidden. */}

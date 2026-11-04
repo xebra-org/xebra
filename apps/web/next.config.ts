@@ -20,6 +20,15 @@ import type { NextConfig } from "next";
 const nextConfig: NextConfig = {
   reactStrictMode: true,
   distDir: process.env.NEXT_DIST_DIR ?? ".next",
+  // The link-preview images are drawn on first request and read these files at run time.
+  outputFileTracingIncludes: {
+    "/og/[...path]": ["./assets/og/*.ttf", "./public/chains/*.png", "./public/icon.svg"],
+  },
+  // Every written page has a Markdown copy at the same address plus `.md` (`/fees.md`, and
+  // `/index.md` for the home page), served by `app/md/[...path]` for assistants and tools.
+  async rewrites() {
+    return [{ source: "/:path(.*)\\.md", destination: "/md/:path" }];
+  },
 };
 
 export default nextConfig;

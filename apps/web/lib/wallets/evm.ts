@@ -44,8 +44,16 @@ export function reduceAnnouncements(
   return next;
 }
 
-const safeIcon = (icon: unknown): string | null =>
-  typeof icon === "string" && /^(data:image\/|https:\/\/)/.test(icon) ? icon : null;
+/**
+ * Trimmed first: Phantom announces its icon with a leading newline (`"\ndata:image/png;base64,..."`),
+ * which an anchored check rejects, so its logo fell back to a letter. The allowlist stays strict;
+ * only the whitespace around the value is ignored.
+ */
+export const safeIcon = (icon: unknown): string | null => {
+  if (typeof icon !== "string") return null;
+  const trimmed = icon.trim();
+  return /^(data:image\/|https:\/\/)/.test(trimmed) ? trimmed : null;
+};
 
 export function evmEntries(
   announced: ReadonlyMap<string, Eip6963Detail>,

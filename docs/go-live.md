@@ -16,7 +16,7 @@ The corridor itself works. The first real mainnet transfer completed end to end:
 Solana, 1.000001 USDC delivered. That transfer's mint was submitted by hand from
 `scripts/cctp-mint-solana.mjs`. Since then the relay has run unattended against a live Convex
 deployment (`knowing-zebra-183`) and completed a transfer — burn to mint — with nobody watching.
-The frontend is deployed at [xebra-sandy.vercel.app](https://xebra-sandy.vercel.app/). See
+The frontend is deployed at [xebra.exchange](https://xebra.exchange/). See
 [`writeups/`](../writeups/) for the full incident-by-incident account.
 
 ---
@@ -216,7 +216,7 @@ Done since this document was first written, so you do not have to ask for them:
 - The relay running unattended against a live Convex deployment — the thing this section used to
   list as the one open item. It has now picked up a burn, waited on Circle's attestation, and
   submitted the mint with nobody watching.
-- The frontend deployed to Vercel, at [xebra-sandy.vercel.app](https://xebra-sandy.vercel.app/).
+- The frontend deployed to Vercel, at [xebra.exchange](https://xebra.exchange/).
 - The self-serve claim page (`/claim`), so a user can complete their own transfer when nobody
   sponsors the mint. This is what makes the no-hang promise usable rather than merely true.
 - Hot-wallet alerting: a Convex cron that fails loudly, and `GET /api/health` returning 503 for any

@@ -30,6 +30,7 @@
     "@xebra/observability": "workspace:*",
     "@xebra/router-core": "workspace:*",
     "convex": "^1.45.0",
+    "marked": "^15.0.12",
     "next": "^15.1.0",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",

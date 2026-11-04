@@ -32,7 +32,7 @@ see [`SECURITY.md`](./SECURITY.md).)
 | Delivery | Circle's Forwarding Service. There is no relay and no hot wallet; a failed forward is claimed by its owner at `/claim` |
 | Routes around Arc | Arc → 14 EVM chains and Solana are live. Proven on testnet (2026-10-14); first mainnet transfer Arc → Base on 2026-10-15. EVM chains → Arc is built and switched off |
 | Arc fee wrapper | **Deployed on Arc mainnet** — `0x11b30470DAE40B2Fc27b7AA90dc58e6B4fE9f4c3` (`deployments/mainnet.json`, `arcWrapper`), five real transfers through it on Arc testnet. Not used by the page until `NEXT_PUBLIC_ARC_USE_WRAPPER=1` ([`docs/go-live.md`](./docs/go-live.md#turning-on-the-arc-wrapper)) |
-| Frontend | **Live** — [xebra-sandy.vercel.app](https://xebra-sandy.vercel.app/) |
+| Frontend | **Live** — [xebra.exchange](https://xebra.exchange/) |
 | CI | lint, typecheck, `vitest`, `cargo test` and `forge test` on every push |
 
 What is left before someone who is not us can bridge — and which parts need an account, a key or a
@@ -114,6 +114,13 @@ wrapper's committed domains and offers a chain only when it is committed *and* n
 lands. Today it has Solana and Arc; Base is proposed (committable 2026-10-17) and Monad is next.
 `pnpm check:evm` reads back, for each chain, that
 Circle's contracts know Stellar both ways and that Iris prices forwarding under the cap.
+
+## For search engines and assistants
+
+Every page explains itself in plain HTML, with a Markdown copy at `<page>.md`, an index at
+[`/llms.txt`](https://xebra.exchange/llms.txt) and everything in one file at
+[`/llms-full.txt`](https://xebra.exchange/llms-full.txt). How it is built and kept true:
+[`docs/deploying.md`](./docs/deploying.md#search-engines-and-assistants).
 
 ## Repo layout
 

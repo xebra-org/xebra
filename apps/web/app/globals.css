@@ -112,3 +112,128 @@
     background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='140' height='140'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='140' height='140' filter='url(%23n)'/%3E%3C/svg%3E");
   }
 }
+
+@layer components {
+  /* ## Written pages
+   *
+   * The docs and route pages are Markdown rendered to HTML (`lib/seo/markdown.ts`), so their type
+   * is styled here by element rather than by class. Same rules as the bridge: one neutral at varying
+   * alpha, Geist, tight display headings, and tables that read like the fee breakdown. */
+  .prose-x {
+    color: hsl(var(--bone) / 0.62);
+    font-size: 0.9375rem;
+    line-height: 1.7;
+  }
+  .prose-x > * + * {
+    margin-top: 1.1em;
+  }
+  .prose-x h1 {
+    color: hsl(var(--bone));
+    font-size: clamp(2rem, 5.5vw, 2.75rem);
+    line-height: 1.02;
+    letter-spacing: -0.035em;
+    font-weight: 600;
+    text-wrap: balance;
+  }
+  .prose-x h1 + p {
+    margin-top: 1.25rem;
+    font-size: 1.0625rem;
+    color: hsl(var(--bone) / 0.55);
+  }
+  .prose-x h2 {
+    margin-top: 2.4em;
+    color: hsl(var(--bone));
+    font-size: 1.25rem;
+    line-height: 1.2;
+    letter-spacing: -0.02em;
+    font-weight: 600;
+    scroll-margin-top: 6rem;
+  }
+  .prose-x h3 {
+    margin-top: 1.8em;
+    color: hsl(var(--bone) / 0.9);
+    font-size: 1rem;
+    font-weight: 600;
+    scroll-margin-top: 6rem;
+  }
+  .prose-x strong {
+    color: hsl(var(--bone) / 0.9);
+    font-weight: 600;
+  }
+  .prose-x a {
+    color: hsl(var(--bone));
+    text-decoration: underline;
+    text-decoration-color: hsl(var(--bone) / 0.3);
+    text-underline-offset: 3px;
+    transition: text-decoration-color 400ms cubic-bezier(0.32, 0.72, 0, 1);
+  }
+  .prose-x a:hover {
+    text-decoration-color: hsl(var(--bone));
+  }
+  .prose-x ul,
+  .prose-x ol {
+    padding-left: 1.25rem;
+  }
+  .prose-x ul {
+    list-style: disc;
+  }
+  .prose-x ol {
+    list-style: decimal;
+  }
+  .prose-x li + li {
+    margin-top: 0.45em;
+  }
+  .prose-x li::marker {
+    color: hsl(var(--bone) / 0.3);
+  }
+  .prose-x code {
+    font-family: var(--font-geist-mono), ui-monospace, monospace;
+    font-size: 0.8125em;
+    color: hsl(var(--bone) / 0.8);
+    word-break: break-all;
+  }
+  .prose-x table {
+    width: 100%;
+    border-collapse: separate;
+    border-spacing: 0;
+    overflow: hidden;
+    border-radius: 1.125rem;
+    background: hsl(var(--bone) / 0.03);
+    box-shadow: inset 0 0 0 1px hsl(var(--bone) / 0.08);
+    font-size: 0.8125rem;
+    font-variant-numeric: tabular-nums;
+  }
+  .prose-x th,
+  .prose-x td {
+    padding: 0.7rem 1rem;
+    text-align: left;
+    vertical-align: top;
+  }
+  .prose-x th {
+    color: hsl(var(--bone) / 0.45);
+    font-size: 0.6875rem;
+    font-weight: 500;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+  }
+  .prose-x thead th:empty {
+    padding: 0;
+  }
+  .prose-x tr + tr td,
+  .prose-x thead + tbody tr:first-child td {
+    border-top: 1px solid hsl(var(--bone) / 0.06);
+  }
+  .prose-x td:first-child {
+    color: hsl(var(--bone) / 0.85);
+    font-weight: 500;
+    white-space: nowrap;
+  }
+}
+
+@layer components {
+  @media (max-width: 30rem) {
+    .prose-x td:first-child {
+      white-space: normal;
+    }
+  }
+}

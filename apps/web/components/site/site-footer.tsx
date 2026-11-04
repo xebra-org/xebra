@@ -1,6 +1,7 @@
 import { cn } from "../ui/cn";
 import { ArrowUpRight } from "../ui/icons";
 import { StripeRule } from "../ui/stripe-rule";
+import { NavLinks } from "./site-nav";
 
 /**
  * Every link here resolves to something real. A footer of `href="#"` placeholders is worse
@@ -10,8 +11,11 @@ import { StripeRule } from "../ui/stripe-rule";
 export function SiteFooter({
   wrapperContractId,
   contractLabel = "Contract",
+  wide = false,
 }: {
   wrapperContractId: string | null;
+  /** The written pages run wider than the bridge, and the footer lines up with them. */
+  wide?: boolean;
   /**
    * The wrapper is the Stellar route's contract only. Where other routes are offered, the link
    * says so, because those call Circle directly and have no contract of ours to point at.
@@ -19,8 +23,11 @@ export function SiteFooter({
   contractLabel?: string;
 }) {
   return (
-    <footer className="mx-auto w-full max-w-xl px-1 pb-14 pt-20">
+    <footer className={cn("mx-auto w-full px-1 pb-14 pt-20", wide ? "max-w-2xl" : "max-w-xl")}>
       <StripeRule />
+      <nav aria-label="Pages" className="mt-6">
+        <NavLinks />
+      </nav>
       <div className="mt-6 flex flex-wrap items-center justify-between gap-x-6 gap-y-4">
         <p className="max-w-[26rem] text-xs leading-relaxed text-bone/40">
           Xebra moves native USDC over Circle&apos;s Cross-Chain Transfer Protocol. It never issues

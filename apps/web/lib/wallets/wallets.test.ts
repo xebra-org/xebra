@@ -1,6 +1,13 @@
 import type { Wallet, WalletAccount } from "@wallet-standard/base";
 import { describe, expect, it } from "vitest";
-import { applyEvmEvent, connectEvm, evmEntries, parseChainId, reduceAnnouncements } from "./evm";
+import {
+  applyEvmEvent,
+  connectEvm,
+  evmEntries,
+  parseChainId,
+  reduceAnnouncements,
+  safeIcon,
+} from "./evm";
 import { isSolanaWallet, pickSolanaAccount, solanaEntries } from "./solana";
 import { keepDetected, stellarEntries } from "./stellar";
 import type { Connection, Eip1193Provider, WalletEntry } from "./types";
@@ -25,6 +32,18 @@ describe("EIP-6963", () => {
     m = reduceAnnouncements(m, { info: { rdns: 1 }, provider: {} });
     m = reduceAnnouncements(m, { info: { rdns: "x", name: "X" } });
     expect(m.size).toBe(0);
+  });
+  it("keeps an icon that has whitespace around it, as Phantom announces it", () => {
+    const m = reduceAnnouncements(
+      new Map(),
+      detail("app.phantom", "Phantom", "\ndata:image/png;base64,iVBORw0KGgo="),
+    );
+    expect(evmEntries(m, null)[0]?.icon).toBe("data:image/png;base64,iVBORw0KGgo=");
+    expect(safeIcon("  https://x/y.png \n")).toBe("https://x/y.png");
+  });
+  it("still drops a script URL that is padded with whitespace", () => {
+    expect(safeIcon("\n javascript:alert(1)")).toBeNull();
+    expect(safeIcon(42)).toBeNull();
   });
   it("drops icons that are not data: images or https", () => {
     const m = reduceAnnouncements(new Map(), detail("evil", "Evil", "javascript:alert(1)"));
