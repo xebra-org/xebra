@@ -14,3 +14,4 @@ export * from "./arc/decode.js";
 export * from "./arc/abi.js";
 export * from "./stellar/decode-soroban-events.js";
 export * from "./stellar/decode-horizon-payment.js";
+export * from "./stellar/escrow-reader.js";
