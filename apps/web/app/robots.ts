@@ -3,7 +3,7 @@ import { AI_CRAWLERS } from "../lib/seo/crawlers";
 import { IS_PRODUCTION_DEPLOYMENT, SITE_URL } from "../lib/site";
 
 /** Never worth crawling: the operator console, server routes, and two pages with nothing to read. */
-const PRIVATE = ["/admin", "/api/", "/recover", "/intent/"];
+const PRIVATE = ["/admin", "/api/", "/recover"];
 
 export default function robots(): MetadataRoute.Robots {
   // A preview or local build indexed under its own address would compete with the real site.
