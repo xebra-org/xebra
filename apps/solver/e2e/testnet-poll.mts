@@ -53,6 +53,7 @@ const claim = createStellarClaimAdapter(
   ESCROW,
   Keypair.fromSecret(SECRET),
   Networks.TESTNET,
+  "https://horizon-testnet.stellar.org",
 );
 const escrow = {
   read: (h: string) => retry(() => readEscrow(server, Networks.TESTNET, ESCROW, h)),

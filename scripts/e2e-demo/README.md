@@ -83,9 +83,11 @@ run that dispute path live.
 
 What the run did show:
 
-- The poll source decoded a real `IntentOpened` into an intent, and `claim` through
-  `@stellar/stellar-sdk` (`prepareTransaction`, `sendTransaction`, `pollTransaction`) succeeded
-  against a live RPC. Until now that adapter had only compiled.
+- The poll source decoded a real `IntentOpened` into an intent, and the `claim` adapter's
+  `prepareTransaction` and `sendTransaction` worked against a live RPC. **Correction (2026-11-05):**
+  this section first said its `pollTransaction` confirmation worked too. It cannot: stellar-sdk 13
+  throws `Bad union switch: 4` decoding protocol 23+ result metadata (see the next section), so the
+  adapter now confirms through Horizon.
 - The first attempt's claim landed but the script then died on a read timeout and its output was
   lost; its state file was deleted before the rerun. The rerun found the escrow already `Claimed`
   and **skipped it** ("escrow is Claimed, not Open"), twice, including from a cold cursor. With no
@@ -94,3 +96,47 @@ What the run did show:
   through stellar-sdk 13.3 fails with `Bad union switch: 1` (the response carries an
   archived-entry extension). Ordinary reads decode fine on testnet (protocol 30) and on mainnet
   (protocol 29). `readEscrow` reports that case as an error instead of crashing.
+
+
+---
+
+## 2026-11-05: a real Solana delivery, on a local validator
+
+Same escrow as above. This time the solver's own Solana fill adapter delivered a real SPL token
+and the claim asserted that delivery's real signature. `apps/solver/e2e/devnet-real-fill.mts`
+drives it (`MODE=setup|run|verify`).
+
+**What this is not: a public chain.** Solana devnet's RPC faucet is closed (`410 Gone`, "Request
+test SOL at https://faucet.solana.com") and the web faucet sat behind a captcha, so the Solana side
+ran on `solana-test-validator` (Agave 4.3.2) on this machine. It is the real Solana runtime and the
+real SPL Token, ATA and Memo programs, but nobody else can look at that ledger, and the token is a
+throwaway mint, not USDC. The Stellar side is the public testnet. The same script runs on devnet
+unchanged once a wallet has SOL (`SOLANA_RPC_URL`, `MINT_FILE`).
+
+| Step | Where | Reference |
+|---|---|---|
+| `open`, 50 XLM, real mint and recipient | Stellar testnet, ledger 5561842 | `704edcd7…9751` |
+| Delivery: create ATA, transfer 1 token, memo = intent hash | local validator | signature `2oCSzjPo…T9ia` |
+| `claim` by the solver adapter, 25 XLM bond | Stellar testnet, ledger 5561961 | `6d0e1a7e…22f7` |
+| `finalize`, permissionless | Stellar testnet, ledger 5562003 | `32977a81…b6e9` |
+
+Intent hash `2427ebb207f7cf20d9316930d31887b8cd14d3fd7e16539375b3e3d517ea8a55`. Checked afterwards
+with `verifyDelivery`, the same check a challenger would run, against the validator's RPC: the memo
+equals the intent hash, the mint and recipient match, 1,000,000 units were delivered. The recipient's
+token account holds 1,000,000.
+
+Three things this run found that no unit test could, all fixed:
+
+1. **The Solana delivery could never have landed on any chain.** The memo carried the raw 32-byte
+   hash, and the SPL Memo program rejects anything that is not UTF-8 (`Invalid UTF-8, from byte 2`).
+   The memo is now the hash as 64 hex characters. `verifyDelivery` and `parseDeliveryTx` also read
+   the decoded `spl-memo` shape that `getParsedTransaction` returns, not only a raw one.
+2. **A landed claim was reported as failed.** stellar-sdk 13's `pollTransaction` throws `Bad union
+   switch: 4` on protocol 23+ metadata. The claim had landed; the journal was left saying "delivered,
+   not claimed". The adapter confirms through Horizon now, and a restart no longer retries a claim
+   once the chain says the escrow is not `Open`.
+3. A first attempt failed at instruction 2 before sending anything, so nothing was delivered or
+   journaled; a fresh state file was needed because its cursor had moved past the intent.
+
+Still not done: a delivery on public devnet, a live dispute (false claim, challenge, slash), and
+anything on mainnet.

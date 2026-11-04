@@ -7,22 +7,23 @@ import {
   type rpc,
 } from "@stellar/stellar-sdk";
 import type { ClaimAdapter, ClaimResult, FillResult } from "../fill-loop.js";
+import { waitForTransaction } from "./horizon-wait.js";
 
 /**
  * Calls `claim` on the Stellar-source XebraEscrow Soroban contract (contracts/stellar-soroban),
  * asserting the solver's Solana delivery tx as the falsifiable proof (see that contract's
  * `claim` doc comment — it cannot and does not verify this itself; that's the challenge
  * mechanism's job). Real code, compiled against @stellar/stellar-sdk's actual API
- * (`Contract.call`, `rpc.Server.prepareTransaction`/`sendTransaction`/`pollTransaction`,
- * `TransactionBuilder`), and waits for the transaction to land before reporting a claim. Not yet
- * run against a live Soroban RPC from here: the 2026-08-14 testnet run in scripts/e2e-demo
- * called the same `claim` through the `stellar` CLI.
+ * (`Contract.call`, `rpc.Server.prepareTransaction`/`sendTransaction`, `TransactionBuilder`), and
+ * waits for the transaction to land, through Horizon (see horizon-wait.ts), before reporting a
+ * claim. Run live on Stellar testnet on 2026-11-05 (scripts/e2e-demo/README.md).
  */
 export function createStellarClaimAdapter(
   server: rpc.Server,
   escrowContractId: string,
   solverKeypair: Keypair,
   networkPassphrase: string,
+  horizonUrl: string,
 ): ClaimAdapter {
   return {
     async claim(intentHash: string, fill: FillResult): Promise<ClaimResult> {
@@ -51,13 +52,7 @@ export function createStellarClaimAdapter(
       }
 
       // Submission is not inclusion. Only a confirmed claim may be written to the journal as done.
-      const confirmed = await server.pollTransaction(result.hash, {
-        attempts: 30,
-        sleepStrategy: () => 1000,
-      });
-      if (confirmed.status !== "SUCCESS") {
-        throw new Error(`claim tx ${result.hash} did not succeed: ${confirmed.status}`);
-      }
+      await waitForTransaction(horizonUrl, result.hash);
 
       return { claimTxRef: result.hash };
     },

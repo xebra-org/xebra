@@ -151,6 +151,25 @@ describe("processOpenedIntent: the journal prevents a second delivery", () => {
     });
   });
 
+  it("does not retry the claim once the chain says the escrow is no longer Open", async () => {
+    // The claim can land while its confirmation is lost; retrying would only fail with NotOpen.
+    const { fill, claim } = adapters();
+    const journal = new MemoryJournal();
+    await journal.recordFill(HASH, { destTxRef: "5Gy3sig", deliveredAmount: 900_000_000n });
+
+    const outcome = await processOpenedIntent(HASH, INTENT, {
+      ...base,
+      fill,
+      claim,
+      journal,
+      escrow: gate({ status: "Claimed", expiry: BigInt(NOW + 3600) }),
+    });
+
+    expect(outcome.status).toBe("skipped");
+    expect(claim.claim).not.toHaveBeenCalled();
+    expect(fill.fill).not.toHaveBeenCalled();
+  });
+
   it("does nothing for an intent it already filled and claimed", async () => {
     const { fill, claim } = adapters();
     const journal = new MemoryJournal();

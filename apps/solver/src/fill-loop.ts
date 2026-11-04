@@ -79,8 +79,23 @@ export async function processOpenedIntent(
     return { status: "skipped", reason: "already filled and claimed by this solver" };
   }
 
-  // Delivered on a previous run but never claimed: do not deliver again, only retry the claim.
+  // Delivered on a previous run but never claimed: do not deliver again, only retry the claim,
+  // and not even that once the chain says the escrow is no longer Open (the claim may have landed
+  // while the confirmation was lost, which is exactly what stellar-sdk 13 did on testnet).
   if (prior) {
+    if (deps.escrow) {
+      try {
+        const escrow = await deps.escrow.read(intentHash);
+        if (!escrow || escrow.status !== "Open") {
+          return {
+            status: "skipped",
+            reason: `delivery recorded; escrow is ${escrow?.status ?? "missing"}, not retrying the claim`,
+          };
+        }
+      } catch (err) {
+        return { status: "failed", stage: "check", error: describeError(err) };
+      }
+    }
     deps.logger.warn(
       { intentHash, destTxRef: prior.destTxRef },
       "solver: found an unclaimed delivery in the journal, retrying the claim only",

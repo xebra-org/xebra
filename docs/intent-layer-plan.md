@@ -1,10 +1,10 @@
 # From CCTP wrapper to intent-based, bonded-solver bridge
 
 **Status 2026-11-04.** The intent layer is built and tested. The Soroban escrow has run
-`open -> claim -> finalize` on Stellar testnet twice (2026-08-14 with the CLI, 2026-11-04 with the
-solver's own claim code), **both times with a placeholder in place of the Solana delivery**. It has
-never run on mainnet, never delivered a real asset on Solana, and its dispute path has never run
-live. Until a real delivery is on a chain explorer, it is a design, and the README, `package.json`
+`open -> claim -> finalize` on Stellar testnet three times. Twice (2026-08-14, 2026-11-04) the Solana
+delivery was a placeholder. On 2026-11-05 the solver delivered a real SPL token and claimed it, but
+on a **local** Solana validator, because devnet's faucet was closed. It has never run on mainnet or
+against a public Solana cluster, and its dispute path has never run live. Until a real delivery is on a chain explorer, it is a design, and the README, `package.json`
 and the site must say so. This file is the path from one to the other.
 
 ## What exists (in the repo; only the Soroban escrow has ever been deployed, on testnet)
@@ -13,7 +13,7 @@ and the site must say so. This file is the path from one to the other.
 |---|---|---|
 | Soroban escrow, Stellar as source (`open`/`claim`/`challenge`/`resolve`/`finalize`/`refund`, 10% bond, symmetric challenger bond, admin arbiter) | `contracts/stellar-soroban` | 14 tests. Testnet: `CCLHPAW…KZV` (2026-11-04, in `deployments/testnet.json`), full lifecycle with a stubbed delivery, see `scripts/e2e-demo/README.md`. Not on mainnet |
 | Solidity escrow, Arc as source | `contracts/arc-evm/src/XebraEscrow.sol` | 17 tests, no deployment recorded |
-| Solver: poll Soroban, re-check the chain, fill on Solana, claim on Stellar | `apps/solver` | one process, no Kafka (2026-11-04). 33 tests. Detect-and-claim run live on testnet; the Solana fill has never run |
+| Solver: poll Soroban, re-check the chain, fill on Solana, claim on Stellar | `apps/solver` | one process, no Kafka. 38 tests. Full path run live on 2026-11-05 (Stellar testnet + local Solana validator); that run found and fixed an undeliverable memo and a claim confirmation stellar-sdk 13 could not parse |
 | On-chain status reader (`readEscrow`) | `packages/chain-adapters` | used by the solver; run live against testnet. A page that shows it does not exist yet |
 | Arbiter: re-verifies a claim against the destination chain | `apps/arbiter-service` | unit tests only |
 | Intent schema, router (CCTP vs swap rail) | `packages/intent-schema`, `packages/router-core` | tested, not called by the page |
@@ -63,7 +63,8 @@ Not before.
 ## Order of work
 
 1. ~~Poll-based solver and chain-read status, on Stellar testnet.~~ Done 2026-11-04, with a stubbed Solana delivery.
-2. A real Solana delivery on devnet (needs devnet SOL, which the public faucet rationed in August
-   and a mint with inventory: `scripts/e2e-demo/01-solana-setup.ts`), then one challenge and slash.
+2. ~~A real Solana delivery.~~ Done 2026-11-05 on a local validator. Repeat it on public devnet
+   (`devnet-real-fill.mts`, needs about 0.02 devnet SOL from https://faucet.solana.com) so the
+   delivery can be checked by someone else, then one challenge and slash.
 3. Flagged swap form on the page. Record the three runs in `docs/`.
 4. Mainnet deploy with a cap, a funded solver, and the arbiter key held apart from the others.

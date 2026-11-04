@@ -75,6 +75,7 @@ async function main() {
     config.STELLAR_ESCROW_CONTRACT_ID,
     stellarKeypair,
     config.STELLAR_NETWORK_PASSPHRASE,
+    config.HORIZON_URL,
   );
 
   const journal = new FileJournal(config.SOLVER_STATE_FILE);

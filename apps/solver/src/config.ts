@@ -4,6 +4,8 @@ const ConfigSchema = z.object({
   SOLANA_RPC_URL: z.string().url(),
   SOROBAN_RPC_URL: z.string().url(),
   STELLAR_NETWORK_PASSPHRASE: z.string().min(1),
+  /** Horizon, used only to confirm that a claim landed. */
+  HORIZON_URL: z.string().url(),
   STELLAR_ESCROW_CONTRACT_ID: z.string().min(1),
   /** Base64-encoded raw Solana secret key. */
   SOLVER_SOLANA_KEYPAIR: z.string().min(1),
