@@ -14,7 +14,6 @@ works is in the root [README](../../README.md); deploying is in
 - `/admin` — console for the v2 wrapper ([`docs/admin-panel.md`](../../docs/admin-panel.md)).
 - `/recover` — countersigns the rescue of a v1 burn that named a wallet instead of a token account
   (`scripts/recover-stranded-mint.mjs` builds the transactions).
-- `/intent/[hash]` — intent-rail status page. It reads `apps/api`, which is not deployed.
 
 Server routes in `app/api/`: `circle-health` (pre-flight), `delivery` (Circle's forward state for a
 burn), `attestation`, `reattest`, `recipient` and `solana-rpc`. `convex/` holds the shared Iris rate

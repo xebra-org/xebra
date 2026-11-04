@@ -3,7 +3,7 @@
   "private": true,
   "version": "0.0.0",
   "license": "Apache-2.0",
-  "description": "Intent-based swap-capable cross-chain bridge. Arc<->Stellar, Stellar->Solana.",
+  "description": "USDC from Stellar to Solana, Arc and EVM chains over Circle CCTP: a Soroban fee wrapper hands the burn to Circle, whose Forwarding Service mints on the far side. The intent and bonded-solver layer is designed, not shipped.",
   "packageManager": "pnpm@9.15.0",
   "engines": {
     "node": ">=22"

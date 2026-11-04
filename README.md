@@ -121,7 +121,7 @@ The corridor — everything on the deployment path:
 
 ```
 apps/web/                    Next.js frontend (Vercel) and its server routes
-  app/                         / bridge · /claim · /admin · /recover · /intent/[hash]
+  app/                         / bridge · /claim · /admin · /recover
   app/api/                     Circle pre-flight, delivery status, attestation, re-attestation, Solana RPC, recipient, Arc wrapper settings
   convex/                      the shared Iris rate counter (irisBudget)
 contracts/stellar-cctp-wrapper-v2/  XebraCctpWrapper v2, live: Circle mints on the destination (84 tests)
@@ -161,9 +161,8 @@ infra/terraform  ECS Fargate, RDS, ElastiCache, Redpanda, KMS
 docker-compose.yml  anvil, Stellar quickstart, solana-test-validator, Postgres, Redis, Redpanda
 ```
 
-One live thread between the two: `/intent/[hash]` still reads `apps/api`'s `intentStatus`
-procedure, so that page needs the container stack even though the bridge does not.
-`lib/open-intent.ts` and `lib/build-open-intent-params.ts` are escrow-rail leftovers no page
+Nothing in `apps/web` reaches the container stack: the `/intent/[hash]` status page and its tRPC
+client were removed because they called an `apps/api` that production never ran. `lib/open-intent.ts` and `lib/build-open-intent-params.ts` are escrow-rail leftovers no page
 imports since the bridge screen was rebuilt around amount and destination alone.
 
 ## Getting started

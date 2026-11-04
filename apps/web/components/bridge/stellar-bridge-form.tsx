@@ -83,7 +83,7 @@ import { useBeneficiaries } from "./use-beneficiaries";
  *
  * Nothing here styles itself from scratch. The plate, the fields, the rules and the buttons
  * are `components/ui/*`, so the screen that sends money cannot drift away from the one
- * that reports on it (`app/intent/[hash]`). See `tailwind.config.ts` for the tokens.
+ * that recovers it (`app/claim`). See `tailwind.config.ts` for the tokens.
  */
 
 /** Standard finality, the only kind Stellar has: Fast Transfer is not available from Stellar. */

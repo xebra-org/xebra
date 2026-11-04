@@ -65,7 +65,6 @@ const RAW = {
   NEXT_PUBLIC_STELLAR_ESCROW_CONTRACT_ID: process.env.NEXT_PUBLIC_STELLAR_ESCROW_CONTRACT_ID,
   NEXT_PUBLIC_STELLAR_CCTP_WRAPPER_CONTRACT_ID:
     process.env.NEXT_PUBLIC_STELLAR_CCTP_WRAPPER_CONTRACT_ID,
-  NEXT_PUBLIC_API_URL: process.env.NEXT_PUBLIC_API_URL,
   NEXT_PUBLIC_STELLAR_CCTP_WRAPPER_LEGACY_CONTRACT_ID:
     process.env.NEXT_PUBLIC_STELLAR_CCTP_WRAPPER_LEGACY_CONTRACT_ID,
 } as const;
@@ -183,11 +182,6 @@ export const env = {
    * use. Absent means the intent routes are unavailable, not that the build is broken.
    */
   escrowContractId: optional("NEXT_PUBLIC_STELLAR_ESCROW_CONTRACT_ID"),
-  /**
-   * apps/api backs the intent rail's status pages only. The bridge flow talks to Soroban
-   * directly and never calls it, so this is optional for the same reason.
-   */
-  apiUrl: optional("NEXT_PUBLIC_API_URL"),
   /**
    * Optional, as it had to be before the wrapper was deployed. Deliberately not `required()`:
    * the alternatives were blocking the build before deployment, or inventing a placeholder —
