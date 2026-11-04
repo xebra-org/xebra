@@ -1,5 +1,6 @@
 import type { IntentV2 } from "@xebra/intent-schema";
 import type { Logger } from "pino";
+import type { Journal } from "./journal.js";
 
 /**
  * The solver's Watch->Fill->Claim pipeline (docs/architecture.md §7), generalized as
@@ -41,16 +42,76 @@ export interface ClaimAdapter {
   claim(intentHash: string, fill: FillResult): Promise<ClaimResult>;
 }
 
+/** What the chain says about an intent right now. The solver never trusts the event it read. */
+export interface EscrowGate {
+  /** `null` when the contract has no such escrow. Throws when the chain could not be read. */
+  read(intentHash: string): Promise<{ status: string; expiry: bigint } | null>;
+}
+
 export type FillOutcome =
   | { status: "filled"; destTxRef: string; claimTxRef: string; deliveredAmount: bigint }
   | { status: "skipped"; reason: string }
-  | { status: "failed"; stage: "fill" | "claim"; error: string };
+  | { status: "failed"; stage: "check" | "fill" | "claim"; error: string };
+
+/** Delivering on Solana and claiming on Stellar both take time; do not start an intent that cannot finish. */
+export const DEFAULT_MIN_SECONDS_TO_EXPIRY = 180;
+
+export interface ProcessDeps {
+  fill: FillAdapter;
+  claim: ClaimAdapter;
+  logger: Logger;
+  /** Re-reads the escrow before spending anything. Omit only in tests. */
+  escrow?: EscrowGate;
+  /** Remembers deliveries across restarts so a crash cannot cause a second one. */
+  journal?: Journal;
+  /** Unix seconds. */
+  now?: () => number;
+  minSecondsToExpiry?: number;
+}
 
 export async function processOpenedIntent(
   intentHash: string,
   intent: IntentV2,
-  deps: { fill: FillAdapter; claim: ClaimAdapter; logger: Logger },
+  deps: ProcessDeps,
 ): Promise<FillOutcome> {
+  const prior = deps.journal?.get(intentHash);
+  if (prior?.claimTxRef) {
+    return { status: "skipped", reason: "already filled and claimed by this solver" };
+  }
+
+  // Delivered on a previous run but never claimed: do not deliver again, only retry the claim.
+  if (prior) {
+    deps.logger.warn(
+      { intentHash, destTxRef: prior.destTxRef },
+      "solver: found an unclaimed delivery in the journal, retrying the claim only",
+    );
+    return claimDelivery(
+      intentHash,
+      { destTxRef: prior.destTxRef, deliveredAmount: prior.deliveredAmount },
+      deps,
+    );
+  }
+
+  if (deps.escrow) {
+    let escrow: { status: string; expiry: bigint } | null;
+    try {
+      escrow = await deps.escrow.read(intentHash);
+    } catch (err) {
+      const error = describeError(err);
+      deps.logger.error({ intentHash, error }, "solver: could not read the escrow, not filling");
+      return { status: "failed", stage: "check", error };
+    }
+    if (!escrow) return { status: "skipped", reason: "no such escrow on chain" };
+    if (escrow.status !== "Open") {
+      return { status: "skipped", reason: `escrow is ${escrow.status}, not Open` };
+    }
+    const now = BigInt((deps.now ?? defaultNow)());
+    const margin = BigInt(deps.minSecondsToExpiry ?? DEFAULT_MIN_SECONDS_TO_EXPIRY);
+    if (escrow.expiry < now + margin) {
+      return { status: "skipped", reason: "expires too soon to deliver and claim" };
+    }
+  }
+
   const quote = await deps.fill.quote(intent);
   if (!quote.canFill) {
     deps.logger.info({ intentHash, reason: quote.reason }, "solver: skipping unprofitable intent");
@@ -71,7 +132,33 @@ export async function processOpenedIntent(
   deps.logger.info({ intentHash, destTxRef: fillResult.destTxRef }, "solver: delivered, claiming");
 
   try {
+    await deps.journal?.recordFill(intentHash, fillResult);
+  } catch (err) {
+    // The money has moved. Do not stop: claim now, and make the failure impossible to miss.
+    deps.logger.error(
+      { intentHash, destTxRef: fillResult.destTxRef, error: describeError(err) },
+      "solver: delivered but could not write the journal — do not restart before the claim lands",
+    );
+  }
+
+  return claimDelivery(intentHash, fillResult, deps);
+}
+
+async function claimDelivery(
+  intentHash: string,
+  fillResult: FillResult,
+  deps: ProcessDeps,
+): Promise<FillOutcome> {
+  try {
     const claimResult = await deps.claim.claim(intentHash, fillResult);
+    try {
+      await deps.journal?.recordClaim(intentHash, claimResult.claimTxRef);
+    } catch (err) {
+      deps.logger.error(
+        { intentHash, claimTxRef: claimResult.claimTxRef, error: describeError(err) },
+        "solver: claimed but could not write the journal",
+      );
+    }
     return {
       status: "filled",
       destTxRef: fillResult.destTxRef,
@@ -86,6 +173,10 @@ export async function processOpenedIntent(
     deps.logger.error({ intentHash, error }, "solver: delivered but claim failed — margin lost");
     return { status: "failed", stage: "claim", error };
   }
+}
+
+function defaultNow(): number {
+  return Math.floor(Date.now() / 1000);
 }
 
 function describeError(err: unknown): string {

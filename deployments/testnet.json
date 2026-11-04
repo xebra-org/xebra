@@ -15,5 +15,16 @@
     "runtimeCodeKeccak": "0xde9c71d1398af616360787798011ddd4951732cec2713b397828c46a309eb4e0",
     "tokenMessenger": "0x8FE6B999Dc680CcFDD5Bf7EB0974218be2542DAA",
     "usdc": "0x3600000000000000000000000000000000000000"
+  },
+  "stellarEscrow": {
+    "contractId": "CCLHPAWUGSYF4YAFO553YOETP2QXOKBL7MNE3PW4UI6KVX34TZ357KZV",
+    "network": "Stellar testnet (protocol 30 at deploy)",
+    "deployedAt": "2026-11-04",
+    "wasmHash": "e0d89a5a96ecbdc4dc55602487db09df4db5975d7d320c180563c52c713a23bf",
+    "usdc": "CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC",
+    "usdcNote": "native XLM SAC, standing in for USDC on testnet",
+    "arbiter": "GAK6PMDBP4JSAYMIVWOXE5ESIY5F6U6JVEXRNO22J7WHGAB4H46ACMDQ",
+    "challengeWindowSecs": 60,
+    "note": "Throwaway e2e-* identities. The Solana delivery in the run recorded in scripts/e2e-demo/README.md was a stub."
   }
 }

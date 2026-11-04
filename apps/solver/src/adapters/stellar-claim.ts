@@ -13,8 +13,9 @@ import type { ClaimAdapter, ClaimResult, FillResult } from "../fill-loop.js";
  * asserting the solver's Solana delivery tx as the falsifiable proof (see that contract's
  * `claim` doc comment — it cannot and does not verify this itself; that's the challenge
  * mechanism's job). Real code, compiled against @stellar/stellar-sdk's actual API
- * (`Contract.call`, `rpc.Server.prepareTransaction`/`sendTransaction`, `TransactionBuilder`),
- * but not itself run against a live Soroban RPC: the live testnet run in scripts/e2e-demo
+ * (`Contract.call`, `rpc.Server.prepareTransaction`/`sendTransaction`/`pollTransaction`,
+ * `TransactionBuilder`), and waits for the transaction to land before reporting a claim. Not yet
+ * run against a live Soroban RPC from here: the 2026-08-14 testnet run in scripts/e2e-demo
  * called the same `claim` through the `stellar` CLI.
  */
 export function createStellarClaimAdapter(
@@ -47,6 +48,15 @@ export function createStellarClaimAdapter(
       const result = await server.sendTransaction(prepared);
       if (result.status === "ERROR") {
         throw new Error(`claim tx submission failed: ${JSON.stringify(result.errorResult)}`);
+      }
+
+      // Submission is not inclusion. Only a confirmed claim may be written to the journal as done.
+      const confirmed = await server.pollTransaction(result.hash, {
+        attempts: 30,
+        sleepStrategy: () => 1000,
+      });
+      if (confirmed.status !== "SUCCESS") {
+        throw new Error(`claim tx ${result.hash} did not succeed: ${confirmed.status}`);
       }
 
       return { claimTxRef: result.hash };

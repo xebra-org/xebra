@@ -53,3 +53,44 @@ To complete the Solana leg from a machine with devnet SOL available:
 
 Everything downstream of that substitution (claim/challenge/resolve/finalize on the Soroban side)
 is exactly what this run already exercised live.
+
+
+---
+
+## 2026-11-04: the solver's own code against a fresh testnet escrow
+
+The August run above drove the contract with the `stellar` CLI. This one drives it with the code
+the solver runs: `apps/solver/e2e/testnet-poll.mts` uses `pollOpenedIntentsOnce`, the on-chain gate
+(`readEscrow`), `processOpenedIntent`, the real Soroban `claim` adapter and the file journal.
+
+Escrow `CCLHPAWUGSYF4YAFO553YOETP2QXOKBL7MNE3PW4UI6KVX34TZ357KZV` (testnet, protocol 30, native XLM
+standing in for USDC, 60 s challenge window). Recorded in `deployments/testnet.json`.
+
+| Step | Ledger | Tx | By |
+|---|---|---|---|
+| `open` (50 XLM) | 5560337 | `21cf8afa…5699` | `stellar` CLI, `e2e-user` |
+| `claim` (25 XLM bond) | 5560349 | `e4654480…cf8f` | the solver's claim adapter, `e2e-solver` |
+| `finalize` | 5560449 | `0b711697…6f8a` | `stellar` CLI, `e2e-arbiter` (permissionless) |
+
+Intent hash `ee05be3e037df7bd63b9df208add8c939e9d594d8733a8b16ebc815cc9cf2b1c`. The final
+`readEscrow` reports `Finalized`, `delivered_amount` 1000000 and `dest_tx_ref`
+`STUB-no-solana-delivery`.
+
+**What is not real, again: the Solana delivery.** The claim asserts a delivery that never
+happened (`stubFill` in the script). On a throwaway testnet escrow that tests the Stellar half; it
+is exactly the false claim the challenge window exists to catch, and this repo has still never
+run that dispute path live.
+
+What the run did show:
+
+- The poll source decoded a real `IntentOpened` into an intent, and `claim` through
+  `@stellar/stellar-sdk` (`prepareTransaction`, `sendTransaction`, `pollTransaction`) succeeded
+  against a live RPC. Until now that adapter had only compiled.
+- The first attempt's claim landed but the script then died on a read timeout and its output was
+  lost; its state file was deleted before the rerun. The rerun found the escrow already `Claimed`
+  and **skipped it** ("escrow is Claimed, not Open"), twice, including from a cold cursor. With no
+  journal at all, the chain check alone refused a second delivery.
+- The August escrow (`CBMFZNZ4…`) is still on testnet, but its ledger entry has expired. Reading it
+  through stellar-sdk 13.3 fails with `Bad union switch: 1` (the response carries an
+  archived-entry extension). Ordinary reads decode fine on testnet (protocol 30) and on mainnet
+  (protocol 29). `readEscrow` reports that case as an error instead of crashing.
