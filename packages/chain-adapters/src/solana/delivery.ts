@@ -3,7 +3,12 @@ import {
   createTransferCheckedInstruction,
   getAssociatedTokenAddressSync,
 } from "@solana/spl-token";
-import { PublicKey, TransactionInstruction } from "@solana/web3.js";
+import {
+  type ParsedInstruction,
+  type PartiallyDecodedInstruction,
+  PublicKey,
+  TransactionInstruction,
+} from "@solana/web3.js";
 import bs58 from "bs58";
 
 /**
@@ -21,6 +26,38 @@ import bs58 from "bs58";
  */
 
 export const MEMO_PROGRAM_ID = new PublicKey("MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr");
+
+/**
+ * The memo is the intent hash as 64 lowercase hex characters, not the 32 raw bytes: the SPL Memo
+ * program rejects data that is not valid UTF-8 ("Invalid UTF-8, from byte 2"), so the raw form can
+ * never land on a real chain. That was found by the first live run in 2026-11, not by a unit test.
+ */
+export function memoTextForIntent(intentHash: Uint8Array): string {
+  if (intentHash.length !== 32) {
+    throw new Error(`intentHash must be 32 bytes, got ${intentHash.length}`);
+  }
+  return Buffer.from(intentHash).toString("hex");
+}
+
+/**
+ * Reads the intent hash back out of a memo instruction, in either shape `getParsedTransaction`
+ * can return it: a decoded `spl-memo` instruction (`parsed` is the text) or a raw one (`data` is
+ * the base58 of the instruction bytes). Anything that is not 64 hex characters is `null`.
+ */
+export function intentHashFromMemoIx(
+  ix: ParsedInstruction | PartiallyDecodedInstruction,
+): Uint8Array | null {
+  if (ix.programId.toBase58() !== MEMO_PROGRAM_ID.toBase58()) return null;
+
+  let text: string | null = null;
+  if ("parsed" in ix && typeof ix.parsed === "string") {
+    text = ix.parsed;
+  } else if ("data" in ix && typeof ix.data === "string") {
+    text = Buffer.from(bs58.decode(ix.data)).toString("utf8");
+  }
+  if (text === null || !/^[0-9a-f]{64}$/.test(text)) return null;
+  return new Uint8Array(Buffer.from(text, "hex"));
+}
 
 export interface BuildDeliveryInstructionsInput {
   /** Solver's own wallet — pays for the recipient's ATA rent and is the token source. */
@@ -64,7 +101,7 @@ export function buildDeliveryInstructions(
   const memoIx = new TransactionInstruction({
     programId: MEMO_PROGRAM_ID,
     keys: [],
-    data: Buffer.from(input.intentHash),
+    data: Buffer.from(memoTextForIntent(input.intentHash), "utf8"),
   });
 
   return [createAtaIx, transferIx, memoIx];

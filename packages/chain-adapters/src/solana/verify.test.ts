@@ -3,7 +3,7 @@ import { PublicKey } from "@solana/web3.js";
 import type { ParsedTransactionWithMeta } from "@solana/web3.js";
 import bs58 from "bs58";
 import { describe, expect, it } from "vitest";
-import { MEMO_PROGRAM_ID } from "./delivery.js";
+import { MEMO_PROGRAM_ID, memoTextForIntent } from "./delivery.js";
 import { verifyDelivery } from "./verify.js";
 
 const MINT = new PublicKey("EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v");
@@ -27,7 +27,7 @@ function fixture(opts: {
   if (!opts.omitMemo) {
     instructions.push({
       programId: MEMO_PROGRAM_ID,
-      data: bs58.encode(opts.memoHash ?? INTENT_HASH),
+      data: bs58.encode(Buffer.from(memoTextForIntent(opts.memoHash ?? INTENT_HASH), "utf8")),
     });
   }
 

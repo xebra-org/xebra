@@ -2,7 +2,7 @@ import { PublicKey } from "@solana/web3.js";
 import type { ParsedTransactionWithMeta } from "@solana/web3.js";
 import bs58 from "bs58";
 import { describe, expect, it } from "vitest";
-import { MEMO_PROGRAM_ID } from "./delivery.js";
+import { MEMO_PROGRAM_ID, memoTextForIntent } from "./delivery.js";
 import { parseDeliveryTx } from "./parse.js";
 
 const MINT = new PublicKey("EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v").toBase58();
@@ -14,7 +14,10 @@ function fixture(
 ): ParsedTransactionWithMeta {
   const instructions: unknown[] = [];
   if (!opts.omitMemo) {
-    instructions.push({ programId: MEMO_PROGRAM_ID, data: bs58.encode(INTENT_HASH) });
+    instructions.push({
+      programId: MEMO_PROGRAM_ID,
+      data: bs58.encode(Buffer.from(memoTextForIntent(INTENT_HASH), "utf8")),
+    });
   }
   if (!opts.omitTransfer) {
     instructions.push({

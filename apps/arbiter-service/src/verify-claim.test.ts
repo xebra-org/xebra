@@ -1,7 +1,7 @@
 import { getAssociatedTokenAddressSync } from "@solana/spl-token";
 import type { Connection, ParsedTransactionWithMeta } from "@solana/web3.js";
 import { PublicKey } from "@solana/web3.js";
-import { MEMO_PROGRAM_ID } from "@xebra/chain-adapters";
+import { MEMO_PROGRAM_ID, memoTextForIntent } from "@xebra/chain-adapters";
 import type { claims, intents } from "@xebra/db";
 import {
   AddrEncoding,
@@ -74,7 +74,7 @@ function fixtureTx(): ParsedTransactionWithMeta {
         instructions: [
           {
             programId: MEMO_PROGRAM_ID,
-            data: bs58.encode(intentHashBytes),
+            data: bs58.encode(Buffer.from(memoTextForIntent(intentHashBytes), "utf8")),
           },
           {
             programId: new PublicKey("TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"),

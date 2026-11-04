@@ -5,8 +5,7 @@ import type {
   PartiallyDecodedInstruction,
   PublicKey,
 } from "@solana/web3.js";
-import bs58 from "bs58";
-import { MEMO_PROGRAM_ID } from "./delivery.js";
+import { MEMO_PROGRAM_ID, intentHashFromMemoIx } from "./delivery.js";
 
 /**
  * Verifies a solver's delivery claim against an already-fetched, parsed Solana transaction —
@@ -35,13 +34,13 @@ export function verifyDelivery(input: VerifyDeliveryInput): VerifyDeliveryResult
 
   const instructions = input.tx.transaction.message.instructions;
 
-  const memoIx = instructions.find(isPartiallyDecoded(MEMO_PROGRAM_ID.toBase58()));
+  const memoIx = instructions.find((ix) => ix.programId.toBase58() === MEMO_PROGRAM_ID.toBase58());
   if (!memoIx) {
     return { ok: false, reason: "no memo instruction found" };
   }
 
-  const memoBytes = bs58.decode(memoIx.data);
-  if (!bytesEqual(memoBytes, input.intentHash)) {
+  const memoBytes = intentHashFromMemoIx(memoIx);
+  if (!memoBytes || !bytesEqual(memoBytes, input.intentHash)) {
     return { ok: false, reason: "memo does not match intent hash" };
   }
 
@@ -79,13 +78,6 @@ export function verifyDelivery(input: VerifyDeliveryInput): VerifyDeliveryResult
 // ---------------------------------------------------------------------------
 // Internal
 // ---------------------------------------------------------------------------
-
-function isPartiallyDecoded(
-  programId: string,
-): (ix: ParsedInstruction | PartiallyDecodedInstruction) => ix is PartiallyDecodedInstruction {
-  return (ix): ix is PartiallyDecodedInstruction =>
-    "programId" in ix && ix.programId.toBase58() === programId && "data" in ix;
-}
 
 function isParsedTransferTo(
   destinationAta: string,

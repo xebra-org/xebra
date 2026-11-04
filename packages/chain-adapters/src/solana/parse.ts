@@ -1,11 +1,6 @@
 import { getAssociatedTokenAddressSync } from "@solana/spl-token";
-import type {
-  ParsedInstruction,
-  ParsedTransactionWithMeta,
-  PartiallyDecodedInstruction,
-} from "@solana/web3.js";
-import bs58 from "bs58";
-import { MEMO_PROGRAM_ID } from "./delivery.js";
+import type { ParsedInstruction, ParsedTransactionWithMeta } from "@solana/web3.js";
+import { intentHashFromMemoIx } from "./delivery.js";
 
 /**
  * Parses a delivery transaction's memo + transfer fields *without* checking them against any
@@ -30,11 +25,14 @@ export function parseDeliveryTx(tx: ParsedTransactionWithMeta): ParsedDelivery {
 
   const instructions = tx.transaction.message.instructions;
 
-  const memoIx = instructions.find(
-    (ix): ix is PartiallyDecodedInstruction =>
-      "programId" in ix && ix.programId.toBase58() === MEMO_PROGRAM_ID.toBase58() && "data" in ix,
-  );
-  const intentHashHex = memoIx ? bytesToHex32OrNull(bs58.decode(memoIx.data)) : null;
+  let intentHashHex: `0x${string}` | null = null;
+  for (const ix of instructions) {
+    const hash = intentHashFromMemoIx(ix);
+    if (hash) {
+      intentHashHex = bytesToHex32OrNull(hash);
+      break;
+    }
+  }
 
   const transferIx = instructions.find(
     (ix): ix is ParsedInstruction =>
