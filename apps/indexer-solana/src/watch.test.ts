@@ -1,5 +1,6 @@
 import { PublicKey } from "@solana/web3.js";
 import type { ConfirmedSignatureInfo, ParsedTransactionWithMeta } from "@solana/web3.js";
+import { memoTextForIntent } from "@xebra/chain-adapters";
 import type { EventProducer } from "@xebra/event-bus";
 import bs58 from "bs58";
 import pino from "pino";
@@ -18,7 +19,10 @@ function deliveryTx(): ParsedTransactionWithMeta {
     transaction: {
       message: {
         instructions: [
-          { programId: MEMO_PROGRAM_ID, data: bs58.encode(INTENT_HASH) },
+          {
+            programId: MEMO_PROGRAM_ID,
+            data: bs58.encode(Buffer.from(memoTextForIntent(INTENT_HASH), "utf8")),
+          },
           {
             programId: new PublicKey("TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"),
             parsed: {
