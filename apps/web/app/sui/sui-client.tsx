@@ -60,6 +60,16 @@ function recall(): string | null {
 
 const short = (s: string) => `${s.slice(0, 6)}...${s.slice(-4)}`;
 
+type Problem = { where: "connect" | "send"; text: string; declined: boolean };
+
+// Wallets word a declined request differently ("User rejected the request", "Cancelled", ...).
+const DECLINED = /reject|declin|den(y|ied)|cancel|closed|dismiss/i;
+
+function problem(where: Problem["where"], label: string, err: unknown): Problem {
+  const text = reportError(label, err);
+  return { where, text, declined: DECLINED.test(text) };
+}
+
 export function SuiClient({
   maxUsdc,
   relayerEnabled,
@@ -74,7 +84,7 @@ export function SuiClient({
   const [amount, setAmount] = useState("");
   const [recipient, setRecipient] = useState("");
   const [step, setStep] = useState<"idle" | "preparing" | "signing">("idle");
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<Problem | null>(null);
 
   const [digest, setDigest] = useState<string | null>(null);
   const [attest, setAttest] = useState<Attest>("unknown");
@@ -96,7 +106,7 @@ export function SuiClient({
       setWallet(entry);
       setAccount(acc);
     } catch (err) {
-      setError(reportError("sui wallet connect failed", err));
+      setError(problem("connect", "sui wallet connect failed", err));
     }
   }, []);
 
@@ -120,7 +130,11 @@ export function SuiClient({
       });
       const body = (await res.json()) as { transaction?: string; error?: string };
       if (!res.ok || !body.transaction) {
-        setError(body.error ?? "Could not prepare the transfer.");
+        setError({
+          where: "send",
+          text: body.error ?? "Could not prepare the transfer.",
+          declined: false,
+        });
         return;
       }
       setStep("signing");
@@ -130,7 +144,7 @@ export function SuiClient({
       setDelivery({ kind: "idle" });
       setDigest(tx);
     } catch (err) {
-      setError(reportError("sui burn failed", err));
+      setError(problem("send", "sui burn failed", err));
     } finally {
       setStep("idle");
     }
@@ -288,11 +302,7 @@ export function SuiClient({
               />
             </Field>
 
-            {error && (
-              <Notice tone="alarm" title="Could not send">
-                {error}
-              </Notice>
-            )}
+            {error && <ProblemNotice problem={error} />}
 
             <Button
               size="lg"
@@ -317,6 +327,28 @@ export function SuiClient({
         </Notice>
       )}
     </main>
+  );
+}
+
+function ProblemNotice({ problem }: { problem: Problem }) {
+  if (problem.declined) {
+    return (
+      <Notice
+        tone="info"
+        title={problem.where === "connect" ? "Wallet not connected" : "Wallet request cancelled"}
+      >
+        The wallet reported: {problem.text} If you did not cancel it yourself, the wallet window may
+        have been blocked or closed. Allow pop-ups for this site, then try again.
+      </Notice>
+    );
+  }
+  return (
+    <Notice
+      tone="alarm"
+      title={problem.where === "connect" ? "Could not connect" : "Could not send"}
+    >
+      {problem.text}
+    </Notice>
   );
 }
 
@@ -368,8 +400,18 @@ function WalletSection({
             onClick={() => onConnect(w)}
             className="justify-start"
           >
-            {w.icon && <img src={w.icon} alt="" className="h-5 w-5 rounded-md" />}
-            {w.name}
+            <span className="flex items-center justify-start gap-2.5 text-left">
+              {w.icon && (
+                <img
+                  src={w.icon}
+                  alt=""
+                  width={20}
+                  height={20}
+                  className="block h-5 w-5 shrink-0 rounded-md object-contain"
+                />
+              )}
+              <span className="truncate">{w.name}</span>
+            </span>
           </Button>
         ))}
       </div>
