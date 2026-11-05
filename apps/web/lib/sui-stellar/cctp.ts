@@ -1,0 +1,144 @@
+import { StrKey } from "@stellar/stellar-sdk";
+
+/**
+ * Sui to Stellar over CCTP V2, the parts that are pure functions: the burn's hook data, and the
+ * checks a completion makes on Circle's attested message before any XLM is spent on it.
+ *
+ * The flow, end to end:
+ *
+ *  1. The Sui wallet burns USDC with `mintRecipient` set to Circle's `CctpForwarder` on Stellar and
+ *     the real recipient in the hook data (`stellarForwardHook`). `destinationCaller` is zero, so
+ *     anyone may finish the transfer.
+ *  2. Circle attests the burn.
+ *  3. Someone calls `mint_and_forward(message, attestation)` on the forwarder and pays the XLM fee.
+ *     The forwarder mints, then pays the recipient named in the hook. Who submits does not matter.
+ *
+ * Everything the completion needs to trust is read out of the message, because the message is the
+ * copy Circle's contracts enforce. `verifyMessage` is the "say no before pay" gate.
+ */
+
+export const SUI_DOMAIN = 8;
+export const STELLAR_DOMAIN = 27;
+
+/** Circle's CctpForwarder on Stellar mainnet (the `mintRecipient` of every burn). */
+export const STELLAR_CCTP_FORWARDER = "CBZL2IH7F6BIDAA3WBNXYKIXSATJGMSW7K5P5MJ6STX5RXN47TZJDF5T";
+
+/** USDC has 6 decimals on Sui and in the CCTP message. Stellar's SAC uses 7; the contract converts. */
+export const USDC_DECIMALS = 6;
+
+const HOOK_HEADER = 32;
+
+/** The forwarder's contract id as the 32 bytes a Sui `address` argument carries. */
+export function forwarderAsSuiAddress(forwarder: string = STELLAR_CCTP_FORWARDER): string {
+  return `0x${Buffer.from(StrKey.decodeContract(forwarder)).toString("hex")}`;
+}
+
+export function isStellarRecipient(value: string): boolean {
+  return StrKey.isValidEd25519PublicKey(value) || StrKey.isValidContract(value);
+}
+
+/**
+ * Hook data the forwarder reads: a 32-byte header (version 0 at bytes 24..27, big-endian u32 length
+ * at 28..31) followed by the recipient's StrKey as UTF-8 text. Byte-for-byte what
+ * `@asctp/parabola`'s `encodeStellarForwardHook` produces.
+ */
+export function stellarForwardHook(recipient: string): Uint8Array {
+  if (!isStellarRecipient(recipient)) throw new Error(`Invalid Stellar address: ${recipient}`);
+  const body = Buffer.from(recipient, "utf8");
+  const hook = Buffer.alloc(HOOK_HEADER + body.length);
+  hook.writeUInt32BE(0, 24);
+  hook.writeUInt32BE(body.length, 28);
+  body.copy(hook, HOOK_HEADER);
+  return hook;
+}
+
+/** Parses a decimal USDC amount ("1", "1.5", "0.000001") into base units, or null. */
+export function parseUsdcAmount(input: string): bigint | null {
+  const m = /^(\d{1,12})(?:\.(\d{1,6}))?$/.exec(input.trim());
+  if (!m) return null;
+  const whole = m[1] ?? "0";
+  const frac = (m[2] ?? "").padEnd(USDC_DECIMALS, "0");
+  const value = BigInt(whole) * 10n ** BigInt(USDC_DECIMALS) + BigInt(frac || "0");
+  return value > 0n ? value : null;
+}
+
+export function formatUsdc(base: bigint): string {
+  const whole = base / 10n ** BigInt(USDC_DECIMALS);
+  const frac = (base % 10n ** BigInt(USDC_DECIMALS)).toString().padStart(USDC_DECIMALS, "0");
+  const trimmed = frac.replace(/0+$/, "");
+  return trimmed ? `${whole}.${trimmed}` : `${whole}`;
+}
+
+export interface ParsedMessage {
+  sourceDomain: number;
+  destinationDomain: number;
+  /** The destination chain's TokenMessenger, as the 32 bytes the message carries. */
+  destinationTokenMessenger: Buffer;
+  destinationCaller: Buffer;
+  mintRecipient: Buffer;
+  /** Base units, 6 decimals. */
+  amount: bigint;
+  hookData: Buffer;
+}
+
+// CCTP V2 message layout (Circle's `MessageV2` and `BurnMessageV2`).
+const HEADER_LENGTH = 148;
+const BODY_FIXED_LENGTH = 228;
+
+/** Reads the fields a completion cares about. Throws on anything that is not a V2 burn message. */
+export function parseMessage(message: Uint8Array): ParsedMessage {
+  const m = Buffer.from(message);
+  if (m.length < HEADER_LENGTH + BODY_FIXED_LENGTH) throw new Error("message is too short");
+  if (m.readUInt32BE(0) !== 1) throw new Error("not a CCTP V2 message");
+  const body = m.subarray(HEADER_LENGTH);
+  if (body.readUInt32BE(0) !== 1) throw new Error("not a CCTP V2 burn message");
+  const amount = BigInt(`0x${body.subarray(68, 100).toString("hex")}`);
+  return {
+    sourceDomain: m.readUInt32BE(4),
+    destinationDomain: m.readUInt32BE(8),
+    destinationTokenMessenger: Buffer.from(m.subarray(76, 108)),
+    destinationCaller: Buffer.from(m.subarray(108, 140)),
+    mintRecipient: Buffer.from(body.subarray(36, 68)),
+    amount,
+    hookData: Buffer.from(body.subarray(BODY_FIXED_LENGTH)),
+  };
+}
+
+export interface VerifiedBurn {
+  amount: bigint;
+  /** The Stellar address the forwarder will pay, read from the hook data and nowhere else. */
+  recipient: string;
+}
+
+/**
+ * Refuses anything that is not a USDC burn from Sui, aimed at Stellar's token messenger, minting to
+ * our forwarder, with a well-formed hook. Returns the recipient the forwarder will actually pay.
+ */
+export function verifyMessage(
+  message: Uint8Array,
+  opts: { tokenMessenger: string; forwarder?: string },
+): VerifiedBurn {
+  const p = parseMessage(message);
+  const forwarder = opts.forwarder ?? STELLAR_CCTP_FORWARDER;
+
+  if (p.sourceDomain !== SUI_DOMAIN) throw new Error("not a burn from Sui");
+  if (p.destinationDomain !== STELLAR_DOMAIN) throw new Error("not a burn to Stellar");
+  if (
+    !p.destinationTokenMessenger.equals(Buffer.from(StrKey.decodeContract(opts.tokenMessenger)))
+  ) {
+    throw new Error("addressed to a different token messenger");
+  }
+  if (!p.mintRecipient.equals(Buffer.from(StrKey.decodeContract(forwarder)))) {
+    throw new Error("does not mint to the CctpForwarder");
+  }
+  if (p.amount <= 0n) throw new Error("zero amount");
+
+  const hook = p.hookData;
+  if (hook.length <= HOOK_HEADER) throw new Error("missing forwarding hook");
+  const declared = hook.readUInt32BE(28);
+  if (declared !== hook.length - HOOK_HEADER) throw new Error("hook length does not match");
+  const recipient = hook.subarray(HOOK_HEADER).toString("utf8");
+  if (!isStellarRecipient(recipient)) throw new Error("hook does not name a Stellar address");
+
+  return { amount: p.amount, recipient };
+}

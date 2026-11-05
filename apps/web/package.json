@@ -16,6 +16,7 @@
   },
   "dependencies": {
     "@creit.tech/stellar-wallets-kit": "^1.6.0",
+    "@mysten/sui": "2.22.1",
     "@solana/web3.js": "^1.98.4",
     "@stellar/stellar-sdk": "^13.0.0",
     "@tanstack/react-query": "^5.62.0",

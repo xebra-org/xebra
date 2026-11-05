@@ -1,3 +1,37 @@
+# Sui
+
+Two different directions. **Sui to Stellar** is built as a switched-off pilot (next section). **Stellar to Sui**
+(Sui as a destination) is not built, and not buildable the way the other destinations are; the rest of this file
+explains why.
+
+## Sui to Stellar (pilot, built 2026-11-05, off by default)
+
+`/sui` lets a Sui wallet burn USDC to a Stellar address over CCTP V2. Circle attests the burn and a relayer
+account completes the mint on Stellar. Circle's docs still say Sui requires CCTP V1; the mainnet V2 contracts say
+otherwise, a simulated burn succeeded, and Iris prices `8/27`. **No real transfer has been run yet.**
+
+- Burn: Circle's `deposit_for_burn` to domain 27, `mintRecipient` = the Stellar `CctpForwarder`, the recipient in the
+  hook data, `destinationCaller` zero. Built on the server (`lib/sui-stellar/build-burn.ts`), signed in the user's wallet
+  (`lib/wallets/sui.ts`, Wallet Standard). No Sui key ever reaches the server.
+- Completion: `POST /api/sui-stellar/complete` waits for nothing; it reads Circle's attestation, refuses anything that is not
+  a Sui to Stellar USDC burn minting to the forwarder, refuses a recipient without a trustline, then calls `mint_and_forward`
+  from the relayer account. The recipient is read from the burn's own hook, never from the request, so a caller can only
+  finish a transfer someone already paid for.
+- Pre-spend checks live in `lib/sui-stellar/cctp.ts` and are tested against a real message Sui's mainnet contracts emitted.
+
+Server environment (Vercel, read at request time, not build inputs):
+
+| Variable | Meaning |
+|---|---|
+| `SUI_STELLAR_ENABLED` | `true` to serve `/sui` and its routes. Anything else: 404. |
+| `SUI_STELLAR_RELAYER_SECRET` | Funded mainnet Stellar secret that pays the fee (about 0.02 XLM per completion). Unset: users can burn but nothing completes it. Use a dedicated account holding a small float. |
+| `SUI_STELLAR_MAX_USDC` | Per-transfer cap, default 10. |
+| `SUI_RPC_URL` | Sui fullnode, default Mysten's public mainnet node. |
+
+Known limits: G... recipients only; standard finality only (Stellar has no Fast Transfer); the in-flight guard is per
+server instance, so two instances racing one digest can waste a failed fee but not funds. The standalone command-line
+versions are in `scripts/sui-to-stellar/`.
+
 # Sui as a destination
 
 **Status 2026-10-22: not built, and not buildable the way the other destinations are.**
