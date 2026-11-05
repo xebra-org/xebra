@@ -7,12 +7,15 @@ against injected `FillAdapter`/`ClaimAdapter` interfaces — 4 tests, no live ne
 `adapters/solana-fill.ts` and `adapters/stellar-claim.ts` are the concrete v1 implementations:
 
 - **Solana fill**: direct-inventory-match delivery (ATA-create + transfer + memo, via
-  `@xebra/chain-adapters`). `quote()` is unit-tested (3 tests); `fill()` signs and submits a
-  real transaction and isn't exercised live here (no Solana validator available in this build's
-  environment). Jupiter swap-route splicing for "solver only holds USDC" isn't implemented yet.
+  `@xebra/chain-adapters`). `quote()` is unit-tested (3 tests). `fill()` has run for real, on
+  2026-11-05, against a **local** `solana-test-validator` (not a public cluster; devnet's faucet
+  was closed) and was checked afterwards with `verifyDelivery`. That run found the memo had to be
+  text. It delivers exactly `minDestAmount` with no margin or price check, and Jupiter
+  swap-route splicing for "solver only holds USDC" isn't implemented, so it cannot swap yet.
 - **Stellar claim**: calls `claim` on the Stellar-source XebraEscrow via `@stellar/stellar-sdk`
-  (`Contract.call` + `TransactionBuilder` + `rpc.Server.prepareTransaction`/`sendTransaction`,
-  compiled against the real SDK types). Not exercised against a live Soroban RPC.
+  (`Contract.call` + `TransactionBuilder` + `rpc.Server.prepareTransaction`/`sendTransaction`)
+  and confirms through Horizon, because stellar-sdk 13 cannot decode protocol 23+ result
+  metadata. Run live against Stellar testnet on 2026-11-05.
 
 ## Running it
 

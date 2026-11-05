@@ -5,7 +5,8 @@ today is narrower: the CCTP rail goes through the Soroban wrapper v2, and Circle
 mints on the destination. There is no `cctp-relay` (deleted 2026-09-24), nothing on the deployment
 path uses Postgres, Redis, Redpanda or ECS, and the frontend connects wallets through Freighter,
 EIP-6963 and the Wallet Standard (no wagmi). Arc also sends to fourteen EVM chains and Solana by
-calling Circle directly. See the [README](../README.md).
+calling Circle directly. The solver no longer uses an event bus or a database: it polls Soroban RPC
+and keeps its state in one file (2026-11-05, see `apps/solver/README.md`). See the [README](../README.md).
 
 ## Context
 

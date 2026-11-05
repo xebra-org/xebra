@@ -1,6 +1,6 @@
 /**
- * @xebra/api — tRPC over Postgres. apps/web uses it only for the intent rail's status page
- * (`/intent/[hash]`); see docs/architecture.md §8.
+ * @xebra/api — tRPC over Postgres, for the intent rail. Not deployed, and nothing in apps/web
+ * calls it any more (the `/intent/[hash]` page was removed); see docs/architecture.md §8.
  */
 
 import { createHTTPServer } from "@trpc/server/adapters/standalone";

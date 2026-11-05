@@ -1,7 +1,8 @@
 # @xebra/api
 
 tRPC + thin REST facade over Postgres (docs/architecture.md §8). Part of the intent rail, which is
-not deployed: the only page in apps/web that calls it is `/intent/[hash]`; the bridge never does.
+not deployed, and nothing in apps/web calls it: the only page that did, `/intent/[hash]`, was removed
+on 2026-11-04.
 Route handlers stay thin: `quote.ts` (the CCTP-vs-intent/swap routing decision) and
 `repositories.ts` (the only Drizzle call sites) hold the real logic; `router.ts` just wires zod
 validation to them.
