@@ -43,6 +43,16 @@ Server environment (Vercel, read at request time, not build inputs):
 | `SUI_STELLAR_MAX_USDC` | Per-transfer cap, default 10. |
 | `SUI_RPC_URL` | Sui fullnode, default Mysten's public mainnet node. |
 
+On the main bridge screen, Sui appears in the "Send from" picker when `SUI_STELLAR_ENABLED=true`
+(`/api/sui-stellar/config` tells the page). It is the same transfer as `/sui`, embedded in the plate.
+
+**Claiming without a relayer.** Once Circle has attested a burn, the page offers "Claim on Stellar": the server prepares the
+`mint_and_forward` call with the user's own Stellar wallet as the source (`POST /api/sui-stellar/claim`), the wallet signs,
+and the browser submits it. The user pays the fee (about 0.025 XLM). Any funded Stellar account may do this for any burn; the
+recipient still comes only from the burn's hook. **The status route also reports `delivered`**: it simulates the mint and reads
+Circle's "nonce already used" contract error (`#6908`) as already minted, so a transfer finished by hand, by the relayer or in
+another browser shows as delivered instead of waiting forever.
+
 Known limits: G... recipients only; standard finality only (Stellar has no Fast Transfer); the in-flight guard is per
 server instance, so two instances racing one digest can waste a failed fee but not funds. The standalone command-line
 versions are in `scripts/sui-to-stellar/`.

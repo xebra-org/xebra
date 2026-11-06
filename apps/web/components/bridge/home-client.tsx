@@ -2,6 +2,7 @@
 
 import type React from "react";
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { SuiTransfer, hasRememberedSuiTransfer } from "../../app/sui/sui-client";
 import { type DeepLink, hasDeepLink, parseDeepLink } from "../../lib/deep-link";
 import { env, isCctpRailConfigured } from "../../lib/env";
 import { EVM_CHAINS, type EvmChainId, evmSources } from "../../lib/evm-chains";
@@ -30,7 +31,13 @@ import { StellarBridgeForm } from "./stellar-bridge-form";
  * whole page into client-only rendering and leave crawlers an empty shell.
  */
 /** Where a transfer can start: Stellar, through the wrapper, or an EVM chain, straight to Circle. */
-type SourceId = "stellar" | EvmChainId;
+type SourceId = "stellar" | "sui" | EvmChainId;
+
+/** What `/api/sui-stellar/config` says about the Sui source: absent until it answers, and when it is off. */
+interface SuiSource {
+  relayer: boolean;
+  maxUsdc: string;
+}
 
 export function HomeClient({ children }: { children?: React.ReactNode }) {
   const { connections, stellarKit: kit, open: openWallets } = useWallets();
@@ -38,7 +45,33 @@ export function HomeClient({ children }: { children?: React.ReactNode }) {
 
   // Stellar always; an EVM chain only once this build lets it send. With none on, there is one
   // source, no picker, and the screen is exactly the Stellar one.
-  const sources = useMemo<SourceId[]>(() => ["stellar", ...evmSources(env.evmRoutes)], []);
+  // Sui is switched on by a server setting, so it is asked for after mounting. Until it answers, or
+  // when it is off, the screen is exactly what it was.
+  const [sui, setSui] = useState<SuiSource | null>(null);
+  useEffect(() => {
+    let live = true;
+    fetch("/api/sui-stellar/config", { cache: "no-store" })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((c: { enabled?: boolean; relayer?: boolean; maxUsdc?: string } | null) => {
+        if (!live || !c?.enabled) return;
+        setSui({ relayer: c.relayer === true, maxUsdc: c.maxUsdc ?? "10" });
+        // A transfer this browser was following comes back on screen, as it does on /sui.
+        if (hasRememberedSuiTransfer() && !parseDeepLink(window.location.search).from) {
+          setFrom("sui");
+        }
+      })
+      .catch(() => {
+        // Off, or offline: the Sui source simply is not offered.
+      });
+    return () => {
+      live = false;
+    };
+  }, []);
+
+  const sources = useMemo<SourceId[]>(
+    () => ["stellar", ...(sui ? (["sui"] as const) : []), ...evmSources(env.evmRoutes)],
+    [sui],
+  );
   const manyRoutes = sources.length > 1;
   const [from, setFrom] = useState<SourceId>("stellar");
   // A transfer being signed, or a receipt on show, belongs to the source it started from.
@@ -133,7 +166,15 @@ export function HomeClient({ children }: { children?: React.ReactNode }) {
                 onBusyChange={setBusy}
                 prefill={prefill}
               />
-            ) : (
+            ) : from === "sui" && sui ? (
+              <SuiTransfer
+                embedded
+                maxUsdc={sui.maxUsdc}
+                relayerEnabled={sui.relayer}
+                sourcePicker={sourcePicker}
+                onBusyChange={setBusy}
+              />
+            ) : from === "sui" ? null : (
               // Keyed by source: a different chain is a different transfer, and nothing typed for
               // one (least of all a receipt) should survive into another.
               <EvmBridgeForm

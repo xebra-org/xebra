@@ -1,7 +1,6 @@
 "use client";
 
 import type { WalletAccount } from "@wallet-standard/base";
-import { useSearchParams } from "next/navigation";
 import type React from "react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Badge } from "../../components/ui/badge";
@@ -11,7 +10,9 @@ import { Field, Input } from "../../components/ui/field";
 import { GlassCard, InsetTray } from "../../components/ui/glass-card";
 import { ArrowRight, Check } from "../../components/ui/icons";
 import { Notice } from "../../components/ui/notice";
+import { useWallets } from "../../components/wallet/wallet-provider";
 import { reportError } from "../../lib/format-error";
+import { claimOnStellar } from "../../lib/sui-stellar/claim-client";
 import {
   type SuiWalletEntry,
   connectSui,
@@ -35,7 +36,7 @@ const DIGEST = /^[1-9A-HJ-NP-Za-km-z]{32,64}$/;
 type Delivery =
   | { kind: "idle" }
   | { kind: "completing" }
-  | { kind: "done"; hash: string }
+  | { kind: "done"; hash: string | null }
   | { kind: "stuck"; message: string };
 
 type Attest = "unknown" | "pending" | "complete";
@@ -58,6 +59,12 @@ function recall(): string | null {
   }
 }
 
+/** Whether a Sui transfer is in the address (`?tx=`) or was being followed in this browser. */
+export function hasRememberedSuiTransfer(): boolean {
+  const fromUrl = new URLSearchParams(window.location.search).get("tx")?.trim() ?? "";
+  return DIGEST.test(fromUrl) || recall() !== null;
+}
+
 const short = (s: string) => `${s.slice(0, 6)}...${s.slice(-4)}`;
 
 type Problem = { where: "connect" | "send"; text: string; declined: boolean };
@@ -70,6 +77,7 @@ function problem(where: Problem["where"], label: string, err: unknown): Problem 
   return { where, text, declined: DECLINED.test(text) };
 }
 
+/** The standalone `/sui` page: a heading around the same transfer the bridge screen embeds. */
 export function SuiClient({
   maxUsdc,
   relayerEnabled,
@@ -77,7 +85,46 @@ export function SuiClient({
   maxUsdc: string;
   relayerEnabled: boolean;
 }) {
-  const params = useSearchParams();
+  return (
+    <main className="mx-auto flex w-full max-w-lg flex-col gap-6 px-4 py-14 sm:px-5 sm:py-20">
+      <header className="px-1">
+        <h1 className="text-2xl font-semibold tracking-tight text-bone [text-wrap:balance]">
+          Send USDC from Sui to Stellar
+        </h1>
+        <p className="mt-3 text-[0.8125rem] leading-relaxed text-bone/50">
+          Burn native USDC on Sui with Circle&rsquo;s CCTP and it is minted on Stellar to the
+          address you choose. No wrapped tokens, and Xebra never holds your funds.
+        </p>
+      </header>
+
+      <Notice tone="info" title="Pilot on mainnet">
+        Real USDC, up to {maxUsdc} per transfer. Check the Stellar address twice: the mint goes only
+        to the address you enter, and a burn cannot be undone.
+      </Notice>
+
+      <SuiTransfer maxUsdc={maxUsdc} relayerEnabled={relayerEnabled} />
+    </main>
+  );
+}
+
+/**
+ * The whole transfer: connect a Sui wallet, burn, watch Circle attest it, and see the mint land on
+ * Stellar. Used standalone on `/sui` and, with `embedded`, inside the plate on the bridge screen,
+ * where the plate is the card and `sourcePicker` is the "Send from" row.
+ */
+export function SuiTransfer({
+  maxUsdc,
+  relayerEnabled,
+  embedded = false,
+  sourcePicker,
+  onBusyChange,
+}: {
+  maxUsdc: string;
+  relayerEnabled: boolean;
+  embedded?: boolean;
+  sourcePicker?: React.ReactNode;
+  onBusyChange?: (busy: boolean) => void;
+}) {
   const [wallets, setWallets] = useState<SuiWalletEntry[]>([]);
   const [wallet, setWallet] = useState<SuiWalletEntry | null>(null);
   const [account, setAccount] = useState<WalletAccount | null>(null);
@@ -90,14 +137,28 @@ export function SuiClient({
   const [attest, setAttest] = useState<Attest>("unknown");
   const [delivery, setDelivery] = useState<Delivery>({ kind: "idle" });
 
+  // Finishing the mint yourself needs a Stellar wallet that can pay the fee.
+  const { connections, stellarKit, open: openWallets } = useWallets();
+  const stellarAddress = connections.stellar?.address ?? null;
+  const [claiming, setClaiming] = useState(false);
+  const [claimError, setClaimError] = useState<string | null>(null);
+  const [recipientSeen, setRecipientSeen] = useState<string | null>(null);
+
   useEffect(() => watchSuiWallets(setWallets), []);
+
+  // Changing the source chain on the bridge screen is blocked while a transfer is on screen.
+  useEffect(() => {
+    onBusyChange?.(step !== "idle" || (digest !== null && delivery.kind !== "done"));
+  }, [onBusyChange, step, digest, delivery.kind]);
 
   // A transfer already under way: from the address bar, else from this browser.
   useEffect(() => {
-    const fromUrl = params.get("tx")?.trim() ?? "";
+    // Read from the address after mounting rather than through `useSearchParams`, which would make
+    // the bridge screen this is embedded in client-rendered only.
+    const fromUrl = new URLSearchParams(window.location.search).get("tx")?.trim() ?? "";
     const start = DIGEST.test(fromUrl) ? fromUrl : recall();
     if (start) setDigest(start);
-  }, [params]);
+  }, []);
 
   const connect = useCallback(async (entry: SuiWalletEntry) => {
     setError(null);
@@ -160,10 +221,22 @@ export function SuiClient({
     async function tick() {
       try {
         const s = await fetch(`/api/sui-stellar/status?digest=${digest}`, { cache: "no-store" });
-        const body = (await s.json()) as { state?: Attest };
+        const body = (await s.json()) as {
+          state?: Attest;
+          delivered?: boolean;
+          recipient?: string;
+        };
         const state: Attest = body.state ?? "unknown";
         if (cancelled) return;
         setAttest(state);
+        if (body.recipient) setRecipientSeen(body.recipient);
+
+        // Already minted, by the relayer, by hand, or from another browser: nothing left to do.
+        if (state === "complete" && body.delivered) {
+          setDelivery({ kind: "done", hash: null });
+          remember(null);
+          return;
+        }
 
         if (state === "complete" && relayerEnabled && !completing.current) {
           completing.current = true;
@@ -180,6 +253,11 @@ export function SuiClient({
           };
           completing.current = false;
           if (cancelled) return;
+          if (result.status === "delivered") {
+            setDelivery({ kind: "done", hash: null });
+            remember(null);
+            return;
+          }
           if (result.status === "submitted" && result.hash) {
             setDelivery({ kind: "done", hash: result.hash });
             remember(null);
@@ -215,118 +293,149 @@ export function SuiClient({
     setAttest("unknown");
     setDelivery({ kind: "idle" });
     setError(null);
+    setClaimError(null);
+    setRecipientSeen(null);
+  }
+
+  async function claim() {
+    if (!digest || !stellarKit || !stellarAddress) return;
+    setClaimError(null);
+    setClaiming(true);
+    try {
+      const r = await claimOnStellar(stellarKit, stellarAddress, digest);
+      setDelivery({ kind: "done", hash: r.delivered ? null : r.hash });
+      remember(null);
+    } catch (err) {
+      setClaimError(reportError("sui claim on stellar failed", err));
+    } finally {
+      setClaiming(false);
+    }
+  }
+
+  const progress = digest ? (
+    <Progress
+      digest={digest}
+      attest={attest}
+      delivery={delivery}
+      relayerEnabled={relayerEnabled}
+      recipient={recipientSeen}
+      stellarAddress={stellarAddress}
+      claiming={claiming}
+      claimError={claimError}
+      onClaim={claim}
+      onConnectStellar={() => openWallets(["stellar"])}
+      onRetry={() => setDelivery({ kind: "idle" })}
+      onReset={startOver}
+    />
+  ) : null;
+
+  const burnLabel =
+    step === "preparing"
+      ? "Preparing"
+      : step === "signing"
+        ? "Confirm in your wallet"
+        : "Burn on Sui";
+
+  const form = (
+    <div className="flex flex-col gap-6">
+      <WalletSection
+        wallets={wallets}
+        account={account}
+        walletName={wallet?.name ?? null}
+        onConnect={connect}
+        onDisconnect={() => {
+          setWallet(null);
+          setAccount(null);
+        }}
+      />
+
+      <Field
+        id="sui-amount"
+        label="Amount"
+        hint={`USDC on Sui. Up to ${maxUsdc} while this is a pilot.`}
+        trailing={<span className="text-xs text-bone/35">USDC</span>}
+      >
+        <Input
+          id="sui-amount"
+          inputMode="decimal"
+          autoComplete="off"
+          spellCheck={false}
+          value={amount}
+          onChange={(e) => setAmount(e.target.value)}
+          placeholder="0.00"
+          className="tabular h-12 text-base"
+          invalid={amount.trim() !== "" && !amountOk}
+        />
+      </Field>
+
+      <Field
+        id="sui-recipient"
+        label="Stellar address"
+        hint="An existing account that already holds a USDC trustline. Starts with G."
+        error={
+          recipient.trim() !== "" && !recipientOk ? "That is not a Stellar account address." : null
+        }
+      >
+        <Input
+          id="sui-recipient"
+          autoComplete="off"
+          spellCheck={false}
+          value={recipient}
+          onChange={(e) => setRecipient(e.target.value)}
+          placeholder="G..."
+          className="h-12 font-mono text-xs"
+          invalid={recipient.trim() !== "" && !recipientOk}
+        />
+      </Field>
+
+      {error && <ProblemNotice problem={error} />}
+
+      <Button
+        size="lg"
+        disabled={!canSend}
+        onClick={send}
+        trailing={<ArrowRight className="h-4 w-4" />}
+      >
+        {burnLabel}
+      </Button>
+    </div>
+  );
+
+  if (embedded) {
+    return (
+      <>
+        <h2 id="bridge-heading" className="sr-only">
+          Bridge USDC from Sui to Stellar
+        </h2>
+        <div className="px-5 py-6 sm:px-6">
+          {sourcePicker}
+          <Notice tone="info" title="Pilot on mainnet" className="mb-6">
+            Real USDC, up to {maxUsdc} per transfer. Check the Stellar address twice: the mint goes
+            only to the address you enter, and a burn cannot be undone.
+          </Notice>
+          {progress ?? form}
+        </div>
+      </>
+    );
   }
 
   return (
-    <main className="mx-auto flex w-full max-w-lg flex-col gap-6 px-4 py-14 sm:px-5 sm:py-20">
-      <header className="px-1">
-        <h1 className="text-2xl font-semibold tracking-tight text-bone [text-wrap:balance]">
-          Send USDC from Sui to Stellar
-        </h1>
-        <p className="mt-3 text-[0.8125rem] leading-relaxed text-bone/50">
-          Burn native USDC on Sui with Circle&rsquo;s CCTP and it is minted on Stellar to the
-          address you choose. No wrapped tokens, and Xebra never holds your funds.
-        </p>
-      </header>
-
-      <Notice tone="info" title="Pilot on mainnet">
-        Real USDC, up to {maxUsdc} per transfer. Check the Stellar address twice: the mint goes only
-        to the address you enter, and a burn cannot be undone.
-      </Notice>
-
-      {digest ? (
-        <Progress
-          digest={digest}
-          attest={attest}
-          delivery={delivery}
-          relayerEnabled={relayerEnabled}
-          onRetry={() => setDelivery({ kind: "idle" })}
-          onReset={startOver}
-        />
+    <>
+      {progress ? (
+        <GlassCard labelledBy="sui-progress-title" spotlight={false}>
+          <div className="p-5 sm:p-6">{progress}</div>
+        </GlassCard>
       ) : (
         <GlassCard labelledBy="sui-form-title" spotlight={false}>
-          <div className="flex flex-col gap-6 p-5 sm:p-6">
+          <div className="p-5 sm:p-6">
             <h2 id="sui-form-title" className="sr-only">
               Transfer details
             </h2>
-
-            <WalletSection
-              wallets={wallets}
-              account={account}
-              walletName={wallet?.name ?? null}
-              onConnect={connect}
-              onDisconnect={() => {
-                setWallet(null);
-                setAccount(null);
-              }}
-            />
-
-            <Field
-              id="sui-amount"
-              label="Amount"
-              hint={`USDC on Sui. Up to ${maxUsdc} while this is a pilot.`}
-              trailing={<span className="text-xs text-bone/35">USDC</span>}
-            >
-              <Input
-                id="sui-amount"
-                inputMode="decimal"
-                autoComplete="off"
-                spellCheck={false}
-                value={amount}
-                onChange={(e) => setAmount(e.target.value)}
-                placeholder="0.00"
-                className="tabular h-12 text-base"
-                invalid={amount.trim() !== "" && !amountOk}
-              />
-            </Field>
-
-            <Field
-              id="sui-recipient"
-              label="Stellar address"
-              hint="An existing account that already holds a USDC trustline. Starts with G."
-              error={
-                recipient.trim() !== "" && !recipientOk
-                  ? "That is not a Stellar account address."
-                  : null
-              }
-            >
-              <Input
-                id="sui-recipient"
-                autoComplete="off"
-                spellCheck={false}
-                value={recipient}
-                onChange={(e) => setRecipient(e.target.value)}
-                placeholder="G..."
-                className="h-12 font-mono text-xs"
-                invalid={recipient.trim() !== "" && !recipientOk}
-              />
-            </Field>
-
-            {error && <ProblemNotice problem={error} />}
-
-            <Button
-              size="lg"
-              disabled={!canSend}
-              onClick={send}
-              trailing={<ArrowRight className="h-4 w-4" />}
-            >
-              {step === "preparing"
-                ? "Preparing"
-                : step === "signing"
-                  ? "Confirm in your wallet"
-                  : "Burn on Sui"}
-            </Button>
+            {form}
           </div>
         </GlassCard>
       )}
-
-      {!relayerEnabled && (
-        <Notice tone="info" title="Completion is switched off here">
-          You can burn, but nothing finishes the mint on Stellar for you in this deployment. Keep
-          your transaction digest.
-        </Notice>
-      )}
-    </main>
+    </>
   );
 }
 
@@ -424,6 +533,12 @@ function Progress({
   attest,
   delivery,
   relayerEnabled,
+  recipient,
+  stellarAddress,
+  claiming,
+  claimError,
+  onClaim,
+  onConnectStellar,
   onRetry,
   onReset,
 }: {
@@ -431,105 +546,129 @@ function Progress({
   attest: Attest;
   delivery: Delivery;
   relayerEnabled: boolean;
+  recipient: string | null;
+  stellarAddress: string | null;
+  claiming: boolean;
+  claimError: string | null;
+  onClaim: () => void;
+  onConnectStellar: () => void;
   onRetry: () => void;
   onReset: () => void;
 }) {
   const attested = attest === "complete";
   const done = delivery.kind === "done";
+  // The relayer finishes the mint by itself. Without one, or when it gave up, the person who sent
+  // it can finish it from their own Stellar wallet and pay the fee.
+  const canClaim = attested && !done && (!relayerEnabled || delivery.kind === "stuck");
   return (
-    <GlassCard labelledBy="sui-progress-title" spotlight={false}>
-      <div className="flex flex-col gap-5 p-5 sm:p-6">
-        <div className="flex items-center justify-between gap-3">
-          <h2 id="sui-progress-title" className="text-sm font-semibold text-bone/85">
-            {done ? "Delivered" : "On its way"}
-          </h2>
-          <Badge tone={done ? "signal" : "neutral"}>{done ? "Complete" : "In progress"}</Badge>
-        </div>
+    <div className="flex flex-col gap-5">
+      <div className="flex items-center justify-between gap-3">
+        <h2 id="sui-progress-title" className="text-sm font-semibold text-bone/85">
+          {done ? "Delivered" : "On its way"}
+        </h2>
+        <Badge tone={done ? "signal" : "neutral"}>{done ? "Complete" : "In progress"}</Badge>
+      </div>
 
-        <InsetTray>
-          <ol className="flex flex-col gap-4">
-            <Row
-              state="done"
-              title="Burned on Sui"
-              detail={
+      <InsetTray>
+        <ol className="flex flex-col gap-4">
+          <Row
+            state="done"
+            title="Burned on Sui"
+            detail={
+              <a
+                className="font-mono text-xs underline decoration-bone/20 underline-offset-4 hover:decoration-bone/60"
+                href={`https://suivision.xyz/txblock/${digest}`}
+                target="_blank"
+                rel="noreferrer"
+              >
+                {short(digest)}
+              </a>
+            }
+          />
+          <Row
+            state={attested ? "done" : "active"}
+            title="Attested by Circle"
+            detail={
+              attested ? undefined : (
+                <span className="text-xs text-bone/40">
+                  Usually a minute or two. This page keeps checking.
+                </span>
+              )
+            }
+          />
+          <Row
+            state={done ? "done" : attested ? "active" : "waiting"}
+            title="Minted on Stellar"
+            detail={
+              delivery.kind === "done" && delivery.hash ? (
                 <a
                   className="font-mono text-xs underline decoration-bone/20 underline-offset-4 hover:decoration-bone/60"
-                  href={`https://suivision.xyz/txblock/${digest}`}
+                  href={`https://stellar.expert/explorer/public/tx/${delivery.hash}`}
                   target="_blank"
                   rel="noreferrer"
                 >
-                  {short(digest)}
+                  {short(delivery.hash)}
                 </a>
-              }
-            />
-            <Row
-              state={attested ? "done" : "active"}
-              title="Attested by Circle"
-              detail={
-                attested ? undefined : (
-                  <span className="text-xs text-bone/40">
-                    Usually a minute or two. This page keeps checking.
-                  </span>
-                )
-              }
-            />
-            <Row
-              state={done ? "done" : attested && relayerEnabled ? "active" : "waiting"}
-              title="Minted on Stellar"
-              detail={
-                delivery.kind === "done" ? (
-                  <a
-                    className="font-mono text-xs underline decoration-bone/20 underline-offset-4 hover:decoration-bone/60"
-                    href={`https://stellar.expert/explorer/public/tx/${delivery.hash}`}
-                    target="_blank"
-                    rel="noreferrer"
-                  >
-                    {short(delivery.hash)}
-                  </a>
-                ) : undefined
-              }
-            />
-          </ol>
-        </InsetTray>
+              ) : recipient ? (
+                <span className="font-mono text-xs text-bone/40">to {short(recipient)}</span>
+              ) : undefined
+            }
+          />
+        </ol>
+      </InsetTray>
 
-        {delivery.kind === "stuck" && (
-          <Notice tone="alarm" title="The mint did not complete">
-            {delivery.message} Your USDC is not lost. Circle&rsquo;s attestation is public, so the
-            mint can still be completed, and the same digest can be tried again.
-            <div className="mt-3">
-              <Button variant="secondary" size="sm" onClick={onRetry}>
-                Try again
+      {delivery.kind === "stuck" && (
+        <Notice tone="alarm" title="The mint did not complete">
+          {delivery.message} Your USDC is not lost. Circle&rsquo;s attestation is public, so the
+          mint can still be completed, and the same digest can be tried again.
+          <div className="mt-3">
+            <Button variant="secondary" size="sm" onClick={onRetry}>
+              Try again
+            </Button>
+          </div>
+        </Notice>
+      )}
+
+      {canClaim && (
+        <Notice tone="info" title="Claim it on Stellar">
+          Circle has attested the burn, so the USDC is ready to mint
+          {recipient ? ` to ${short(recipient)}` : ""}. Finish it from your own Stellar wallet: you
+          sign once and pay the network fee, a few hundredths of an XLM. Any Stellar wallet will do,
+          it does not have to be the recipient&rsquo;s.
+          {claimError && <p className="mt-3 text-bone/70">{claimError}</p>}
+          <div className="mt-3">
+            {stellarAddress ? (
+              <Button variant="primary" size="sm" disabled={claiming} onClick={onClaim}>
+                {claiming ? "Confirm in your wallet" : "Claim on Stellar"}
               </Button>
-            </div>
-          </Notice>
-        )}
+            ) : (
+              <Button variant="secondary" size="sm" onClick={onConnectStellar}>
+                Connect a Stellar wallet
+              </Button>
+            )}
+          </div>
+        </Notice>
+      )}
 
-        {!relayerEnabled && attested && (
-          <Notice tone="info" title="Attested and waiting">
-            Circle has attested the burn. Completion is not switched on in this deployment, so keep
-            the digest above until it is.
-          </Notice>
-        )}
+      {done && (
+        <Notice tone="signal" title="USDC minted on Stellar">
+          The recipient now holds the USDC.
+          {delivery.hash ? " The links above show both sides on public explorers." : ""}
+        </Notice>
+      )}
 
-        {done && (
-          <Notice tone="signal" title="USDC minted on Stellar">
-            The recipient now holds the USDC. The links above show both sides on public explorers.
-          </Notice>
+      <div className={cn("flex", done ? "justify-end" : "justify-between")}>
+        {!done && (
+          <p className="max-w-[18rem] text-xs leading-relaxed text-bone/35">
+            Safe to close this tab. Come back to this page on the same browser and it picks up where
+            it left off.
+          </p>
         )}
-
-        <div className={cn("flex", done ? "justify-end" : "justify-between")}>
-          {!done && (
-            <p className="max-w-[18rem] text-xs leading-relaxed text-bone/35">
-              Safe to close this tab. Come back to this page on the same browser and it picks up
-              where it left off.
-            </p>
-          )}
-          <Button variant={done ? "primary" : "quiet"} size="sm" onClick={onReset}>
-            {done ? "Send another" : "Start over"}
-          </Button>
-        </div>
+        <Button variant={done ? "primary" : "quiet"} size="sm" onClick={onReset}>
+          {done ? "Send another" : "Start over"}
+        </Button>
       </div>
-    </GlassCard>
+    </div>
   );
 }
 

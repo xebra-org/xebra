@@ -15,6 +15,7 @@ import { cn } from "../ui/cn";
  */
 export type Chain =
   | "stellar"
+  | "sui"
   | "solana"
   | "arc"
   | "avalanche"
@@ -34,6 +35,7 @@ export type Chain =
 
 const SRC: Record<Chain, string> = {
   stellar: "/chains/stellar.png",
+  sui: "/chains/sui.png",
   solana: "/chains/solana.png",
   arc: "/chains/arc.png",
   avalanche: "/chains/avalanche.png",
@@ -72,6 +74,7 @@ export function ChainGlyph({ chain, className }: { chain: Chain; className?: str
 
 export const CHAIN_NAMES: Record<Chain, string> = {
   stellar: "Stellar",
+  sui: "Sui",
   solana: "Solana",
   arc: "Arc",
   avalanche: "Avalanche",
