@@ -8,7 +8,7 @@ explains why.
 
 `/sui` lets a Sui wallet burn USDC to a Stellar address over CCTP V2. Circle attests the burn and a relayer
 account completes the mint on Stellar. Circle's docs still say Sui requires CCTP V1; the mainnet V2 contracts say
-otherwise, a simulated burn succeeded, and Iris prices `8/27`. **No real transfer has been run yet.**
+otherwise, a simulated burn succeeded, and Iris prices `8/27`. **One real transfer has completed end to end (2026-11-06); see the record below.**
 
 - Burn: Circle's `deposit_for_burn` to domain 27, `mintRecipient` = the Stellar `CctpForwarder`, the recipient in the
   hook data, `destinationCaller` zero. Built on the server (`lib/sui-stellar/build-burn.ts`), signed in the user's wallet
@@ -18,6 +18,21 @@ otherwise, a simulated burn succeeded, and Iris prices `8/27`. **No real transfe
   from the relayer account. The recipient is read from the burn's own hook, never from the request, so a caller can only
   finish a transfer someone already paid for.
 - Pre-spend checks live in `lib/sui-stellar/cctp.ts` and are tested against a real message Sui's mainnet contracts emitted.
+
+### First real transfer (2026-11-06)
+
+1 USDC, Sui mainnet to Stellar mainnet, burned from a user's Sui wallet:
+
+| Step | Record |
+|---|---|
+| Sui burn | [`37cRcRxVbwscXJAjLfqmXh19CDdKeHMBVJ1GMSqJKEE7`](https://suivision.xyz/txblock/37cRcRxVbwscXJAjLfqmXh19CDdKeHMBVJ1GMSqJKEE7) (domain 8 to 27, `mintRecipient` the `CctpForwarder`, 1.000000 USDC, standard finality 2000, fee 0) |
+| Circle | Iris returned the attested V2 message for the digest (`status: complete`) |
+| Stellar mint | [`6717506538f94e3bde364920991d2c7d9181635ddf4f6a4d3e466e45260e6f5d`](https://stellar.expert/explorer/public/tx/6717506538f94e3bde364920991d2c7d9181635ddf4f6a4d3e466e45260e6f5d), ledger 65335320, fee 0.025 XLM |
+| Result | The recipient's USDC balance went from 0.0351801 to 1.0351801 |
+
+The mint was submitted by hand with `scripts/sui-to-stellar/complete.mts` (simulated first), because the production
+deployment had no `SUI_STELLAR_RELAYER_SECRET` set yet. So the burn, the attestation and `mint_and_forward` are proven;
+the automatic relayer path on the site has not completed a transfer yet.
 
 Server environment (Vercel, read at request time, not build inputs):
 
