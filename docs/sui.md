@@ -8,7 +8,7 @@ explains why.
 
 `/sui` lets a Sui wallet burn USDC to a Stellar address over CCTP V2. Circle attests the burn and a relayer
 account completes the mint on Stellar. Circle's docs still say Sui requires CCTP V1; the mainnet V2 contracts say
-otherwise, a simulated burn succeeded, and Iris prices `8/27`. **One real transfer has completed end to end (2026-11-06); see the record below.**
+otherwise, a simulated burn succeeded, and Iris prices `8/27`. **Two real transfers have completed end to end (2026-11-06); see the record below.**
 
 - Burn: Circle's `deposit_for_burn` to domain 27, `mintRecipient` = the Stellar `CctpForwarder`, the recipient in the
   hook data, `destinationCaller` zero. Built on the server (`lib/sui-stellar/build-burn.ts`), signed in the user's wallet
@@ -19,7 +19,7 @@ otherwise, a simulated burn succeeded, and Iris prices `8/27`. **One real transf
   finish a transfer someone already paid for.
 - Pre-spend checks live in `lib/sui-stellar/cctp.ts` and are tested against a real message Sui's mainnet contracts emitted.
 
-### First real transfer (2026-11-06)
+### First real transfer (2026-11-06), finished by hand
 
 1 USDC, Sui mainnet to Stellar mainnet, burned from a user's Sui wallet:
 
@@ -33,6 +33,22 @@ otherwise, a simulated burn succeeded, and Iris prices `8/27`. **One real transf
 The mint was submitted by hand with `scripts/sui-to-stellar/complete.mts` (simulated first), because the production
 deployment had no `SUI_STELLAR_RELAYER_SECRET` set yet. So the burn, the attestation and `mint_and_forward` are proven;
 the automatic relayer path on the site has not completed a transfer yet.
+
+### Second transfer (2026-11-06), finished by the user from the page
+
+Another 1 USDC to the same recipient, completed with no help from us:
+
+| Step | Record |
+|---|---|
+| Sui burn | [`9hjSiHimU8nfpeWwFHau61czUBhVRqr7goiPxhvVUbR1`](https://suivision.xyz/txblock/9hjSiHimU8nfpeWwFHau61czUBhVRqr7goiPxhvVUbR1) (domain 8 to 27, 1.000000 USDC, fee 0) |
+| Stellar mint | [`f3c29b36ebcc86901794f8b11e650c57b005d965c4b827d1691a23b7f585edee`](https://stellar.expert/explorer/public/tx/f3c29b36ebcc86901794f8b11e650c57b005d965c4b827d1691a23b7f585edee), ledger 65336298, 2026-11-06 12:18 UTC, fee 0.025 XLM |
+| Payer | A personal Stellar account (`GB3JS2AJ...KUZW`), neither our deployer nor a relayer, so the user paid the fee |
+| Result | The recipient's USDC balance went from 1.0351801 to 2.0351801; the site's status route reports the burn as `delivered` |
+
+This landed 12 minutes after the "Claim on Stellar" button went live in production (commit `2e95ab5`, 12:06 UTC), with the same
+fee and the same effects as the hand-run mint. Chain data cannot show which client submitted it, so this is consistent with the
+button working, not proof of it. The relayer secret is still unset, so completion is not automatic; the claim button is what
+makes that optional.
 
 Server environment (Vercel, read at request time, not build inputs):
 
