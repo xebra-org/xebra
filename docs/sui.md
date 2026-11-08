@@ -8,7 +8,7 @@ explains why.
 
 `/sui` lets a Sui wallet burn USDC to a Stellar address over CCTP V2. Circle attests the burn and a relayer
 account completes the mint on Stellar. Circle's docs still say Sui requires CCTP V1; the mainnet V2 contracts say
-otherwise, a simulated burn succeeded, and Iris prices `8/27`. **Two real transfers have completed end to end (2026-11-06); see the record below.**
+otherwise, a simulated burn succeeded, and Iris prices `8/27`. **Three real transfers have completed end to end (two on 2026-11-06, one on 2026-11-08); see the records below.**
 
 - Burn: Circle's `deposit_for_burn` to domain 27, `mintRecipient` = the Stellar `CctpForwarder`, the recipient in the
   hook data, `destinationCaller` zero. Built on the server (`lib/sui-stellar/build-burn.ts`), signed in the user's wallet
@@ -32,7 +32,7 @@ otherwise, a simulated burn succeeded, and Iris prices `8/27`. **Two real transf
 
 The mint was submitted by hand with `scripts/sui-to-stellar/complete.mts` (simulated first), because the production
 deployment had no `SUI_STELLAR_RELAYER_SECRET` set yet. So the burn, the attestation and `mint_and_forward` are proven;
-the automatic relayer path on the site has not completed a transfer yet.
+the automatic relayer path had not completed a transfer at that point (it has since; see the third transfer).
 
 ### Second transfer (2026-11-06), finished by the user from the page
 
@@ -47,8 +47,24 @@ Another 1 USDC to the same recipient, completed with no help from us:
 
 This landed 12 minutes after the "Claim on Stellar" button went live in production (commit `2e95ab5`, 12:06 UTC), with the same
 fee and the same effects as the hand-run mint. Chain data cannot show which client submitted it, so this is consistent with the
-button working, not proof of it. The relayer secret is still unset, so completion is not automatic; the claim button is what
+button working, not proof of it. The relayer secret was still unset then, so completion was not automatic; the claim button is what
 makes that optional.
+
+### Third transfer (2026-11-08), completed automatically by the relayer
+
+The first transfer to finish with no human step after the burn. The relayer secret was set in Vercel that morning
+(`GET /api/sui-stellar/config` then returned `relayer: true`), and a user burned 30 USDC from Sui:
+
+| Step | Record |
+|---|---|
+| Sui burn | 30 USDC, domain 8 to 27. The Sui digest was not recorded here. |
+| Stellar mint | [`9d760579e059d0a33c71ee7d7b23ce509a4cb5c09dc996bbbc801eed4a5ac35c`](https://stellar.expert/explorer/public/tx/9d760579e059d0a33c71ee7d7b23ce509a4cb5c09dc996bbbc801eed4a5ac35c), ledger 65368960, 2026-11-08 09:40:42 UTC, fee 0.0250207 XLM |
+| Payer | The dedicated relayer account `GALILA7J...CLAG` (source of the transaction) |
+| Result | 30.0000000 USDC credited to `GAE6BEVE...WUJY`, the recipient in the burn's hook |
+
+This is the first mint where the relayer account, not a person's wallet, paid the fee, so the automatic path on the site is
+now proven on mainnet. The 30 USDC is above the old 10 USDC cap, which was removed the same day. No Xebra fee was taken: the Sui side has no
+fee contract yet (`contracts/sui-wrapper/`, not published).
 
 Server environment (Vercel, read at request time, not build inputs):
 
