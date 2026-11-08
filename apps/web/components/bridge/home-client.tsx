@@ -36,7 +36,7 @@ type SourceId = "stellar" | "sui" | EvmChainId;
 /** What `/api/sui-stellar/config` says about the Sui source: absent until it answers, and when it is off. */
 interface SuiSource {
   relayer: boolean;
-  maxUsdc: string;
+  maxUsdc: string | null;
 }
 
 export function HomeClient({ children }: { children?: React.ReactNode }) {
@@ -52,9 +52,9 @@ export function HomeClient({ children }: { children?: React.ReactNode }) {
     let live = true;
     fetch("/api/sui-stellar/config", { cache: "no-store" })
       .then((r) => (r.ok ? r.json() : null))
-      .then((c: { enabled?: boolean; relayer?: boolean; maxUsdc?: string } | null) => {
+      .then((c: { enabled?: boolean; relayer?: boolean; maxUsdc?: string | null } | null) => {
         if (!live || !c?.enabled) return;
-        setSui({ relayer: c.relayer === true, maxUsdc: c.maxUsdc ?? "10" });
+        setSui({ relayer: c.relayer === true, maxUsdc: c.maxUsdc ?? null });
         // A transfer this browser was following comes back on screen, as it does on /sui.
         if (hasRememberedSuiTransfer() && !parseDeepLink(window.location.search).from) {
           setFrom("sui");

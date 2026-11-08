@@ -56,7 +56,7 @@ Server environment (Vercel, read at request time, not build inputs):
 |---|---|
 | `SUI_STELLAR_ENABLED` | `true` to serve `/sui` and its routes. Anything else: 404. |
 | `SUI_STELLAR_RELAYER_SECRET` | Funded mainnet Stellar secret that pays the fee (about 0.02 XLM per completion). Unset: users can burn but nothing completes it. Use a dedicated account holding a small float. |
-| `SUI_STELLAR_MAX_USDC` | Per-transfer cap, default 10. |
+| `SUI_STELLAR_MAX_USDC` | Optional per-transfer cap in USDC. Unset means no cap (it was 10 until 2026-11-08). |
 | `SUI_RPC_URL` | Sui fullnode, default Mysten's public mainnet node. |
 
 On the main bridge screen, Sui appears in the "Send from" picker when `SUI_STELLAR_ENABLED=true`

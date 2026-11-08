@@ -11,10 +11,14 @@ export const dynamic = "force-dynamic";
 
 export default function SuiPage() {
   if (!suiStellarEnabled()) notFound();
+  const cap = maxUsdcBase();
   return (
     <>
       <ContentHeader current="/sui" />
-      <SuiClient maxUsdc={formatUsdc(maxUsdcBase())} relayerEnabled={relayerSecret() !== null} />
+      <SuiClient
+        maxUsdc={cap === null ? null : formatUsdc(cap)}
+        relayerEnabled={relayerSecret() !== null}
+      />
       <SiteFooter wrapperContractId={env.cctpWrapperContractId} contractLabel="Stellar contract" />
     </>
   );

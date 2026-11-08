@@ -9,9 +9,14 @@ export const dynamic = "force-dynamic";
 
 export function GET(): Response {
   const enabled = suiStellarEnabled();
+  const cap = maxUsdcBase();
   return Response.json(
     enabled
-      ? { enabled, relayer: relayerSecret() !== null, maxUsdc: formatUsdc(maxUsdcBase()) }
+      ? {
+          enabled,
+          relayer: relayerSecret() !== null,
+          maxUsdc: cap === null ? null : formatUsdc(cap),
+        }
       : { enabled },
     { headers: { "cache-control": "no-store" } },
   );

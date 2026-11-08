@@ -54,9 +54,9 @@ export async function POST(request: Request): Promise<Response> {
     return Response.json({ error: "Enter an amount of USDC, up to 6 decimals." }, { status: 400 });
   }
   const cap = maxUsdcBase();
-  if (amount > cap) {
+  if (cap !== null && amount > cap) {
     return Response.json(
-      { error: `This is a pilot. The limit is ${formatUsdc(cap)} USDC per transfer.` },
+      { error: `The limit is ${formatUsdc(cap)} USDC per transfer.` },
       { status: 422 },
     );
   }

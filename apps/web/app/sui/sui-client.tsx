@@ -82,7 +82,7 @@ export function SuiClient({
   maxUsdc,
   relayerEnabled,
 }: {
-  maxUsdc: string;
+  maxUsdc: string | null;
   relayerEnabled: boolean;
 }) {
   return (
@@ -98,8 +98,8 @@ export function SuiClient({
       </header>
 
       <Notice tone="info" title="Pilot on mainnet">
-        Real USDC, up to {maxUsdc} per transfer. Check the Stellar address twice: the mint goes only
-        to the address you enter, and a burn cannot be undone.
+        Real USDC{maxUsdc !== null ? `, up to ${maxUsdc} per transfer` : ""}. Check the Stellar
+        address twice: the mint goes only to the address you enter, and a burn cannot be undone.
       </Notice>
 
       <SuiTransfer maxUsdc={maxUsdc} relayerEnabled={relayerEnabled} />
@@ -119,7 +119,7 @@ export function SuiTransfer({
   sourcePicker,
   onBusyChange,
 }: {
-  maxUsdc: string;
+  maxUsdc: string | null;
   relayerEnabled: boolean;
   embedded?: boolean;
   sourcePicker?: React.ReactNode;
@@ -352,7 +352,7 @@ export function SuiTransfer({
       <Field
         id="sui-amount"
         label="Amount"
-        hint={`USDC on Sui. Up to ${maxUsdc} while this is a pilot.`}
+        hint={maxUsdc !== null ? `USDC on Sui. Up to ${maxUsdc} per transfer.` : "USDC on Sui."}
         trailing={<span className="text-xs text-bone/35">USDC</span>}
       >
         <Input
@@ -410,8 +410,8 @@ export function SuiTransfer({
         <div className="px-5 py-6 sm:px-6">
           {sourcePicker}
           <Notice tone="info" title="Pilot on mainnet" className="mb-6">
-            Real USDC, up to {maxUsdc} per transfer. Check the Stellar address twice: the mint goes
-            only to the address you enter, and a burn cannot be undone.
+            Real USDC{maxUsdc !== null ? `, up to ${maxUsdc} per transfer` : ""}. Check the Stellar
+            address twice: the mint goes only to the address you enter, and a burn cannot be undone.
           </Notice>
           {progress ?? form}
         </div>
