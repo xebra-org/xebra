@@ -13,7 +13,9 @@ unverified. Start with 1 USDC.
 1. `burn.mts` calls Circle's Sui `deposit_for_burn` (the same call sequence as Circle's own
    `sui-cctp` `addDepositForBurnV2`) with destination domain 27, `mintRecipient` = Stellar's
    `CctpForwarder`, and the real recipient in the hook data (32-byte header + the G... address as
-   text, the encoding `@asctp/parabola` uses). `destinationCaller` is zero, so anyone can finish it.
+   text, the encoding `@asctp/parabola` uses). `destinationCaller` is the forwarder too, as Circle
+   requires (zero would let anyone call `receive_message` directly and strand the USDC). Anyone can
+   still finish it through `mint_and_forward`.
 2. Circle's Iris service attests the burn.
 3. `complete.mts` waits for the attestation and calls `mint_and_forward` on the forwarder from any
    funded XLM account. The recipient is fixed by the burn, so the fee payer cannot redirect funds.

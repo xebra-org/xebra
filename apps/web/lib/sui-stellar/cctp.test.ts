@@ -1,6 +1,8 @@
+import { StrKey } from "@stellar/stellar-sdk";
 import { describe, expect, it } from "vitest";
 import {
   STELLAR_CCTP_FORWARDER,
+  burnDestinationCaller,
   formatUsdc,
   forwarderAsSuiAddress,
   parseMessage,
@@ -27,6 +29,28 @@ function tampered(offset: number, value: number): Buffer {
   copy[offset] = value;
   return copy;
 }
+
+/** Header bytes 108..140 are the message's destinationCaller. */
+function withCaller(caller: Buffer): Buffer {
+  const copy = Buffer.from(REAL_MESSAGE);
+  caller.copy(copy, 108);
+  return copy;
+}
+
+function forwarderBytes(): Buffer {
+  return Buffer.from(StrKey.decodeContract(STELLAR_CCTP_FORWARDER));
+}
+
+describe("burnDestinationCaller", () => {
+  // Circle: on a burn to Stellar, BOTH mintRecipient and destinationCaller must be the
+  // CctpForwarder. With a zero caller anyone can call receive_message directly, which mints into
+  // the forwarder without paying the recipient, and the USDC is stuck for good.
+  it("is the forwarder, never zero", () => {
+    expect(burnDestinationCaller()).toBe(forwarderAsSuiAddress());
+    expect(burnDestinationCaller()).toBe(`0x${forwarderBytes().toString("hex")}`);
+    expect(BigInt(burnDestinationCaller())).not.toBe(0n);
+  });
+});
 
 describe("stellarForwardHook", () => {
   it("is the 32-byte header plus the address text", () => {
@@ -91,6 +115,22 @@ describe("verifyMessage", () => {
     expect(() =>
       verifyMessage(tampered(148 + 36, 0xff), { tokenMessenger: TOKEN_MESSENGER }),
     ).toThrow(/CctpForwarder/);
+  });
+
+  it("accepts a burn whose destinationCaller is the forwarder (every burn built since the fix)", () => {
+    const v = verifyMessage(withCaller(forwarderBytes()), { tokenMessenger: TOKEN_MESSENGER });
+    expect(v).toEqual({ amount: 1_000_000n, recipient: RECIPIENT });
+  });
+
+  it("still accepts a zero destinationCaller, so burns made before the fix can be finished", () => {
+    const v = verifyMessage(withCaller(Buffer.alloc(32)), { tokenMessenger: TOKEN_MESSENGER });
+    expect(v.recipient).toBe(RECIPIENT);
+  });
+
+  it("refuses any other destinationCaller: mint_and_forward could not complete it", () => {
+    expect(() =>
+      verifyMessage(withCaller(Buffer.alloc(32, 0xab)), { tokenMessenger: TOKEN_MESSENGER }),
+    ).toThrow(/destinationCaller/);
   });
 
   it("refuses a hook whose declared length is wrong", () => {

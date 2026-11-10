@@ -1,6 +1,11 @@
 import { SuiGrpcClient } from "@mysten/sui/grpc";
 import { Transaction, type TransactionObjectArgument } from "@mysten/sui/transactions";
-import { STELLAR_DOMAIN, forwarderAsSuiAddress, stellarForwardHook } from "./cctp";
+import {
+  STELLAR_DOMAIN,
+  burnDestinationCaller,
+  forwarderAsSuiAddress,
+  stellarForwardHook,
+} from "./cctp";
 import { suiRpcUrl } from "./config";
 
 /**
@@ -100,8 +105,10 @@ export async function buildBurn(
         coin,
         tx.pure.u32(STELLAR_DOMAIN),
         tx.pure.address(forwarderAsSuiAddress()),
-        // destinationCaller zero: anyone may complete the mint, which is what lets us relay it.
-        tx.pure.address("0x0"),
+        // destinationCaller = the forwarder, as Circle requires. Zero would let anyone call
+        // receive_message directly and strand the USDC in the forwarder. Relaying and self-claim
+        // still work: they go through mint_and_forward, which anyone may call.
+        tx.pure.address(burnDestinationCaller()),
         tx.pure.u256(0n),
         tx.pure.u32(STANDARD_FINALITY),
         tx.pure.vector("u8", Array.from(stellarForwardHook(p.stellarRecipient))),

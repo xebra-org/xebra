@@ -11,10 +11,11 @@ account completes the mint on Stellar. Circle's docs still say Sui requires CCTP
 otherwise, a simulated burn succeeded, and Iris prices `8/27`. **Three real transfers have completed end to end (two on 2026-11-06, one on 2026-11-08); see the records below.**
 
 - Burn: Circle's `deposit_for_burn` to domain 27, `mintRecipient` = the Stellar `CctpForwarder`, the recipient in the
-  hook data, `destinationCaller` zero. Built on the server (`lib/sui-stellar/build-burn.ts`), signed in the user's wallet
+  hook data, `destinationCaller` = the `CctpForwarder` as well (since 2026-11-10; the first three transfers used zero,
+  which Circle warns lets anyone call `receive_message` directly and strand the USDC in the forwarder). Built on the server (`lib/sui-stellar/build-burn.ts`), signed in the user's wallet
   (`lib/wallets/sui.ts`, Wallet Standard). No Sui key ever reaches the server.
 - Completion: `POST /api/sui-stellar/complete` waits for nothing; it reads Circle's attestation, refuses anything that is not
-  a Sui to Stellar USDC burn minting to the forwarder, refuses a recipient without a trustline, then calls `mint_and_forward`
+  a Sui to Stellar USDC burn minting to the forwarder (with the forwarder or, for old burns, zero as `destinationCaller`), refuses a recipient without a trustline, then calls `mint_and_forward`
   from the relayer account. The recipient is read from the burn's own hook, never from the request, so a caller can only
   finish a transfer someone already paid for.
 - Pre-spend checks live in `lib/sui-stellar/cctp.ts` and are tested against a real message Sui's mainnet contracts emitted.

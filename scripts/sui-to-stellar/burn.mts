@@ -114,7 +114,9 @@ export async function buildBurn(
         coin,
         tx.pure.u32(STELLAR_DOMAIN),
         tx.pure.address(forwarderAsSuiAddress()),
-        tx.pure.address("0x0"), // destinationCaller: unrestricted, so any relayer can complete
+        // destinationCaller = the forwarder, as Circle requires; zero would let anyone call
+        // receive_message directly and strand the USDC. mint_and_forward stays open to anyone.
+        tx.pure.address(forwarderAsSuiAddress()),
         tx.pure.u256(0n), // maxFee: standard transfer
         tx.pure.u32(2000), // standard finality (Stellar: Fast Transfer N/A)
         tx.pure.vector("u8", Array.from(stellarForwardHook(p.stellarRecipient))),

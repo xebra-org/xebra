@@ -7,8 +7,10 @@ import { StrKey } from "@stellar/stellar-sdk";
  * The flow, end to end:
  *
  *  1. The Sui wallet burns USDC with `mintRecipient` set to Circle's `CctpForwarder` on Stellar and
- *     the real recipient in the hook data (`stellarForwardHook`). `destinationCaller` is zero, so
- *     anyone may finish the transfer.
+ *     the real recipient in the hook data (`stellarForwardHook`). `destinationCaller` is the
+ *     forwarder too (`burnDestinationCaller`), as Circle requires: with a zero caller anyone could call
+ *     `receive_message` directly, minting into the forwarder without paying the recipient, and the USDC
+ *     would be stuck for good. Anyone may still finish the transfer, because `mint_and_forward` is public.
  *  2. Circle attests the burn.
  *  3. Someone calls `mint_and_forward(message, attestation)` on the forwarder and pays the XLM fee.
  *     The forwarder mints, then pays the recipient named in the hook. Who submits does not matter.
@@ -31,6 +33,14 @@ const HOOK_HEADER = 32;
 /** The forwarder's contract id as the 32 bytes a Sui `address` argument carries. */
 export function forwarderAsSuiAddress(forwarder: string = STELLAR_CCTP_FORWARDER): string {
   return `0x${Buffer.from(StrKey.decodeContract(forwarder)).toString("hex")}`;
+}
+
+/**
+ * The `destinationCaller` every burn to Stellar carries: the forwarder itself, so only
+ * `mint_and_forward` can complete the mint. Never zero (see the flow note at the top of this file).
+ */
+export function burnDestinationCaller(): string {
+  return forwarderAsSuiAddress();
 }
 
 export function isStellarRecipient(value: string): boolean {
@@ -130,6 +140,15 @@ export function verifyMessage(
   }
   if (!p.mintRecipient.equals(Buffer.from(StrKey.decodeContract(forwarder)))) {
     throw new Error("does not mint to the CctpForwarder");
+  }
+  // The forwarder (every burn since the fix) or zero (burns made before it, still finishable).
+  // Anything else and mint_and_forward would fail after we had paid for the attempt.
+  const forwarderCaller = Buffer.from(StrKey.decodeContract(forwarder));
+  if (
+    !p.destinationCaller.equals(forwarderCaller) &&
+    !p.destinationCaller.equals(Buffer.alloc(32))
+  ) {
+    throw new Error("destinationCaller is neither the CctpForwarder nor open");
   }
   if (p.amount <= 0n) throw new Error("zero amount");
 
