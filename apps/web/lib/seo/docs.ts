@@ -1,4 +1,4 @@
-import { EVM_CHAINS, type EvmChainId } from "../evm-chains";
+import { EVM_CHAINS, type EvmChainId } from "@xebra/sdk/core";
 import { CONTRACTS, FEES, usdc } from "./facts";
 import { type Faq, faqFor } from "./faq";
 import { ENDPOINT_NAMES, type RouteInfo } from "./routes";

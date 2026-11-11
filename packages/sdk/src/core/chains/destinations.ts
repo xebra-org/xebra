@@ -1,12 +1,12 @@
-import { checkAddressOn } from "./evm-address";
+import { checkAddressOn } from "../addresses/evm.js";
+import { type AddressCheck, checkSolanaAddress } from "../addresses/solana.js";
 import {
   EVM_CHAINS,
   type EvmChain,
   type EvmChainId,
   type EvmPeerId,
   explorerTxUrl,
-} from "./evm-chains";
-import { type AddressCheck, checkSolanaAddress } from "./solana-address";
+} from "./evm.js";
 
 /**
  * Where a transfer from Stellar can land: Solana, or any EVM chain in the table, Arc included.

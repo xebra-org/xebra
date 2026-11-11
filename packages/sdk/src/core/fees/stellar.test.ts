@@ -4,7 +4,7 @@ import {
   chooseMaxFee,
   unitsToStroops,
   withTableCeiling,
-} from "./forward-fee";
+} from "./stellar.js";
 
 const QUOTE = { low: 133_000, med: 158_000, high: 177_000 }; // canonical 6-decimal units
 const CFG: DomainForwardConfig = {
@@ -82,7 +82,7 @@ describe("chooseMaxFee", () => {
   });
 });
 
-import { forwardBoundHolds, minimumForwardedAmount, suggestedMinimum } from "./forward-fee";
+import { forwardBoundHolds, minimumForwardedAmount, suggestedMinimum } from "./stellar.js";
 
 const PARAMS = { feeBps: 10n, minFee: 3_000_000n }; // 0.10%, 0.30 USDC: what is deployed
 

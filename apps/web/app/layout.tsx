@@ -1,9 +1,9 @@
+import { hasEvmRoutes } from "@xebra/sdk/core";
 import type { Metadata, Viewport } from "next";
 import localFont from "next/font/local";
 import type React from "react";
 import { AmbientBackground } from "../components/site/ambient-background";
 import { env } from "../lib/env";
-import { hasEvmRoutes } from "../lib/evm-chains";
 import { JsonLd, organizationLd, websiteLd } from "../lib/seo/json-ld";
 import { IS_PRODUCTION_DEPLOYMENT, SITE_NAME, SITE_URL, SOURCE_URL } from "../lib/site";
 import { Providers } from "./providers";

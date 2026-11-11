@@ -1,0 +1,32 @@
+{
+  "name": "@xebra/sdk",
+  "version": "0.0.0",
+  "description": "Native USDC between chains over Circle CCTP: routes, quotes, unsigned transactions and transfer status.",
+  "license": "Apache-2.0",
+  "type": "module",
+  "sideEffects": false,
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": "./dist/index.js",
+    "./core": "./dist/core/index.js"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "dev": "tsc -p tsconfig.build.json --watch",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "clean": "rm -rf dist .turbo"
+  },
+  "dependencies": {
+    "@stellar/stellar-base": "^13.0.0",
+    "viem": "^2.21.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "@xebra/network-config": "workspace:*",
+    "typescript": "^5.7.0",
+    "vitest": "^2.1.0"
+  }
+}

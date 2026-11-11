@@ -1,4 +1,4 @@
-import type { WrapperTerms } from "./evm-forward-fee";
+import type { WrapperTerms } from "@xebra/sdk/core";
 
 /**
  * Xebra's fee wrapper on an EVM chain, as the page needs it: the contract's live settings, read

@@ -1,8 +1,7 @@
+import { type DomainForwardConfig, XEBRA_WRAPPERS } from "@xebra/sdk/core";
 import { cache } from "react";
 import { getWrapperDomains } from "../cctp-bridge";
 import { env } from "../env";
-import { XEBRA_WRAPPERS } from "../evm-chains";
-import type { DomainForwardConfig } from "../forward-fee";
 import { type Doc, buildDocs } from "./docs";
 import { type Faq, faqFor } from "./faq";
 import { type SiteFlags, offeredRoutes } from "./routes";

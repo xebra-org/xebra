@@ -1,4 +1,4 @@
-import { parseArcReceivesFrom, parseArcSendsTo, parseStellarSendsTo } from "./evm-chains";
+import { parseArcReceivesFrom, parseArcSendsTo, parseStellarSendsTo } from "@xebra/sdk/core";
 
 /**
  * The frontend's single source of network truth.
@@ -118,7 +118,7 @@ export const env = {
   cctpTokenMessengerId: required("NEXT_PUBLIC_STELLAR_TOKEN_MESSENGER_ADDRESS"),
   /**
    * Solana's CCTP domain (5). A Stellar transfer's domain comes from the destination picked
-   * (`lib/destinations.ts`); this only fills the admin panel's config, which sends no transfer.
+   * (`packages/sdk/src/core/chains/destinations.ts`); this only fills the admin panel's config, which sends no transfer.
    */
   destinationDomain: Number(required("NEXT_PUBLIC_SOLANA_CCTP_DOMAIN_ID")),
   /**
@@ -171,7 +171,7 @@ export const env = {
   stellarSendsTo: parseStellarSendsTo(optional("NEXT_PUBLIC_STELLAR_SENDS_TO")),
   /**
    * Send transfers out of a chain through Xebra's fee wrapper where one is pinned
-   * (`XEBRA_WRAPPERS` in `lib/evm-chains.ts`), instead of calling Circle directly. Exactly `1` to
+   * (`XEBRA_WRAPPERS` in `packages/sdk/src/core/chains/evm.ts`), instead of calling Circle directly. Exactly `1` to
    * switch on. The address itself is never read from the environment: a transfer approves it for
    * the whole amount, so it changes only by a commit. With no wrapper pinned this does nothing.
    */

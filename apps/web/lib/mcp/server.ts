@@ -1,10 +1,9 @@
 import type { CircleHealth } from "@xebra/cctp-client";
+import { type FeeParams, stellarDestinations } from "@xebra/sdk/core";
 import { GET as circleHealth } from "../../app/api/circle-health/route";
 import { GET as delivery } from "../../app/api/delivery/route";
 import { getWrapperDomains, getWrapperFeeParams } from "../cctp-bridge";
-import { stellarDestinations } from "../destinations";
 import { env } from "../env";
-import type { FeeParams } from "../forward-fee";
 import { createTtlCache } from "../server/ttl-cache";
 import type { Server } from "./protocol";
 import { type Deps, type StellarRoutes, buildTools } from "./tools";

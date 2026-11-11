@@ -57,6 +57,6 @@ storage too. Checked against mainnet v2 on 2026-09-30: every value matched `depl
 2. `/admin` -> Destinations -> Add chain: domain id, address style, forward cap (the form starts an
    EVM chain at 0.25 USDC). Propose. The contract holds one pending domain at a time.
 3. 48 hours later: Pending changes -> Commit.
-4. Nothing to deploy for a chain in `apps/web/lib/evm-chains.ts`: the page reads the committed
+4. Nothing to deploy for a chain in `packages/sdk/src/core/chains/evm.ts`: the page reads the committed
    domains and offers each one named in `NEXT_PUBLIC_STELLAR_SENDS_TO` (`all` names every chain).
    A chain not in the table also needs a row there, and in `packages/network-config`.

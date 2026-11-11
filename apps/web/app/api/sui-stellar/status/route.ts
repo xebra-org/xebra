@@ -1,6 +1,6 @@
+import { formatUsdcAmount, verifyMessage } from "@xebra/sdk/core";
 import { env } from "../../../../lib/env";
 import { SUI_DIGEST, readAttestation } from "../../../../lib/sui-stellar/attestation";
-import { formatUsdc, verifyMessage } from "../../../../lib/sui-stellar/cctp";
 import { notFound, suiStellarEnabled } from "../../../../lib/sui-stellar/config";
 import { mintState } from "../../../../lib/sui-stellar/stellar-side";
 
@@ -31,7 +31,7 @@ export async function GET(request: Request): Promise<Response> {
         state: "complete",
         delivered: mint === "delivered",
         recipient: burn.recipient,
-        amount: formatUsdc(burn.amount),
+        amount: formatUsdcAmount(burn.amount),
       });
     } catch (err) {
       // Attested, but not a transfer this deployment would complete (wrong route, bad hook).

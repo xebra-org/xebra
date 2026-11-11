@@ -1,4 +1,4 @@
-import { EVM_CHAINS, XEBRA_WRAPPERS } from "../evm-chains";
+import { EVM_CHAINS, XEBRA_WRAPPERS } from "@xebra/sdk/core";
 
 /**
  * The figures the written pages state, in one place.

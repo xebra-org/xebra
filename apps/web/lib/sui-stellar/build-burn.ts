@@ -5,7 +5,7 @@ import {
   burnDestinationCaller,
   forwarderAsSuiAddress,
   stellarForwardHook,
-} from "./cctp";
+} from "@xebra/sdk/core";
 import { suiRpcUrl } from "./config";
 
 /**

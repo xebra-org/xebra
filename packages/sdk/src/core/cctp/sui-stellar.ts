@@ -1,4 +1,4 @@
-import { StrKey } from "@stellar/stellar-sdk";
+import { StrKey } from "@stellar/stellar-base";
 
 /**
  * Sui to Stellar over CCTP V2, the parts that are pure functions: the burn's hook data, and the
@@ -24,9 +24,6 @@ export const STELLAR_DOMAIN = 27;
 
 /** Circle's CctpForwarder on Stellar mainnet (the `mintRecipient` of every burn). */
 export const STELLAR_CCTP_FORWARDER = "CBZL2IH7F6BIDAA3WBNXYKIXSATJGMSW7K5P5MJ6STX5RXN47TZJDF5T";
-
-/** USDC has 6 decimals on Sui and in the CCTP message. Stellar's SAC uses 7; the contract converts. */
-export const USDC_DECIMALS = 6;
 
 const HOOK_HEADER = 32;
 
@@ -60,23 +57,6 @@ export function stellarForwardHook(recipient: string): Uint8Array {
   hook.writeUInt32BE(body.length, 28);
   body.copy(hook, HOOK_HEADER);
   return hook;
-}
-
-/** Parses a decimal USDC amount ("1", "1.5", "0.000001") into base units, or null. */
-export function parseUsdcAmount(input: string): bigint | null {
-  const m = /^(\d{1,12})(?:\.(\d{1,6}))?$/.exec(input.trim());
-  if (!m) return null;
-  const whole = m[1] ?? "0";
-  const frac = (m[2] ?? "").padEnd(USDC_DECIMALS, "0");
-  const value = BigInt(whole) * 10n ** BigInt(USDC_DECIMALS) + BigInt(frac || "0");
-  return value > 0n ? value : null;
-}
-
-export function formatUsdc(base: bigint): string {
-  const whole = base / 10n ** BigInt(USDC_DECIMALS);
-  const frac = (base % 10n ** BigInt(USDC_DECIMALS)).toString().padStart(USDC_DECIMALS, "0");
-  const trimmed = frac.replace(/0+$/, "");
-  return trimmed ? `${whole}.${trimmed}` : `${whole}`;
 }
 
 export interface ParsedMessage {

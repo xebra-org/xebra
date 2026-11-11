@@ -1,11 +1,11 @@
 "use client";
 
 import type { Transaction } from "@solana/web3.js";
+import { EVM_CHAINS, evmChainForDomain } from "@xebra/sdk/core";
 import { useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useState } from "react";
 import { Notice } from "../../components/ui/notice";
 import { browserConnection, buildMintTransaction, prepareClaim } from "../../lib/claim";
-import { EVM_CHAINS, evmChainForDomain } from "../../lib/evm-chains";
 import type { EvmClaimTarget } from "../../lib/evm-claim";
 import { reportError } from "../../lib/format-error";
 import { waitForSignature } from "../../lib/solana-confirm";

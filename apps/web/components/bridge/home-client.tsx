@@ -1,11 +1,17 @@
 "use client";
 
+import {
+  type DeepLink,
+  EVM_CHAINS,
+  type EvmChainId,
+  evmSources,
+  hasDeepLink,
+  parseDeepLink,
+} from "@xebra/sdk/core";
 import type React from "react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { SuiTransfer, hasRememberedSuiTransfer } from "../../app/sui/sui-client";
-import { type DeepLink, hasDeepLink, parseDeepLink } from "../../lib/deep-link";
 import { env, isCctpRailConfigured } from "../../lib/env";
-import { EVM_CHAINS, type EvmChainId, evmSources } from "../../lib/evm-chains";
 import { SiteFooter } from "../site/site-footer";
 import { TopBar } from "../site/top-bar";
 import { Eyebrow } from "../ui/badge";
@@ -77,7 +83,7 @@ export function HomeClient({ children }: { children?: React.ReactNode }) {
   // A transfer being signed, or a receipt on show, belongs to the source it started from.
   // Changing the source then would throw away the only place its hash is displayed.
   const [busy, setBusy] = useState(false);
-  // What a link asked to have filled in (`lib/deep-link.ts`). Read once after mount, because the
+  // What a link asked to have filled in (`packages/sdk/src/core/deep-link.ts`). Read once after mount, because the
   // server render cannot know the query. Prefill only: the person still reviews and signs.
   const [link, setLink] = useState<DeepLink | null>(null);
   useEffect(() => {

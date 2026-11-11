@@ -1,7 +1,7 @@
 import { PRESETS } from "@xebra/network-config";
 import { describe, expect, it } from "vitest";
-import { checkAddressOn, unsafeRecipientsFor } from "./evm-address";
-import { EVM_CHAINS } from "./evm-chains";
+import { EVM_CHAINS } from "../chains/evm.js";
+import { checkAddressOn, unsafeRecipientsFor } from "./evm.js";
 
 // Foundry's first anvil account: public, with a documented EIP-55 form.
 const WALLET = "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266";

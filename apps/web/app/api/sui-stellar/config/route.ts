@@ -1,4 +1,4 @@
-import { formatUsdc } from "../../../../lib/sui-stellar/cctp";
+import { formatUsdcAmount } from "@xebra/sdk/core";
 import { maxUsdcBase, relayerSecret, suiStellarEnabled } from "../../../../lib/sui-stellar/config";
 
 /**
@@ -15,7 +15,7 @@ export function GET(): Response {
       ? {
           enabled,
           relayer: relayerSecret() !== null,
-          maxUsdc: cap === null ? null : formatUsdc(cap),
+          maxUsdc: cap === null ? null : formatUsdcAmount(cap),
         }
       : { enabled },
     { headers: { "cache-control": "no-store" } },

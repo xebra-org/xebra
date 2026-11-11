@@ -1,8 +1,8 @@
 "use client";
 
+import type { Destination } from "@xebra/sdk/core";
 import { useEffect, useState } from "react";
 import type { DeliveryView } from "../../lib/circle-status";
-import type { Destination } from "../../lib/destinations";
 import { cn } from "../ui/cn";
 import { InsetTray } from "../ui/glass-card";
 import { Check, Copy } from "../ui/icons";

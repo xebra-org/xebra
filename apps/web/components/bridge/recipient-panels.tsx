@@ -1,5 +1,5 @@
 import { getAddress } from "viem";
-import type { RecipientResolution } from "../../lib/solana-address";
+import type { RecipientResolution } from "../../lib/solana-recipient";
 import type { Connection, Family } from "../../lib/wallets/types";
 import { InsetTray } from "../ui/glass-card";
 import { Notice } from "../ui/notice";

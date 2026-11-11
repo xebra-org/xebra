@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
+import { XEBRA_WRAPPERS } from "@xebra/sdk/core";
 import { describe, expect, it } from "vitest";
-import { XEBRA_WRAPPERS } from "../evm-chains";
 import { CONTRACTS, FEES, RECORDED_STELLAR_CAPS, usdc } from "./facts";
 
 const record = JSON.parse(

@@ -1,36 +1,37 @@
 import type { CircleHealth } from "@xebra/cctp-client";
-import { formatUsdc } from "../cctp-bridge";
-import { buildDeepLink } from "../deep-link";
-import { type Destination, STELLAR_CCTP_DOMAIN, stellarDestination } from "../destinations";
-import { checkAddressOn } from "../evm-address";
 import {
+  type Destination,
+  type DomainForwardConfig,
   EVM_CHAINS,
   type EnabledRoutes,
   type EvmChainId,
+  type FeeParams,
   type RouteDestinationId,
+  STELLAR_CCTP_DOMAIN,
+  buildDeepLink,
+  checkAddressOn,
+  checkSolanaAddress,
+  chooseMaxFee,
   evmDestinationsFrom,
   evmSources,
-  isEvmChainId,
-} from "../evm-chains";
-import { planEvmFee } from "../evm-forward-fee";
-import {
-  type DomainForwardConfig,
-  type FeeParams,
-  chooseMaxFee,
+  formatUsdc,
+  formatUsdc6,
   forwardBoundHolds,
+  isEvmChainId,
   minimumForwardedAmount,
+  parseUsdc6,
+  planEvmFee,
+  stellarDestination,
   suggestedMinimum,
   withTableCeiling,
-} from "../forward-fee";
+} from "@xebra/sdk/core";
 import { feeDestination, routeDestination } from "../route-destination";
-import { checkSolanaAddress } from "../solana-address";
-import { formatUsdc6, parseUsdc6 } from "../usdc6";
 import { type Tool, type ToolResult, toolError, toolOk } from "./protocol";
 
 /**
  * The four tools. They find a route, price it, hand a person a link to sign it, and report how a
  * transfer is getting on. None of them moves money or holds a key: the link opens the bridge page
- * prefilled, and the person approves in their own wallet (`lib/deep-link.ts`).
+ * prefilled, and the person approves in their own wallet (`packages/sdk/src/core/deep-link.ts`).
  *
  * Everything that touches the network comes in through `Deps`, so the logic here is tested with
  * fakes and the real wiring (`lib/mcp/server.ts`) is one small file.

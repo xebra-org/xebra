@@ -12,8 +12,8 @@ moves USDC; the person opens the link and approves in their own wallet.
 | `create_transfer_link` | A `xebra.exchange/?from=…&to=…&amount=…&recipient=…` link that opens the bridge prefilled |
 | `get_transfer_status` | Circle's state for a burn hash; points a failed delivery at `/claim` |
 
-All four are read-only. Prices come from the same code the page uses (`lib/forward-fee.ts`,
-`lib/evm-forward-fee.ts`) and the same Iris budget, so what an assistant says matches what the page shows.
+All four are read-only. Prices come from the same code the page uses (`packages/sdk/src/core/fees/stellar.ts`,
+`packages/sdk/src/core/fees/evm.ts`) and the same Iris budget, so what an assistant says matches what the page shows.
 A recipient is checked against the destination chain's rules before it goes into a link.
 
 ## Where it lives

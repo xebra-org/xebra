@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildDeepLink, hasDeepLink, parseDeepLink } from "./deep-link";
+import { buildDeepLink, hasDeepLink, parseDeepLink } from "./deep-link.js";
 
 describe("parseDeepLink", () => {
   it("reads every field of a full link", () => {

@@ -1,11 +1,11 @@
 import { StrKey } from "@stellar/stellar-sdk";
+import { formatUsdcAmount, parseUsdcAmount } from "@xebra/sdk/core";
 import {
   InsufficientUsdcError,
   SUI_ADDRESS,
   buildBurn,
   suiClient,
 } from "../../../../lib/sui-stellar/build-burn";
-import { formatUsdc, parseUsdcAmount } from "../../../../lib/sui-stellar/cctp";
 import {
   maxUsdcBase,
   notFound,
@@ -56,7 +56,7 @@ export async function POST(request: Request): Promise<Response> {
   const cap = maxUsdcBase();
   if (cap !== null && amount > cap) {
     return Response.json(
-      { error: `The limit is ${formatUsdc(cap)} USDC per transfer.` },
+      { error: `The limit is ${formatUsdcAmount(cap)} USDC per transfer.` },
       { status: 422 },
     );
   }
@@ -86,7 +86,7 @@ export async function POST(request: Request): Promise<Response> {
     });
     return Response.json({
       transaction,
-      amount: formatUsdc(amount),
+      amount: formatUsdcAmount(amount),
       // Tells the page whether anything will finish the transfer for the user.
       relayer: relayerSecret() !== null,
     });
@@ -94,7 +94,7 @@ export async function POST(request: Request): Promise<Response> {
     if (err instanceof InsufficientUsdcError) {
       return Response.json(
         {
-          error: `That Sui address holds ${formatUsdc(err.have)} USDC, less than ${formatUsdc(err.need)}.`,
+          error: `That Sui address holds ${formatUsdcAmount(err.have)} USDC, less than ${formatUsdcAmount(err.need)}.`,
         },
         { status: 422 },
       );

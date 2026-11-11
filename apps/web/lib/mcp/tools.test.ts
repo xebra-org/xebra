@@ -1,7 +1,6 @@
 import type { CircleHealth } from "@xebra/cctp-client";
+import { type DomainForwardConfig, stellarDestination } from "@xebra/sdk/core";
 import { describe, expect, it } from "vitest";
-import { stellarDestination } from "../destinations";
-import type { DomainForwardConfig } from "../forward-fee";
 import { type Deps, buildTools } from "./tools";
 
 const RECIPIENT = "0x5b38da6a701c568545dcfcb03fcb875f56beddc4";

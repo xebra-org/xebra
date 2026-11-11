@@ -8,8 +8,8 @@ import {
   rpc,
   scValToNative,
 } from "@stellar/stellar-sdk";
+import type { DomainForwardConfig, FeeParams } from "@xebra/sdk/core";
 import { formatError } from "./format-error";
-import type { DomainForwardConfig, FeeParams } from "./forward-fee";
 
 /**
  * Client for `contracts/stellar-cctp-wrapper-v2` — Stellar to Solana and to every EVM chain the
@@ -36,13 +36,10 @@ import type { DomainForwardConfig, FeeParams } from "./forward-fee";
  * # `max_fee` is the delivery fee, and comes from Circle's quote
  *
  * With forwarding, `max_fee` is what Circle charges, in full, to mint on the destination (gas plus
- * its service fee). It is taken from Circle's live forward-fee quote (`lib/forward-fee.ts`) and
+ * its service fee). It is taken from Circle's live forward-fee quote (`packages/sdk/src/core/fees/stellar.ts`) and
  * bounded on chain by a per-domain cap and a tenth of the burn, so a buggy front end cannot hand
  * away a user's principal.
  */
-
-/** Stellar token amounts are 7-decimal fixed point. */
-export const STROOPS_PER_USDC = 10_000_000n;
 
 /**
  * Inclusion-fee bid, in stroops (0.1 XLM).
@@ -104,29 +101,6 @@ export interface BridgeChainConfig {
   sorobanRpcUrl: string;
   networkPassphrase: string;
   destinationDomain: number;
-}
-
-/** Parses USDC typed by a human ("12.5") into stroops, rejecting more than 7 decimals. */
-export function parseUsdc(input: string): bigint {
-  const trimmed = input.trim();
-  if (!/^\d*\.?\d*$/.test(trimmed) || trimmed === "" || trimmed === ".") {
-    throw new Error("Enter an amount in USDC, for example 25.00");
-  }
-  const [whole = "0", fraction = ""] = trimmed.split(".");
-  if (fraction.length > 7) {
-    throw new Error("USDC on Stellar has at most 7 decimal places");
-  }
-  return BigInt(whole || "0") * STROOPS_PER_USDC + BigInt(`${fraction}0000000`.slice(0, 7));
-}
-
-/** Formats stroops for display. Trims trailing zeros but always keeps at least 2 decimals. */
-export function formatUsdc(stroops: bigint): string {
-  const negative = stroops < 0n;
-  const abs = negative ? -stroops : stroops;
-  const whole = abs / STROOPS_PER_USDC;
-  const fraction = (abs % STROOPS_PER_USDC).toString().padStart(7, "0").replace(/0+$/, "");
-  const padded = fraction.length < 2 ? fraction.padEnd(2, "0") : fraction;
-  return `${negative ? "-" : ""}${whole.toLocaleString("en-US")}.${padded}`;
 }
 
 /**

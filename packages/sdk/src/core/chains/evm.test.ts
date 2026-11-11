@@ -21,7 +21,7 @@ import {
   parseArcReceivesFrom,
   parseArcSendsTo,
   parseStellarSendsTo,
-} from "./evm-chains";
+} from "./evm.js";
 
 describe("EVM_CHAINS", () => {
   it("agrees with the pinned network config field for field, so a copy that drifted fails", () => {

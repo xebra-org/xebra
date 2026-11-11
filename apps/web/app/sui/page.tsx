@@ -1,8 +1,8 @@
+import { formatUsdcAmount } from "@xebra/sdk/core";
 import { notFound } from "next/navigation";
 import { SiteFooter } from "../../components/site/site-footer";
 import { ContentHeader } from "../../components/site/site-nav";
 import { env } from "../../lib/env";
-import { formatUsdc } from "../../lib/sui-stellar/cctp";
 import { maxUsdcBase, relayerSecret, suiStellarEnabled } from "../../lib/sui-stellar/config";
 import { SuiClient } from "./sui-client";
 
@@ -16,7 +16,7 @@ export default function SuiPage() {
     <>
       <ContentHeader current="/sui" />
       <SuiClient
-        maxUsdc={cap === null ? null : formatUsdc(cap)}
+        maxUsdc={cap === null ? null : formatUsdcAmount(cap)}
         relayerEnabled={relayerSecret() !== null}
       />
       <SiteFooter wrapperContractId={env.cctpWrapperContractId} contractLabel="Stellar contract" />

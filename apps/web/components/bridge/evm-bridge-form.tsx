@@ -2,13 +2,29 @@
 
 import type { CircleHealth } from "@xebra/cctp-client";
 import type { BurnRecipient } from "@xebra/cctp-evm";
+import {
+  type DeepLink,
+  type EnabledRoutes,
+  type EvmChain,
+  type FeePlan,
+  type FeeTier,
+  type RouteDestinationId,
+  checkAddressOn,
+  checkSolanaAddress,
+  evmDestinationsFrom,
+  explorerTxUrl,
+  formatUsdc6,
+  parseUsdc6,
+  planEvmFee,
+  planWrapperFee,
+  speedFeeFor,
+  wrapperFor,
+} from "@xebra/sdk/core";
 import type React from "react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { bytesToHex } from "viem";
 import { type DeliveryView, getDelivery, getRouteHealth } from "../../lib/circle-status";
-import type { DeepLink } from "../../lib/deep-link";
 import { env } from "../../lib/env";
-import { checkAddressOn } from "../../lib/evm-address";
 import {
   ARC_GAS_RESERVE_UNITS,
   EVM_STEP_LABEL,
@@ -17,21 +33,6 @@ import {
   submitEvmBridge,
   watchBurn,
 } from "../../lib/evm-bridge";
-import {
-  type EnabledRoutes,
-  type EvmChain,
-  type RouteDestinationId,
-  evmDestinationsFrom,
-  explorerTxUrl,
-  wrapperFor,
-} from "../../lib/evm-chains";
-import {
-  type FeePlan,
-  type FeeTier,
-  planEvmFee,
-  planWrapperFee,
-  speedFeeFor,
-} from "../../lib/evm-forward-fee";
 import { ensureChain } from "../../lib/evm-rpc";
 import { type WrapperSettings, getWrapperSettings, termsFor } from "../../lib/evm-wrapper";
 import { formatError, reportError } from "../../lib/format-error";
@@ -41,12 +42,7 @@ import {
   feeDestination,
   routeDestination,
 } from "../../lib/route-destination";
-import {
-  type RecipientResolution,
-  checkSolanaAddress,
-  resolveRecipient,
-} from "../../lib/solana-address";
-import { formatUsdc6, parseUsdc6 } from "../../lib/usdc6";
+import { type RecipientResolution, resolveRecipient } from "../../lib/solana-recipient";
 import { Button } from "../ui/button";
 import { Field, Input } from "../ui/field";
 import { ArrowRight } from "../ui/icons";
@@ -71,7 +67,7 @@ import { useBeneficiaries } from "./use-beneficiaries";
  * form talks to a Soroban contract that bounds the fee and fixes the hook. This one calls Circle
  * directly unless the source chain has Xebra's own wrapper pinned and switched on
  * (`NEXT_PUBLIC_ARC_USE_WRAPPER`); either way every bound is applied here before signing
- * (`lib/evm-forward-fee.ts`, `lib/evm-bridge.ts`), and through the wrapper the contract applies
+ * (`packages/sdk/src/core/fees/evm.ts`, `lib/evm-bridge.ts`), and through the wrapper the contract applies
  * them again. The two forms never share a code path that money runs through.
  *
  * # What is different for the person

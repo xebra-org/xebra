@@ -30,6 +30,7 @@
     "@xebra/network-config": "workspace:*",
     "@xebra/observability": "workspace:*",
     "@xebra/router-core": "workspace:*",
+    "@xebra/sdk": "workspace:*",
     "convex": "^1.45.0",
     "marked": "^15.0.12",
     "next": "^15.1.0",

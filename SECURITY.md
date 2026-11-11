@@ -34,7 +34,7 @@ there are still worth reporting, but nothing user-facing depends on them today.
   reached without the intended `require_auth`.
 - Anything that makes a user sign a larger `max_fee` than the page shows, or a burn to a domain,
   token or recipient they did not choose. On the routes between Arc and the EVM chains that call
-  Circle directly, the page's own checks (`apps/web/lib/evm-forward-fee.ts`,
+  Circle directly, the page's own checks (`packages/sdk/src/core/fees/evm.ts`,
   `apps/web/lib/evm-bridge.ts`) and the pinned table in `packages/network-config/src/evm-chains.ts`
   are the only guard; through the EVM wrapper the contract applies them again.
 

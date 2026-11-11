@@ -7,9 +7,14 @@ import {
   nativeToScVal,
   rpc,
 } from "@stellar/stellar-sdk";
+import {
+  STELLAR_CCTP_FORWARDER,
+  SUI_DOMAIN,
+  type VerifiedBurn,
+  verifyMessage,
+} from "@xebra/sdk/core";
 import { env } from "../env";
 import { readAttestation } from "./attestation";
-import { STELLAR_CCTP_FORWARDER, SUI_DOMAIN, type VerifiedBurn, verifyMessage } from "./cctp";
 
 /**
  * The Stellar half: check a recipient can receive, read Circle's attestation of a Sui burn, and

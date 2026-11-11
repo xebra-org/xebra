@@ -1,5 +1,6 @@
 "use client";
 
+import { EVM_CHAINS } from "@xebra/sdk/core";
 import { useEffect, useMemo, useState } from "react";
 import {
   type DomainCfg,
@@ -8,7 +9,6 @@ import {
   validateDomainCfg,
 } from "../../lib/admin/policy";
 import { fieldToStroops, stroopsToField } from "../../lib/admin/units";
-import { EVM_CHAINS } from "../../lib/evm-chains";
 import type { PanelProps } from "./context";
 import { Btn, KindTag, NumField, Panel, Toggle } from "./primitives";
 

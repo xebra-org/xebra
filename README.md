@@ -92,7 +92,7 @@ Monad, Sei, XDC, HyperEVM and Ink, and to Solana. The wallet approves Circle's `
 for the amount and calls `depositForBurnWithHook` with the forwarding hook, so Circle mints on the
 destination and takes its delivery fee out of the amount. There is no contract of ours in between
 today, so the bounds a wrapper would enforce are applied in the page before signing
-(`apps/web/lib/evm-forward-fee.ts`), and every constant is pinned in
+(`packages/sdk/src/core/fees/evm.ts`), and every constant is pinned in
 `packages/network-config/src/evm-chains.ts` and re-read from the chains by `pnpm check:evm`.
 
 `contracts/arc-evm/src/XebraCctpWrapper.sol` changes that: Stellar's fee (0.10%, 0.30 USDC floor,

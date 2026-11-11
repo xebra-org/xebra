@@ -1,8 +1,8 @@
 "use client";
 
+import { hasEvmRoutes } from "@xebra/sdk/core";
 import { useEffect, useRef, useState } from "react";
 import { env } from "../../lib/env";
-import { hasEvmRoutes } from "../../lib/evm-chains";
 import {
   type Connection,
   FAMILY_LABEL,

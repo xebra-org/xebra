@@ -187,7 +187,7 @@ is not a risk" below). In this order:
    for the dry run, and again with `CONFIRM="deploy the arc wrapper to mainnet"`. It reads the
    contract back and records it in `deployments/mainnet.json` under `arcWrapper`.
 4. **Pin it.** Set `XEBRA_WRAPPERS = { arc: "0x…" }` in `packages/network-config/src/evm-chains.ts`
-   and `apps/web/lib/evm-chains.ts`; a test holds both to the deployment record. The address is never
+   and `packages/sdk/src/core/chains/evm.ts`; a test holds both to the deployment record. The address is never
    read from the environment, because a transfer approves it for the whole amount.
 5. **Verify the source** on Arc's block explorer (`forge verify-contract`).
 6. **Switch it on and send your own transfer first.** `NEXT_PUBLIC_ARC_USE_WRAPPER=1` in Vercel, then

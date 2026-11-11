@@ -1,4 +1,4 @@
-import { formatUsdc6 } from "./usdc6";
+import { formatUsdc6 } from "../amounts.js";
 
 /**
  * Choosing the `maxFee` an EVM transfer signs, and refusing the ones it should not.
@@ -12,7 +12,7 @@ import { formatUsdc6 } from "./usdc6";
  * The fee has two parts:
  *
  *   - **delivery**: Circle's `high` forwarding quote at 1.0x, the rule that has held on mainnet
- *     (`lib/forward-fee.ts`). Headroom above it is pure cost, because none of it comes back.
+ *     (`packages/sdk/src/core/fees/stellar.ts`). Headroom above it is pure cost, because none of it comes back.
  *   - **speed**: Circle's Fast Transfer fee, a fraction of the amount, zero for Standard. Rounded
  *     up to a whole unit so the fee signed is never a unit short of the fee owed.
  *

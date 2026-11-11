@@ -1,39 +1,37 @@
 "use client";
 
 import type { CircleHealth } from "@xebra/cctp-client";
+import {
+  type DeepLink,
+  type DestinationId,
+  type DomainForwardConfig,
+  type FeeParams,
+  STELLAR_CCTP_DOMAIN,
+  chooseMaxFee,
+  formatUsdc,
+  minimumForwardedAmount,
+  parseUsdc,
+  stellarDestination,
+  stellarDestinations,
+  suggestedMinimum,
+  withTableCeiling,
+} from "@xebra/sdk/core";
 import type React from "react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   type BridgeChainConfig,
   type BridgeQuote,
-  formatUsdc,
   getUsdcBalance,
   getWrapperDomains,
   getWrapperFeeParams,
-  parseUsdc,
   quoteBridge,
   submitBridge,
 } from "../../lib/cctp-bridge";
 import { type DeliveryView, getDelivery, getRouteHealth } from "../../lib/circle-status";
-import type { DeepLink } from "../../lib/deep-link";
-import {
-  type DestinationId,
-  STELLAR_CCTP_DOMAIN,
-  stellarDestination,
-  stellarDestinations,
-} from "../../lib/destinations";
 import { env, isCctpRailConfigured } from "../../lib/env";
 import { formatError, reportError } from "../../lib/format-error";
-import {
-  type DomainForwardConfig,
-  type FeeParams,
-  chooseMaxFee,
-  minimumForwardedAmount,
-  suggestedMinimum,
-  withTableCeiling,
-} from "../../lib/forward-fee";
 import { unitsToInput } from "../../lib/max-amount";
-import { type RecipientResolution, resolveRecipient } from "../../lib/solana-address";
+import { type RecipientResolution, resolveRecipient } from "../../lib/solana-recipient";
 import { Button } from "../ui/button";
 import { Field, Input } from "../ui/field";
 import { ArrowRight } from "../ui/icons";

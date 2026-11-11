@@ -5,7 +5,7 @@ import {
   checkSolanaAddress,
   looksLikeEvmAddress,
   solanaAddressToBytes32,
-} from "./solana-address.js";
+} from "./solana.js";
 
 // Real mainnet USDC mint — a known-good 32-byte Solana pubkey.
 const USDC_MINT = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v";

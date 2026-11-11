@@ -8,7 +8,7 @@ import {
   encodeDepositForBurnWithHook,
   encodeWrapperBridge,
 } from "@xebra/cctp-evm";
-import type { EvmChain } from "./evm-chains";
+import { type EvmChain, formatUsdc6 } from "@xebra/sdk/core";
 import {
   type Hex,
   ensureChain,
@@ -19,7 +19,6 @@ import {
   waitForReceipt,
 } from "./evm-rpc";
 import { formatError } from "./format-error";
-import { formatUsdc6 } from "./usdc6";
 import type { Eip1193Provider } from "./wallets/types";
 
 /**

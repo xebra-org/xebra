@@ -33,7 +33,7 @@ Web app, in `apps/web`: **done 2026-09-24**, checked against the v2 contract on 
   destination_domain, max_fee)`, the new `Quote` fields, error codes 39-45, and `get_domains` for the
   destination's forwarding switches and caps. A simulated `bridge` built with the new encoding is
   accepted by the deployed contract.
-- `max_fee` is Circle's `high` forward-fee quote at 1.0x (`lib/forward-fee.ts`), checked against the
+- `max_fee` is Circle's `high` forward-fee quote at 1.0x (`packages/sdk/src/core/fees/stellar.ts`), checked against the
   domain caps. One fee is shown and it includes delivery. The transfer is refused, before signing,
   when the domain has forwarding off, when a first-time Solana recipient needs account creation and it
   is off, or when the contract's quote says `forwarded: false`. The price is re-checked right before

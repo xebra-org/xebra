@@ -1,4 +1,4 @@
-import { type EvmChainId, isEvmChainId } from "./evm-chains";
+import { type EvmChainId, isEvmChainId } from "./chains/evm.js";
 
 /**
  * A link that opens the bridge already filled in: `/?from=stellar&to=base&amount=25&recipient=0x…`.

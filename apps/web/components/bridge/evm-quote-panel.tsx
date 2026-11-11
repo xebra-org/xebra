@@ -1,5 +1,4 @@
-import type { FeePlan } from "../../lib/evm-forward-fee";
-import { formatUsdc6 } from "../../lib/usdc6";
+import { type FeePlan, formatUsdc6 } from "@xebra/sdk/core";
 import { cn } from "../ui/cn";
 import { DataRow } from "../ui/data-row";
 import { InsetTray } from "../ui/glass-card";
@@ -10,7 +9,7 @@ import { StripeRule } from "../ui/stripe-rule";
 /**
  * What a transfer from an EVM chain costs and what arrives.
  *
- * The figures come from Circle's own quote (`lib/evm-forward-fee.ts`) and, where the transfer goes
+ * The figures come from Circle's own quote (`packages/sdk/src/core/fees/evm.ts`) and, where the transfer goes
  * through Xebra's wrapper, the wrapper's live settings. Neither needs a wallet: the price is the
  * same for everyone, and is shown before anyone connects.
  *

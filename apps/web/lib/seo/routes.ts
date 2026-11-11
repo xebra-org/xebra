@@ -1,5 +1,5 @@
-import { stellarDestinations } from "../destinations";
 import {
+  type DomainForwardConfig,
   EVM_CHAINS,
   EVM_CHAIN_IDS,
   type EnabledRoutes,
@@ -9,8 +9,8 @@ import {
   XEBRA_WRAPPERS,
   evmDestinationsFrom,
   evmSources,
-} from "../evm-chains";
-import type { DomainForwardConfig } from "../forward-fee";
+  stellarDestinations,
+} from "@xebra/sdk/core";
 import { RECORDED_STELLAR_CAPS } from "./facts";
 
 /**

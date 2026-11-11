@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { formatUsdc6, parseUsdc6 } from "./usdc6";
+import { formatUsdc6, formatUsdcAmount, parseUsdc6, parseUsdcAmount } from "./amounts.js";
 
 describe("parseUsdc6", () => {
   it("reads whole and fractional amounts into 6-decimal units", () => {
@@ -34,5 +34,25 @@ describe("formatUsdc6", () => {
     for (const text of ["0.01", "5.00", "999.999999"]) {
       expect(formatUsdc6(parseUsdc6(text))).toBe(text);
     }
+  });
+});
+
+describe("canonical amounts (parseUsdcAmount / formatUsdcAmount)", () => {
+  it("parses whole and fractional USDC to base units", () => {
+    expect(parseUsdcAmount("1")).toBe(1_000_000n);
+    expect(parseUsdcAmount("1.5")).toBe(1_500_000n);
+    expect(parseUsdcAmount("0.000001")).toBe(1n);
+  });
+
+  it("rejects zero, negatives, too many decimals and junk", () => {
+    for (const bad of ["0", "0.0", "-1", "1.1234567", "", "abc", "1e3", " "]) {
+      expect(parseUsdcAmount(bad)).toBeNull();
+    }
+  });
+
+  it("formats base units without trailing zeros", () => {
+    expect(formatUsdcAmount(1_000_000n)).toBe("1");
+    expect(formatUsdcAmount(1_500_000n)).toBe("1.5");
+    expect(formatUsdcAmount(1n)).toBe("0.000001");
   });
 });

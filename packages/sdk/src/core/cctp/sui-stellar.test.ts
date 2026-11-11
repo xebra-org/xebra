@@ -1,15 +1,13 @@
-import { StrKey } from "@stellar/stellar-sdk";
+import { StrKey } from "@stellar/stellar-base";
 import { describe, expect, it } from "vitest";
 import {
   STELLAR_CCTP_FORWARDER,
   burnDestinationCaller,
-  formatUsdc,
   forwarderAsSuiAddress,
   parseMessage,
-  parseUsdcAmount,
   stellarForwardHook,
   verifyMessage,
-} from "./cctp";
+} from "./sui-stellar.js";
 
 const TOKEN_MESSENGER = "CAE2G5Z77UP7GYPYGFOWFGW7C7J6I4YP2AFGSADRKQY62SYUFLPNFTXL";
 const RECIPIENT = "GBZXN7PIRZGNMHGA7MUUUF4GWPY5AYPV6LY4UV2GL6VJGIQRXFDNMADI";
@@ -144,25 +142,5 @@ describe("verifyMessage", () => {
     expect(() =>
       verifyMessage(tampered(148 + 228 + 32, 0x58), { tokenMessenger: TOKEN_MESSENGER }),
     ).toThrow(/Stellar address/);
-  });
-});
-
-describe("amounts", () => {
-  it("parses whole and fractional USDC to base units", () => {
-    expect(parseUsdcAmount("1")).toBe(1_000_000n);
-    expect(parseUsdcAmount("1.5")).toBe(1_500_000n);
-    expect(parseUsdcAmount("0.000001")).toBe(1n);
-  });
-
-  it("rejects zero, negatives, too many decimals and junk", () => {
-    for (const bad of ["0", "0.0", "-1", "1.1234567", "", "abc", "1e3", " "]) {
-      expect(parseUsdcAmount(bad)).toBeNull();
-    }
-  });
-
-  it("formats base units without trailing zeros", () => {
-    expect(formatUsdc(1_000_000n)).toBe("1");
-    expect(formatUsdc(1_500_000n)).toBe("1.5");
-    expect(formatUsdc(1n)).toBe("0.000001");
   });
 });

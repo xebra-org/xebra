@@ -1,5 +1,5 @@
+import { formatUsdc } from "@xebra/sdk/core";
 import type { BridgeQuote } from "../../lib/cctp-bridge";
-import { formatUsdc } from "../../lib/cctp-bridge";
 import { XebraMark } from "../brand/xebra-mark";
 import { cn } from "../ui/cn";
 import { DataRow } from "../ui/data-row";

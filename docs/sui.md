@@ -18,7 +18,7 @@ otherwise, a simulated burn succeeded, and Iris prices `8/27`. **Three real tran
   a Sui to Stellar USDC burn minting to the forwarder (with the forwarder or, for old burns, zero as `destinationCaller`), refuses a recipient without a trustline, then calls `mint_and_forward`
   from the relayer account. The recipient is read from the burn's own hook, never from the request, so a caller can only
   finish a transfer someone already paid for.
-- Pre-spend checks live in `lib/sui-stellar/cctp.ts` and are tested against a real message Sui's mainnet contracts emitted.
+- Pre-spend checks live in `packages/sdk/src/core/cctp/sui-stellar.ts` and are tested against a real message Sui's mainnet contracts emitted.
 
 ### First real transfer (2026-11-06), finished by hand
 

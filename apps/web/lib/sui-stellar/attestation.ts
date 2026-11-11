@@ -1,5 +1,5 @@
+import { SUI_DOMAIN } from "@xebra/sdk/core";
 import { irisBaseUrl, irisFetch } from "../server/iris";
-import { SUI_DOMAIN } from "./cctp";
 
 /**
  * Circle's view of a Sui burn. Kept apart from the Stellar code so that asking "has it been attested?"

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { stellarDestination, stellarDestinations } from "./destinations";
-import { EVM_ARC_PEERS, EVM_CHAINS } from "./evm-chains";
+import { stellarDestination, stellarDestinations } from "./destinations.js";
+import { EVM_ARC_PEERS, EVM_CHAINS } from "./evm.js";
 
 /** Mainnet on 2026-10-14: the wrapper has Solana (5) and Arc (26) committed, nothing else. */
 const LIVE = new Set([5, 26]);

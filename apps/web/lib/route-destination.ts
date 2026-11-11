@@ -1,12 +1,12 @@
-import { stellarDestination } from "./destinations";
 import {
   EVM_CHAINS,
   type EvmChain,
+  type FeeDestination,
   type RouteDestinationId,
   SOLANA_FROM_ARC,
   explorerTxUrl,
-} from "./evm-chains";
-import type { FeeDestination } from "./evm-forward-fee";
+  stellarDestination,
+} from "@xebra/sdk/core";
 
 /**
  * Where a transfer from an EVM chain lands, in the one shape the form and receipt need: an EVM

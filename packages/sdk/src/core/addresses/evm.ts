@@ -1,6 +1,6 @@
 import { isAddress } from "viem";
-import type { EvmChain } from "./evm-chains";
-import type { AddressCheck } from "./solana-address";
+import type { EvmChain } from "../chains/evm.js";
+import type { AddressCheck } from "./solana.js";
 
 /**
  * Validation for a recipient on an EVM chain, whichever one the dollars land on.

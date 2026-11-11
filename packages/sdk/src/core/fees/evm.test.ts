@@ -8,7 +8,7 @@ import {
   speedFeeFor,
   suggestedEvmMinimum,
   wrapperSplit,
-} from "./evm-forward-fee";
+} from "./evm.js";
 
 const ARC = { name: "Arc", maxForwardFeeUnits: 100_000 };
 /** A destination where delivery is dear, to exercise a higher ceiling. */

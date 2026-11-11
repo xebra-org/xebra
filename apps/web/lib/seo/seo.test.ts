@@ -1,7 +1,6 @@
+import { ARC_PEERS, type DomainForwardConfig, EVM_ARC_PEERS, EVM_CHAINS } from "@xebra/sdk/core";
 import { describe, expect, it } from "vitest";
 import robots from "../../app/robots";
-import { ARC_PEERS, EVM_ARC_PEERS, EVM_CHAINS } from "../evm-chains";
-import type { DomainForwardConfig } from "../forward-fee";
 import { buildDocs } from "./docs";
 import { articleLd, breadcrumbLd, faqLd, ogImagePath } from "./json-ld";
 import { llmsFullTxt, llmsTxt } from "./llms";

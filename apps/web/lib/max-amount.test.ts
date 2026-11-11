@@ -1,7 +1,6 @@
+import { parseUsdc, parseUsdc6 } from "@xebra/sdk/core";
 import { describe, expect, it } from "vitest";
-import { parseUsdc } from "./cctp-bridge";
 import { unitsToInput } from "./max-amount";
-import { parseUsdc6 } from "./usdc6";
 
 describe("unitsToInput", () => {
   it("writes whole amounts without a decimal point", () => {

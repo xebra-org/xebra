@@ -1,4 +1,5 @@
 import { FINALITY, tokenMessengerAbi, xebraWrapperAbi } from "@xebra/cctp-evm";
+import { EVM_CHAINS } from "@xebra/sdk/core";
 import { decodeFunctionData } from "viem";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
@@ -9,7 +10,6 @@ import {
   spendableUsdc,
   submitEvmBridge,
 } from "./evm-bridge";
-import { EVM_CHAINS } from "./evm-chains";
 
 const { base, arc } = EVM_CHAINS;
 const FROM = "0x1111111111111111111111111111111111111111";
