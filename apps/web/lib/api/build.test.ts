@@ -95,6 +95,14 @@ describe("buildTransfer: recipients", () => {
     expect(err.detail).toContain("trustline");
   });
 
+  it("ends a borrowed address-check message with one full stop", async () => {
+    const err = await refusal(
+      svc().buildTransfer({ ...toStellar, to: "base", recipient: SOLANA_WALLET }),
+    );
+    expect(err.detail).not.toMatch(/\.\.$/);
+    expect(err.detail).toMatch(/\.$/);
+  });
+
   it("refuses a sender that is not an address on the source chain", async () => {
     const err = await refusal(
       svc().buildTransfer({ ...toStellar, sender: EVM_SENDER, to: "base", recipient: RECIPIENT }),
@@ -123,6 +131,15 @@ describe("buildTransfer: the sender's balance", () => {
       code: "insufficient_balance",
       extra: { have: 5_000_000n, need: 10_000_000n },
     });
+  });
+
+  it("says the sender's account does not exist, rather than that it holds nothing", async () => {
+    const s = svc({
+      stellarAccount: async () => ({ exists: false, hasTrustline: false, balance: 0n }),
+    });
+    const err = await refusal(s.buildTransfer({ ...toStellar, to: "base", recipient: RECIPIENT }));
+    expect(err.code).toBe("insufficient_balance");
+    expect(err.detail).toContain("does not exist");
   });
 
   it("says so when the Stellar sender has no trustline", async () => {

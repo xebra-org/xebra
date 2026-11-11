@@ -634,6 +634,7 @@
               "fee_above_limit",
               "transaction_rejected",
               "rate_limited",
+              "internal_error",
               "upstream_unavailable"
             ]
           },

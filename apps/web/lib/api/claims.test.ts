@@ -144,6 +144,18 @@ describe("buildClaim: Sui to Stellar", () => {
     });
   });
 
+  it("refuses a payer whose Stellar account does not exist, before building anything", async () => {
+    const suiClaim = vi.fn(async () => ({ ok: true as const, xdr: "AAAA" }));
+    const err = await refusal(
+      svc({
+        suiClaim,
+        stellarAccount: async () => ({ exists: false, hasTrustline: false, balance: 0n }),
+      }).buildClaim({ chain: "sui", tx: DIGEST, payer: SENDER }),
+    );
+    expect(err.code).toBe("invalid_request");
+    expect(suiClaim).not.toHaveBeenCalled();
+  });
+
   it("refuses one already delivered, and says not yet before attestation", async () => {
     const done = await refusal(
       svc({

@@ -134,6 +134,11 @@ function checkSender(from: SourceId, sender: string): void {
   }
 }
 
+/** Ends a borrowed message with exactly one full stop. */
+function sentence(text: string): string {
+  return /[.!?]$/.test(text.trim()) ? text.trim() : `${text.trim()}.`;
+}
+
 function short(have: bigint, need: bigint, chain: string, note = ""): ApiError {
   return new ApiError(
     "insufficient_balance",
@@ -575,7 +580,7 @@ export function createService(deps: Deps, now: () => number = Date.now) {
       if (!check.ok || !check.bytes) {
         throw new ApiError(
           "invalid_recipient",
-          `That is not a Solana address: ${check.error ?? recipient}.`,
+          `That is not a Solana address: ${sentence(check.error ?? recipient)}`,
         );
       }
       const found = await b.solanaRecipient(recipient);
@@ -614,7 +619,7 @@ export function createService(deps: Deps, now: () => number = Date.now) {
       if (!check.ok || !check.bytes) {
         throw new ApiError(
           "invalid_recipient",
-          `That is not a valid ${EVM_CHAINS[r.to].name} address: ${check.error ?? recipient}.`,
+          `That is not a valid ${EVM_CHAINS[r.to].name} address: ${sentence(check.error ?? recipient)}`,
         );
       }
       mintRecipient = check.bytes;
@@ -652,12 +657,19 @@ export function createService(deps: Deps, now: () => number = Date.now) {
         throw new ApiError("route_unavailable", "Sending from Stellar is not configured here.");
       }
       const account = await b.stellarAccount(sender);
-      if (!account.exists || account.balance < figures.amount) {
+      if (!account.exists) {
+        throw new ApiError(
+          "insufficient_balance",
+          "The sender's Stellar account does not exist yet, so it holds no USDC.",
+          { have: 0n, need: r.amount },
+        );
+      }
+      if (account.balance < figures.amount) {
         throw short(
           floorToUnits(account.balance),
           r.amount,
           "Stellar",
-          account.exists && !account.hasTrustline ? " It has no USDC trustline." : "",
+          account.hasTrustline ? "" : " It has no USDC trustline.",
         );
       }
       try {
@@ -791,6 +803,13 @@ export function createService(deps: Deps, now: () => number = Date.now) {
         throw new ApiError(
           "invalid_request",
           "payer must be the Stellar account (G...) that pays the fee.",
+        );
+      }
+      // The payer is the transaction's source, so it has to exist (and hold XLM for the fee).
+      if (!(await b.stellarAccount(payer)).exists) {
+        throw new ApiError(
+          "invalid_request",
+          "payer's Stellar account does not exist yet. It needs XLM to pay the fee.",
         );
       }
       const plan = await b.suiClaim(digest, payer);

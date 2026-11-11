@@ -17,6 +17,7 @@ export const ERROR_STATUS = {
   fee_above_limit: 422,
   transaction_rejected: 422,
   rate_limited: 429,
+  internal_error: 500,
   upstream_unavailable: 503,
 } as const;
 
