@@ -104,6 +104,9 @@ export function withTableCeiling(
 export interface FeeParams {
   feeBps: bigint;
   minFee: bigint;
+  /** The contract's per-transfer bounds, in stroops. Absent when not read. */
+  minTransfer?: bigint;
+  maxTransfer?: bigint;
 }
 
 /** Circle's delivery fee may be at most this fraction of what is burned: one tenth (`check_forward_fee`). */

@@ -1,32 +1,20 @@
-import type { CircleHealth } from "@xebra/cctp-client";
 import {
-  type Destination,
-  type DomainForwardConfig,
   EVM_CHAINS,
-  type EnabledRoutes,
   type EvmChainId,
-  type FeeParams,
-  type RouteDestinationId,
-  STELLAR_CCTP_DOMAIN,
   buildDeepLink,
   checkAddressOn,
   checkSolanaAddress,
-  chooseMaxFee,
-  evmDestinationsFrom,
-  evmSources,
   formatUsdc,
   formatUsdc6,
-  forwardBoundHolds,
   isEvmChainId,
-  minimumForwardedAmount,
   parseUsdc6,
-  planEvmFee,
-  stellarDestination,
-  suggestedMinimum,
-  withTableCeiling,
 } from "@xebra/sdk/core";
-import { feeDestination, routeDestination } from "../route-destination";
+import type { Deps } from "../api/deps";
+import { ApiError } from "../api/errors";
+import { type QuoteOption, createService } from "../api/service";
 import { type Tool, type ToolResult, toolError, toolOk } from "./protocol";
+
+export type { Deps, StellarRoutes } from "../api/deps";
 
 /**
  * The four tools. They find a route, price it, hand a person a link to sign it, and report how a
@@ -39,25 +27,6 @@ import { type Tool, type ToolResult, toolError, toolOk } from "./protocol";
 
 type SourceId = "stellar" | EvmChainId;
 type DestId = "solana" | EvmChainId;
-
-export interface StellarRoutes {
-  /** What the bridge page would offer for a send from Stellar right now. */
-  destinations: Destination[];
-  /** The wrapper's committed domains, or null when the contract could not be read. */
-  domains: Map<number, DomainForwardConfig> | null;
-}
-
-export interface Deps {
-  siteUrl: string;
-  evmRoutes: EnabledRoutes;
-  stellarRoutes(): Promise<StellarRoutes>;
-  /** Circle's quote and health for a route, as `/api/circle-health` answers it. Null if unreadable. */
-  circle(src: number, dst: number): Promise<CircleHealth | null>;
-  /** The wrapper's fee and floor. Null if unreadable. */
-  feeParams(): Promise<FeeParams | null>;
-  /** Circle's account of a burn, as `/api/delivery` answers it. */
-  delivery(tx: string, srcDomain: number): Promise<Record<string, unknown> | null>;
-}
 
 const READ_ONLY = {
   readOnlyHint: true,
@@ -81,31 +50,6 @@ const asDest = (raw: unknown): DestId | null => {
   const v = readChain(raw);
   return v === "solana" || isEvmChainId(v) ? v : null;
 };
-
-interface Offered {
-  from: SourceId;
-  to: Array<{ id: DestId; name: string }>;
-}
-
-async function offered(deps: Deps): Promise<{ routes: Offered[]; committedKnown: boolean }> {
-  const stellar = await deps.stellarRoutes();
-  const routes: Offered[] = [
-    {
-      from: "stellar",
-      to: stellar.destinations.map((d) => ({ id: d.id, name: d.name })),
-    },
-  ];
-  for (const source of evmSources(deps.evmRoutes)) {
-    routes.push({
-      from: source,
-      to: evmDestinationsFrom(source, deps.evmRoutes).map((id) => ({ id, name: DEST_NAME(id) })),
-    });
-  }
-  return { routes, committedKnown: stellar.domains !== null };
-}
-
-const isOffered = (routes: Offered[], from: SourceId, to: DestId): boolean =>
-  routes.find((r) => r.from === from)?.to.some((d) => d.id === to) ?? false;
 
 const ROUTE_ARGS = {
   from: {
@@ -134,11 +78,11 @@ function parseAmount(raw: unknown): bigint | string {
   }
 }
 
-function routeProblem(
-  routes: Offered[],
+async function routeProblem(
+  service: ReturnType<typeof createService>,
   fromRaw: unknown,
   toRaw: unknown,
-): { from: SourceId; to: DestId } | ToolResult {
+): Promise<{ from: SourceId; to: DestId } | ToolResult> {
   const from = asSource(fromRaw);
   const to = asDest(toRaw);
   if (!from || !to) {
@@ -146,10 +90,12 @@ function routeProblem(
       "from and to must be chain ids from list_routes (for example from 'stellar' to 'base').",
     );
   }
-  if (!isOffered(routes, from, to)) {
-    return toolError(
-      `Xebra does not send from ${SOURCE_NAME(from)} to ${DEST_NAME(to)} right now. Call list_routes for what is live.`,
-    );
+  try {
+    await service.checkRoute(from, to);
+  } catch (err) {
+    if (err instanceof ApiError)
+      return toolError(`${err.detail} Call list_routes for what is live.`);
+    throw err;
   }
   return { from, to };
 }
@@ -158,6 +104,7 @@ const isResult = (v: unknown): v is ToolResult =>
   typeof v === "object" && v !== null && "content" in v;
 
 export function buildTools(deps: Deps): Tool[] {
+  const service = createService(deps);
   const listRoutes: Tool = {
     name: "list_routes",
     title: "List Xebra routes",
@@ -166,14 +113,19 @@ export function buildTools(deps: Deps): Tool[] {
     inputSchema: { type: "object", properties: {}, additionalProperties: false },
     annotations: READ_ONLY,
     async run() {
-      const { routes, committedKnown } = await offered(deps);
+      const { routes: groups, stellarContractRead } = await service.routes();
+      // These tools hand out links to the bridge page, which sends from Stellar and the EVM chains.
+      // Sui has a page of its own, so its route is not offered here.
+      const routes = groups
+        .filter((g) => g.from !== "sui")
+        .map((g) => ({ from: g.from, to: g.to.map((d) => ({ id: d.id, name: d.name })) }));
       const lines = routes
         .filter((r) => r.to.length > 0)
         .map(
           (r) =>
-            `From ${SOURCE_NAME(r.from)} (${r.from}) to: ${r.to.map((d) => `${d.name} (${d.id})`).join(", ")}`,
+            `From ${service.SOURCE_NAME(r.from)} (${r.from}) to: ${r.to.map((d) => `${d.name} (${d.id})`).join(", ")}`,
         );
-      const note = committedKnown
+      const note = stellarContractRead
         ? ""
         : "\nNote: the Stellar contract could not be read just now, so the Stellar list shows only Solana and Arc. More chains may be live; try again shortly.";
       return toolOk(
@@ -196,38 +148,25 @@ export function buildTools(deps: Deps): Tool[] {
     },
     annotations: READ_ONLY,
     async run(args) {
-      const { routes } = await offered(deps);
-      const route = routeProblem(routes, args.from, args.to);
+      const route = await routeProblem(service, args.from, args.to);
       if (isResult(route)) return route;
       const units = parseAmount(args.amount);
       if (typeof units === "string") return toolError(units);
 
-      const srcDomain =
-        route.from === "stellar" ? STELLAR_CCTP_DOMAIN : EVM_CHAINS[route.from].cctpDomainId;
-      const destDomain =
-        route.to === "solana"
-          ? stellarDestination("solana").domain
-          : EVM_CHAINS[route.to].cctpDomainId;
-      const health = await deps.circle(srcDomain, destDomain);
-      if (!health || !health.quote) {
-        return toolError(
-          "Circle's delivery fee could not be read just now, so no price can be given. Try again shortly.",
-        );
+      let priced: Awaited<ReturnType<typeof service.quoteOptions>>;
+      try {
+        priced = await service.quoteOptions({ from: route.from, to: route.to, amount: units });
+      } catch (err) {
+        if (err instanceof ApiError) return toolError(err.detail);
+        throw err;
       }
+      const { health, options } = priced;
       const status = {
-        circle: health.status,
-        ...(health.reasons.length > 0 ? { circleReasons: health.reasons } : {}),
+        circle: health?.status ?? "ok",
+        ...(health && health.reasons.length > 0 ? { circleReasons: health.reasons } : {}),
       };
-      if (health.status === "down") {
-        return toolError(
-          `Circle is not carrying transfers on this route right now (${health.reasons.join("; ") || "down"}). Do not start one.`,
-        );
-      }
-
-      if (route.from === "stellar") {
-        return quoteFromStellar(deps, route.to, units, health, status);
-      }
-      return quoteFromEvm(route.from, route.to, units, health, status);
+      if (route.from === "stellar") return stellarAnswer(route.to, options[0], status);
+      return evmAnswer(route.from, route.to, units, options, status);
     },
   };
 
@@ -251,8 +190,7 @@ export function buildTools(deps: Deps): Tool[] {
     },
     annotations: READ_ONLY,
     async run(args) {
-      const { routes } = await offered(deps);
-      const route = routeProblem(routes, args.from, args.to);
+      const route = await routeProblem(service, args.from, args.to);
       if (isResult(route)) return route;
       const units = parseAmount(args.amount);
       if (typeof units === "string") return toolError(units);
@@ -317,20 +255,16 @@ export function buildTools(deps: Deps): Tool[] {
             : "tx must be 0x followed by 64 hex characters.",
         );
       }
-      const domain = from === "stellar" ? STELLAR_CCTP_DOMAIN : EVM_CHAINS[from].cctpDomainId;
-      const answer = await deps.delivery(tx, domain);
-      if (!answer || answer.status === "unknown") {
-        return toolError(
-          "Circle's status could not be read just now. That does not mean the transfer failed. Try again shortly.",
-        );
+      let status: Awaited<ReturnType<typeof service.transferStatus>>;
+      try {
+        status = await service.transferStatus({ chain: from, tx });
+      } catch (err) {
+        if (err instanceof ApiError) return toolError(err.detail);
+        throw err;
       }
-      const state = String(answer.state ?? "unknown");
-      const forwardTxHash = typeof answer.forwardTxHash === "string" ? answer.forwardTxHash : null;
-      // Circle's own words, shown as data: short, and nothing is done with them.
-      const reason = typeof answer.reason === "string" ? answer.reason.slice(0, 200) : null;
-      const claim = `${deps.siteUrl.replace(/\/+$/, "")}/claim?tx=${tx}${from === "stellar" ? "" : `&src=${domain}`}`;
+      const { circleState: state, deliveryTx: forwardTxHash, reason, claimUrl } = status;
       return toolOk(
-        `Transfer ${tx} from ${SOURCE_NAME(from)}: ${state}${forwardTxHash ? `, delivered in ${forwardTxHash}` : ""}.${state === "claimable" || state === "failed" ? ` Delivery did not complete on its own; the recipient can claim it at ${claim}.` : ""}`,
+        `Transfer ${tx} from ${SOURCE_NAME(from)}: ${state}${forwardTxHash ? `, delivered in ${forwardTxHash}` : ""}.${claimUrl ? ` Delivery did not complete on its own; the recipient can claim it at ${claimUrl}.` : ""}`,
         { from, tx, state, forwardTxHash, reason },
       );
     },
@@ -346,66 +280,20 @@ function checkRecipient(to: DestId, address: string): { ok: boolean; error?: str
 
 type Status = { circle: string; circleReasons?: string[] };
 
-async function quoteFromStellar(
-  deps: Deps,
-  to: DestId,
-  units: bigint,
-  health: CircleHealth,
-  status: Status,
-): Promise<ToolResult> {
-  const dest = stellarDestination(to);
-  const [{ domains }, params] = await Promise.all([deps.stellarRoutes(), deps.feeParams()]);
-  if (!params) {
-    return toolError(
-      "The bridge contract's fee schedule could not be read just now. Try again shortly.",
-    );
-  }
-  // The contract's caps for this chain, lowered to the table's ceiling. If the contract cannot be
-  // read, only the table's ceiling applies here and the page checks the rest at signing.
-  const committed = domains?.get(dest.domain);
-  if (domains && !committed) {
-    return toolError(`The bridge contract does not send to ${dest.name} yet.`);
-  }
-  const cfg = withTableCeiling(
-    committed ?? {
-      forward: true,
-      maxForwardFee: BigInt(Number.MAX_SAFE_INTEGER),
-      accountCreation: true,
-      maxForwardFeeNewAccount: BigInt(Number.MAX_SAFE_INTEGER),
-    },
-    dest.evm?.maxForwardFeeUnits ?? null,
-  );
-  const choice = chooseMaxFee({
-    quote: health.quote as NonNullable<CircleHealth["quote"]>,
-    needsAccount: false,
-    cfg,
-    destinationName: dest.name,
-  });
-  if (!choice.ok) return toolError(choice.reason);
-
-  const amount = units * 10n; // 6-decimal units to the contract's 7-decimal stroops
-  const m = choice.maxFee;
-  if (!forwardBoundHolds(amount, m, params)) {
-    const minimum = suggestedMinimum(minimumForwardedAmount(m, params));
-    return toolError(
-      `Fees would take more than a tenth of this transfer. Send at least ${formatUsdc(minimum)} USDC to ${dest.name}.`,
-    );
-  }
-  // The contract's split: our fee is the largest of the percentage, the floor and Circle's fee; what
-  // is burned is what remains after our share, floored to a whole unit; Circle keeps `m` of that.
-  const pct = (amount * params.feeBps) / 10_000n;
-  const base = pct > params.minFee ? pct : params.minFee;
-  const fee = base > m ? base : m;
-  const after = amount - (fee - m);
-  const burned = after - (after % 10n);
-  const received = burned - m;
-
+function stellarAnswer(to: DestId, option: QuoteOption | undefined, status: Status): ToolResult {
+  if (!option)
+    return toolError("Circle's delivery fee could not be read just now. Try again shortly.");
+  if (!option.ok) return toolError(option.error.detail);
+  const figures = option.priced.stellar;
+  if (!figures) throw new Error("a Stellar quote without the contract's figures");
+  const { amount, fee, deliveryFee: m, received } = figures;
+  const name = DEST_NAME(to);
   const note =
     to === "solana"
       ? " If the recipient wallet has no USDC account yet, opening one costs Circle roughly twice as much more and the page shows that fee before signing."
       : "";
   return toolOk(
-    `Sending ${formatUsdc(amount)} USDC from Stellar to ${dest.name}: total fee ${formatUsdc(fee)} USDC (Circle's delivery ${formatUsdc(m)}, Xebra ${formatUsdc(fee - m)}). The recipient receives about ${formatUsdc(received)} USDC. Circle status: ${health.status}.${note} Fees can move before signing; the page shows the final figure.`,
+    `Sending ${formatUsdc(amount)} USDC from Stellar to ${name}: total fee ${formatUsdc(fee)} USDC (Circle's delivery ${formatUsdc(m)}, Xebra ${formatUsdc(fee - m)}). The recipient receives about ${formatUsdc(received)} USDC. Circle status: ${status.circle}.${note} Fees can move before signing; the page shows the final figure.`,
     {
       from: "stellar",
       to,
@@ -420,37 +308,36 @@ async function quoteFromStellar(
   );
 }
 
-function quoteFromEvm(
+function evmAnswer(
   from: EvmChainId,
   to: DestId,
   units: bigint,
-  health: CircleHealth,
+  options: QuoteOption[],
   status: Status,
 ): ToolResult {
-  const dest = routeDestination(to as RouteDestinationId);
   const out: Array<{ speed: string; fee: string; received: string }> = [];
   const lines: string[] = [];
-  const tiers = [
-    ["standard", health.tiers.standard],
-    ["fast", EVM_CHAINS[from].fast ? health.tiers.fast : null],
-  ] as const;
-  for (const [speed, tier] of tiers) {
-    if (!tier) continue;
-    const plan = planEvmFee({ amount: units, tier, destination: feeDestination(dest, false) });
-    if (!plan.ok) {
-      lines.push(`${speed}: ${plan.reason}`);
+  for (const option of options) {
+    if (!option.ok) {
+      lines.push(`${option.speed}: ${option.error.detail}`);
       continue;
     }
-    out.push({ speed, fee: formatUsdc6(plan.fee), received: formatUsdc6(plan.received) });
+    const plan = option.priced.evm;
+    if (!plan) throw new Error("an EVM quote without its fee plan");
+    out.push({
+      speed: option.speed,
+      fee: formatUsdc6(plan.fee),
+      received: formatUsdc6(plan.received),
+    });
     lines.push(
-      `${speed}: fee ${formatUsdc6(plan.fee)} USDC, recipient receives about ${formatUsdc6(plan.received)} USDC`,
+      `${option.speed}: fee ${formatUsdc6(plan.fee)} USDC, recipient receives about ${formatUsdc6(plan.received)} USDC`,
     );
   }
   if (lines.length === 0) {
     return toolError("Circle's delivery fee could not be read just now. Try again shortly.");
   }
   return toolOk(
-    `Sending ${formatUsdc6(units)} USDC from ${EVM_CHAINS[from].name} to ${dest.name}:\n${lines.join("\n")}\nCircle status: ${health.status}. Fees can move before signing; the page shows the final figure.`,
+    `Sending ${formatUsdc6(units)} USDC from ${EVM_CHAINS[from].name} to ${DEST_NAME(to)}:\n${lines.join("\n")}\nCircle status: ${status.circle}. Fees can move before signing; the page shows the final figure.`,
     { from, to, sent: formatUsdc6(units), options: out, ...status },
   );
 }

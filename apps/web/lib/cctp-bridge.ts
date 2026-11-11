@@ -170,8 +170,18 @@ export async function getWrapperFeeParams(
     sourceAddress,
     "get_params",
   );
-  const p = scValToNative(retval) as { fee_bps: number | bigint; min_fee: bigint };
-  return { feeBps: BigInt(p.fee_bps), minFee: BigInt(p.min_fee) };
+  const p = scValToNative(retval) as {
+    fee_bps: number | bigint;
+    min_fee: bigint;
+    min_transfer: bigint;
+    max_transfer: bigint;
+  };
+  return {
+    feeBps: BigInt(p.fee_bps),
+    minFee: BigInt(p.min_fee),
+    minTransfer: BigInt(p.min_transfer),
+    maxTransfer: BigInt(p.max_transfer),
+  };
 }
 
 /**

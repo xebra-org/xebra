@@ -5,6 +5,7 @@ import { GET as delivery } from "../../app/api/delivery/route";
 import { getWrapperDomains, getWrapperFeeParams } from "../cctp-bridge";
 import { env } from "../env";
 import { createTtlCache } from "../server/ttl-cache";
+import { maxUsdcBase, suiStellarEnabled } from "../sui-stellar/config";
 import type { Server } from "./protocol";
 import { type Deps, type StellarRoutes, buildTools } from "./tools";
 
@@ -58,6 +59,7 @@ async function readJson(res: Response): Promise<Record<string, unknown> | null> 
 
 const deps: Deps = {
   siteUrl: SITE_URL,
+  suiStellar: { enabled: suiStellarEnabled(), maxUnits: maxUsdcBase() },
   evmRoutes: env.evmRoutes,
   stellarRoutes,
   async circle(src, dst) {

@@ -1,0 +1,145 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`MCP answers are unchanged by the service refactor > list_routes {} 1`] = `
+{
+  "data": {
+    "routes": [
+      {
+        "from": "stellar",
+        "to": [
+          {
+            "id": "solana",
+            "name": "Solana",
+          },
+          {
+            "id": "base",
+            "name": "Base",
+          },
+        ],
+      },
+      {
+        "from": "arc",
+        "to": [
+          {
+            "id": "base",
+            "name": "Base",
+          },
+        ],
+      },
+    ],
+  },
+  "error": false,
+  "text": "Xebra routes (native USDC, Circle CCTP):
+From Stellar (stellar) to: Solana (solana), Base (base)
+From Arc (arc) to: Base (base)
+To send, use create_transfer_link and have the person open it and sign in their own wallet.",
+}
+`;
+
+exports[`MCP answers are unchanged by the service refactor > quote_transfer {"from":"arc","to":"base","amount":"0.1"} 1`] = `
+{
+  "data": {
+    "circle": "ok",
+    "from": "arc",
+    "options": [],
+    "sent": "0.10",
+    "to": "base",
+  },
+  "error": false,
+  "text": "Sending 0.10 USDC from Arc to Base:
+standard: Fees would take more than a tenth of this transfer. Send at least 0.21 USDC to Base.
+Circle status: ok. Fees can move before signing; the page shows the final figure.",
+}
+`;
+
+exports[`MCP answers are unchanged by the service refactor > quote_transfer {"from":"arc","to":"base","amount":"25.5"} 1`] = `
+{
+  "data": {
+    "circle": "ok",
+    "from": "arc",
+    "options": [
+      {
+        "fee": "0.02",
+        "received": "25.48",
+        "speed": "standard",
+      },
+    ],
+    "sent": "25.50",
+    "to": "base",
+  },
+  "error": false,
+  "text": "Sending 25.50 USDC from Arc to Base:
+standard: fee 0.02 USDC, recipient receives about 25.48 USDC
+Circle status: ok. Fees can move before signing; the page shows the final figure.",
+}
+`;
+
+exports[`MCP answers are unchanged by the service refactor > quote_transfer {"from":"stellar","to":"base","amount":"1"} 1`] = `
+{
+  "data": {
+    "circle": "ok",
+    "circleDeliveryFee": "0.02",
+    "fee": "0.30",
+    "from": "stellar",
+    "recipientReceives": "0.70",
+    "sent": "1.00",
+    "speed": "standard",
+    "to": "base",
+    "xebraFee": "0.28",
+  },
+  "error": false,
+  "text": "Sending 1.00 USDC from Stellar to Base: total fee 0.30 USDC (Circle's delivery 0.02, Xebra 0.28). The recipient receives about 0.70 USDC. Circle status: ok. Fees can move before signing; the page shows the final figure.",
+}
+`;
+
+exports[`MCP answers are unchanged by the service refactor > quote_transfer {"from":"stellar","to":"base","amount":"10"} (overridden deps) 1`] = `
+{
+  "data": undefined,
+  "error": true,
+  "text": "Circle's delivery fee could not be read just now, so no price can be given. Try again shortly.",
+}
+`;
+
+exports[`MCP answers are unchanged by the service refactor > quote_transfer {"from":"stellar","to":"base","amount":"10"} 1`] = `
+{
+  "data": {
+    "circle": "ok",
+    "circleDeliveryFee": "0.02",
+    "fee": "0.30",
+    "from": "stellar",
+    "recipientReceives": "9.70",
+    "sent": "10.00",
+    "speed": "standard",
+    "to": "base",
+    "xebraFee": "0.28",
+  },
+  "error": false,
+  "text": "Sending 10.00 USDC from Stellar to Base: total fee 0.30 USDC (Circle's delivery 0.02, Xebra 0.28). The recipient receives about 9.70 USDC. Circle status: ok. Fees can move before signing; the page shows the final figure.",
+}
+`;
+
+exports[`MCP answers are unchanged by the service refactor > quote_transfer {"from":"stellar","to":"monad","amount":"10"} 1`] = `
+{
+  "data": undefined,
+  "error": true,
+  "text": "Xebra does not send from Stellar to Monad right now. Call list_routes for what is live.",
+}
+`;
+
+exports[`MCP answers are unchanged by the service refactor > quote_transfer {"from":"stellar","to":"solana","amount":"1234.567891"} 1`] = `
+{
+  "data": {
+    "circle": "ok",
+    "circleDeliveryFee": "0.02",
+    "fee": "1.2345678",
+    "from": "stellar",
+    "recipientReceives": "1,233.333323",
+    "sent": "1,234.567891",
+    "speed": "standard",
+    "to": "solana",
+    "xebraFee": "1.2145678",
+  },
+  "error": false,
+  "text": "Sending 1,234.567891 USDC from Stellar to Solana: total fee 1.2345678 USDC (Circle's delivery 0.02, Xebra 1.2145678). The recipient receives about 1,233.333323 USDC. Circle status: ok. If the recipient wallet has no USDC account yet, opening one costs Circle roughly twice as much more and the page shows that fee before signing. Fees can move before signing; the page shows the final figure.",
+}
+`;
