@@ -6,6 +6,7 @@ import {
   TransactionBuilder,
   nativeToScVal,
   rpc,
+  scValToNative,
 } from "@stellar/stellar-sdk";
 import {
   STELLAR_CCTP_FORWARDER,
@@ -27,6 +28,8 @@ import { readAttestation } from "./attestation";
 export interface RecipientStatus {
   exists: boolean;
   hasTrustline: boolean;
+  /** USDC held, in stroops; zero without a trustline. */
+  balance: bigint;
 }
 
 const MISSING_TRUSTLINE = "trustline entry is missing for account";
@@ -37,7 +40,7 @@ export async function recipientStatus(recipient: string): Promise<RecipientStatu
   try {
     account = await server.getAccount(recipient);
   } catch {
-    return { exists: false, hasTrustline: false };
+    return { exists: false, hasTrustline: false, balance: 0n };
   }
   const tx = new TransactionBuilder(account, {
     fee: BASE_FEE,
@@ -50,10 +53,13 @@ export async function recipientStatus(recipient: string): Promise<RecipientStatu
     .build();
   const sim = await server.simulateTransaction(tx);
   if (rpc.Api.isSimulationError(sim)) {
-    if (sim.error.includes(MISSING_TRUSTLINE)) return { exists: true, hasTrustline: false };
+    if (sim.error.includes(MISSING_TRUSTLINE)) {
+      return { exists: true, hasTrustline: false, balance: 0n };
+    }
     throw new Error(`could not check the recipient's USDC trustline: ${sim.error}`);
   }
-  return { exists: true, hasTrustline: true };
+  const held = sim.result ? scValToNative(sim.result.retval) : 0n;
+  return { exists: true, hasTrustline: true, balance: BigInt(held as bigint | number | string) };
 }
 
 export type CompleteResult =

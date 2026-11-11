@@ -11,6 +11,8 @@ export type ApiErrorCode =
   | "amount_below_minimum"
   | "amount_above_maximum"
   | "insufficient_balance"
+  | "fee_above_limit"
+  | "transaction_rejected"
   | "upstream_unavailable"
   | "not_found"
   | "rate_limited"
@@ -24,6 +26,8 @@ export const ERROR_STATUS: Record<ApiErrorCode, number> = {
   amount_below_minimum: 422,
   amount_above_maximum: 422,
   insufficient_balance: 422,
+  fee_above_limit: 422,
+  transaction_rejected: 422,
   upstream_unavailable: 503,
   not_found: 404,
   rate_limited: 429,

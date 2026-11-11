@@ -1,10 +1,21 @@
+import { StrKey } from "@stellar/stellar-sdk";
 import type { CircleHealth } from "@xebra/cctp-client";
+import { type BurnRecipient, FINALITY } from "@xebra/cctp-evm";
+import {
+  InsufficientUsdcError,
+  type TransferStep,
+  buildEvmBridge,
+  buildStellarBridge,
+} from "@xebra/sdk/build";
 import {
   EVM_CHAINS,
   type EvmChainId,
   type FeePlan,
   type FeeTier,
   STELLAR_CCTP_DOMAIN,
+  bytesToHex,
+  checkAddressOn,
+  checkSolanaAddress,
   chooseMaxFee,
   evmDestinationsFrom,
   evmSources,
@@ -15,11 +26,15 @@ import {
   minimumEvmAmount,
   minimumForwardedAmount,
   planEvmFee,
+  solanaAddressToBytes32,
   stellarDestination,
   suggestedEvmMinimum,
   suggestedMinimum,
   withTableCeiling,
 } from "@xebra/sdk/core";
+import { humanizeContractError } from "../cctp-bridge";
+import { ARC_GAS_RESERVE_UNITS, spendableUsdc } from "../evm-bridge";
+import { formatError } from "../format-error";
 import { feeDestination, routeDestination } from "../route-destination";
 import type { Deps } from "./deps";
 import { ApiError } from "./errors";
@@ -95,6 +110,34 @@ export interface TransferStatus {
 }
 
 const QUOTE_TTL_MS = 60_000;
+/** Stellar has Standard finality only. */
+const STANDARD_FINALITY = 2000;
+/** How long a signed Stellar request stays valid; the contract refuses beyond an hour. */
+const REQUEST_TTL_SECONDS = 600;
+const SUI_ADDRESS = /^0x[0-9a-fA-F]{64}$/;
+
+function checkSender(from: SourceId, sender: string): void {
+  const ok =
+    from === "stellar"
+      ? StrKey.isValidEd25519PublicKey(sender)
+      : from === "sui"
+        ? SUI_ADDRESS.test(sender)
+        : checkAddressOn(EVM_CHAINS[from], sender).ok;
+  if (!ok) {
+    throw new ApiError(
+      "invalid_request",
+      `sender must be the ${from === "stellar" ? "Stellar account (G...)" : from === "sui" ? "Sui address (0x + 64 hex)" : `${EVM_CHAINS[from].name} address`} that will sign.`,
+    );
+  }
+}
+
+function short(have: bigint, need: bigint, chain: string, note = ""): ApiError {
+  return new ApiError(
+    "insufficient_balance",
+    `The sender holds ${formatUsdcAmount(have)} USDC on ${chain}; this transfer needs ${formatUsdcAmount(need)}.${note}`,
+    { have, need },
+  );
+}
 const STROOPS_PER_UNIT = 10n;
 
 const SOURCE_NAME = (id: SourceId): string =>
@@ -185,14 +228,14 @@ export function createService(deps: Deps, now: () => number = Date.now) {
     };
   }
 
-  async function circleFor(from: SourceId, to: DestId): Promise<CircleHealth> {
+  async function circleFor(from: SourceId, to: DestId, newAccount: boolean): Promise<CircleHealth> {
     const src =
       from === "stellar" ? STELLAR_CCTP_DOMAIN : EVM_CHAINS[from as EvmChainId].cctpDomainId;
     const dst =
       to === "solana"
         ? stellarDestination("solana").domain
         : EVM_CHAINS[to as EvmChainId].cctpDomainId;
-    const health = await deps.circle(src, dst);
+    const health = newAccount ? await deps.circle(src, dst, true) : await deps.circle(src, dst);
     if (!health?.quote) {
       throw new ApiError(
         "upstream_unavailable",
@@ -212,6 +255,7 @@ export function createService(deps: Deps, now: () => number = Date.now) {
     to: DestId,
     units: bigint,
     health: CircleHealth,
+    needsAccount: boolean,
   ): Promise<QuoteOption> {
     const speed: Speed = "standard";
     const dest = stellarDestination(to as Exclude<DestId, "stellar">);
@@ -242,7 +286,7 @@ export function createService(deps: Deps, now: () => number = Date.now) {
     );
     const choice = chooseMaxFee({
       quote: health.quote as NonNullable<CircleHealth["quote"]>,
-      needsAccount: false,
+      needsAccount,
       cfg,
       destinationName: dest.name,
     });
@@ -329,9 +373,14 @@ export function createService(deps: Deps, now: () => number = Date.now) {
     speed: Speed,
     tier: FeeTier,
     health: CircleHealth,
+    opensAccount: boolean,
   ): QuoteOption {
     const dest = routeDestination(to as Exclude<DestId, "stellar">);
-    const plan = planEvmFee({ amount: units, tier, destination: feeDestination(dest, false) });
+    const plan = planEvmFee({
+      amount: units,
+      tier,
+      destination: feeDestination(dest, opensAccount),
+    });
     if (!plan.ok) {
       const minimum = suggestedEvmMinimum(minimumEvmAmount(tier));
       const code =
@@ -375,7 +424,10 @@ export function createService(deps: Deps, now: () => number = Date.now) {
     from: SourceId;
     to: DestId;
     amount: bigint;
+    /** Solana: Circle also opens the recipient's USDC account, which costs more. */
+    opensAccount?: boolean;
   }): Promise<{ health: CircleHealth | null; options: QuoteOption[] }> {
+    const opensAccount = q.opensAccount ?? false;
     if (q.amount <= 0n) throw new ApiError("invalid_amount", "The amount must be more than zero.");
     await checkRoute(q.from, q.to);
 
@@ -408,9 +460,9 @@ export function createService(deps: Deps, now: () => number = Date.now) {
       };
     }
 
-    const health = await circleFor(q.from, q.to);
+    const health = await circleFor(q.from, q.to, opensAccount);
     if (q.from === "stellar") {
-      return { health, options: [await stellarOption(q.to, q.amount, health)] };
+      return { health, options: [await stellarOption(q.to, q.amount, health, opensAccount)] };
     }
     const from = q.from;
     const tiers: Array<[Speed, FeeTier | null]> = [
@@ -419,7 +471,7 @@ export function createService(deps: Deps, now: () => number = Date.now) {
     ];
     const options = tiers
       .filter((t): t is [Speed, FeeTier] => t[1] !== null)
-      .map(([speed, tier]) => evmOption(from, q.to, q.amount, speed, tier, health));
+      .map(([speed, tier]) => evmOption(from, q.to, q.amount, speed, tier, health, opensAccount));
     return { health, options };
   }
 
@@ -429,6 +481,7 @@ export function createService(deps: Deps, now: () => number = Date.now) {
     to: DestId;
     amount: bigint;
     speed?: Speed;
+    opensAccount?: boolean;
   }): Promise<PricedQuote> {
     const speed = q.speed ?? "standard";
     const { options } = await quoteOptions(q);
@@ -491,7 +544,200 @@ export function createService(deps: Deps, now: () => number = Date.now) {
     };
   }
 
-  return { routes, checkRoute, quoteOptions, quote, transferStatus, SOURCE_NAME, DEST_NAME };
+  /**
+   * Prices the transfer for this sender and recipient, checks what can be checked before anyone
+   * signs (addresses, the recipient's account, the sender's balance), and returns the unsigned
+   * transactions in signing order. Nothing is signed or sent.
+   */
+  async function buildTransfer(r: {
+    from: SourceId;
+    to: DestId;
+    amount: bigint;
+    sender: string;
+    recipient: string;
+    speed?: Speed;
+    /** The most the caller will let fees come to, typically the total it showed its user. */
+    maxTotalFee?: bigint;
+  }): Promise<{ quote: Quote; steps: TransferStep[] }> {
+    const b = deps.build;
+    if (!b) throw new Error("buildTransfer needs the build dependencies");
+    const sender = r.sender.trim();
+    const recipient = r.recipient.trim();
+    checkSender(r.from, sender);
+
+    // The recipient, read the way the destination needs it.
+    let opensAccount = false;
+    let mintRecipient: Uint8Array | null = null;
+    let solana: { tokenAccount: Uint8Array; owner: Uint8Array } | null = null;
+    if (r.to === "solana") {
+      const check = checkSolanaAddress(recipient);
+      if (!check.ok || !check.bytes) {
+        throw new ApiError(
+          "invalid_recipient",
+          `That is not a Solana address: ${check.error ?? recipient}.`,
+        );
+      }
+      const found = await b.solanaRecipient(recipient);
+      if (found.status === "unknown") {
+        throw new ApiError(
+          "upstream_unavailable",
+          "Whether the recipient has a USDC account on Solana could not be read just now, and the price depends on it. Try again shortly.",
+        );
+      }
+      opensAccount = found.status === "missing";
+      const tokenAccount = solanaAddressToBytes32(found.tokenAccount);
+      solana = { tokenAccount, owner: check.bytes };
+      mintRecipient = tokenAccount;
+    } else if (r.to === "stellar") {
+      if (!StrKey.isValidEd25519PublicKey(recipient)) {
+        throw new ApiError(
+          "invalid_recipient",
+          "The recipient must be a Stellar account address starting with G.",
+        );
+      }
+      const account = await b.stellarAccount(recipient);
+      if (!account.exists) {
+        throw new ApiError(
+          "invalid_recipient",
+          "That Stellar account does not exist yet. It needs XLM to be created and a USDC trustline before it can receive.",
+        );
+      }
+      if (!account.hasTrustline) {
+        throw new ApiError(
+          "invalid_recipient",
+          "That Stellar account has no USDC trustline. Add one, then try again.",
+        );
+      }
+    } else {
+      const check = checkAddressOn(EVM_CHAINS[r.to], recipient);
+      if (!check.ok || !check.bytes) {
+        throw new ApiError(
+          "invalid_recipient",
+          `That is not a valid ${EVM_CHAINS[r.to].name} address: ${check.error ?? recipient}.`,
+        );
+      }
+      mintRecipient = check.bytes;
+    }
+
+    const priced = await quote({
+      from: r.from,
+      to: r.to,
+      amount: r.amount,
+      ...(r.speed ? { speed: r.speed } : {}),
+      opensAccount,
+    });
+    if (r.maxTotalFee !== undefined && priced.quote.fees.total > r.maxTotalFee) {
+      throw new ApiError(
+        "fee_above_limit",
+        `Fees are now ${formatUsdcAmount(priced.quote.fees.total)} USDC, above the ${formatUsdcAmount(r.maxTotalFee)} USDC limit. Quote again.`,
+        { total: priced.quote.fees.total, limit: r.maxTotalFee },
+      );
+    }
+
+    if (r.from === "sui") {
+      try {
+        const step = await b.suiBurn({ sender, amount: r.amount, stellarRecipient: recipient });
+        return { quote: priced.quote, steps: [step] };
+      } catch (err) {
+        if (err instanceof InsufficientUsdcError) throw short(err.have, err.need, "Sui");
+        throw err;
+      }
+    }
+
+    if (r.from === "stellar") {
+      const figures = priced.stellar;
+      if (!figures || !mintRecipient) throw new Error("a Stellar quote without its figures");
+      if (!b.stellarWrapper) {
+        throw new ApiError("route_unavailable", "Sending from Stellar is not configured here.");
+      }
+      const account = await b.stellarAccount(sender);
+      if (!account.exists || account.balance < figures.amount) {
+        throw short(
+          floorToUnits(account.balance),
+          r.amount,
+          "Stellar",
+          account.exists && !account.hasTrustline ? " It has no USDC trustline." : "",
+        );
+      }
+      try {
+        const step = await buildStellarBridge(b.stellarRpc(), b.stellarWrapper, {
+          user: sender,
+          amount: figures.amount,
+          destinationDomain: stellarDestination(r.to as Exclude<DestId, "stellar">).domain,
+          mintRecipient,
+          maxFee: figures.deliveryFee,
+          // Pins the fee in this quote: if it rises before the transaction lands, the contract
+          // refuses rather than charging more than was shown.
+          maxWrapperFee: figures.fee,
+          minFinalityThreshold: STANDARD_FINALITY,
+          recipientNeedsAccount: opensAccount,
+          recipientOwner: opensAccount && solana ? solana.owner : null,
+          ttlSeconds: REQUEST_TTL_SECONDS,
+        });
+        return { quote: priced.quote, steps: [step] };
+      } catch (err) {
+        throw new ApiError(
+          "transaction_rejected",
+          `Stellar would reject this transfer: ${humanizeContractError(formatError(err), b.stellarWrapper.wrapperContractId)}`,
+        );
+      }
+    }
+
+    // An EVM source.
+    if (b.evmWrapperOn) {
+      // The page prices wrapper sends with the wrapper's own terms, which this does not read yet.
+      // Refusing beats building a transaction whose fee differs from the page's.
+      throw new ApiError(
+        "route_unavailable",
+        "Sending from EVM chains through the API is paused while the fee wrapper is on.",
+      );
+    }
+    const source = EVM_CHAINS[r.from];
+    const plan = priced.evm;
+    if (!plan) throw new Error("an EVM quote without its fee plan");
+    const burnRecipient: BurnRecipient = solana
+      ? {
+          kind: "solana",
+          tokenAccount: bytesToHex(solana.tokenAccount),
+          createAccountFor: opensAccount ? bytesToHex(solana.owner) : undefined,
+        }
+      : recipient;
+    const { balance, allowance } = await b.evmUsdc(source, sender, source.tokenMessengerAddress);
+    if (balance < r.amount) throw short(balance, r.amount, source.name);
+    if (spendableUsdc(source, balance) < r.amount) {
+      throw new ApiError(
+        "insufficient_balance",
+        `${source.name} pays gas in USDC. Leave ${formatUsdcAmount(ARC_GAS_RESERVE_UNITS)} USDC in the wallet for it and send up to ${formatUsdcAmount(spendableUsdc(source, balance))}.`,
+        { have: balance, need: r.amount + ARC_GAS_RESERVE_UNITS },
+      );
+    }
+    const steps = buildEvmBridge({
+      source,
+      from: sender,
+      destination: {
+        cctpDomainId: routeDestination(r.to as Exclude<DestId, "stellar">).cctpDomainId,
+      },
+      recipient: burnRecipient,
+      amount: r.amount,
+      maxFee: plan.maxFee,
+      finality: priced.quote.speed === "fast" ? FINALITY.fast : FINALITY.standard,
+      via: null,
+      allowance,
+      deadline: 0n,
+    });
+    return { quote: priced.quote, steps };
+  }
+
+  return {
+    routes,
+    checkRoute,
+    quoteOptions,
+    quote,
+    buildTransfer,
+    transferStatus,
+    SOURCE_NAME,
+    DEST_NAME,
+  };
 }
 
 export type Service = ReturnType<typeof createService>;
