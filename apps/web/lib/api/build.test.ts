@@ -1,6 +1,5 @@
 import {
   Account,
-  Keypair,
   Networks,
   type Transaction,
   TransactionBuilder,
@@ -12,40 +11,22 @@ import { EVM_CHAINS, stellarDestination } from "@xebra/sdk/core";
 import { describe, expect, it, vi } from "vitest";
 import type { BuildDeps, Deps } from "./deps";
 import { ApiError } from "./errors";
-import { RECIPIENT, SOLANA_WALLET, cfg, deps, health } from "./fakes";
+import {
+  EVM_SENDER,
+  RECIPIENT,
+  SENDER,
+  SOLANA_WALLET,
+  STELLAR_RECIPIENT,
+  SUI_SENDER,
+  SUI_STEP,
+  TOKEN_ACCOUNT,
+  WRAPPER,
+  buildDeps,
+  cfg,
+  deps,
+  health,
+} from "./fakes";
 import { createService } from "./service";
-
-const WRAPPER = "CCPVTWII2TW6VVSVA4JQ2KFHICGBG4QVAHPIGUPSIW3E4VNPUI4Y2WQR";
-const SENDER = Keypair.random().publicKey();
-const STELLAR_RECIPIENT = Keypair.random().publicKey();
-const EVM_SENDER = "0x3333333333333333333333333333333333333333";
-const SUI_SENDER = `0x${"5".repeat(64)}`;
-const TOKEN_ACCOUNT = "8BnEgHoWFysVcuFFX7QztDmzuH8r5ZFvyP3sYwn1XTh6";
-
-const SUI_STEP: TransferStep = {
-  id: "burn",
-  chain: "sui",
-  description: "burn",
-  tx: { kind: "sui", json: "{}" },
-  expiresAt: null,
-};
-
-function buildDeps(over: Partial<BuildDeps> = {}): BuildDeps {
-  return {
-    stellarRpc: () => ({
-      getAccount: async (id) => new Account(id, "100"),
-      getLatestLedger: async () => ({ sequence: 65_400_000 }),
-      prepareTransaction: async (tx) => tx,
-    }),
-    stellarWrapper: { wrapperContractId: WRAPPER, networkPassphrase: Networks.PUBLIC },
-    stellarAccount: async () => ({ exists: true, hasTrustline: true, balance: 10_000_000_000n }),
-    solanaRecipient: async () => ({ tokenAccount: TOKEN_ACCOUNT, status: "exists" }),
-    evmUsdc: async () => ({ balance: 1_000_000_000n, allowance: 0n }),
-    evmWrapperOn: false,
-    suiBurn: async () => SUI_STEP,
-    ...over,
-  };
-}
 
 function svc(over: Partial<BuildDeps> = {}, top: Partial<Deps> = {}) {
   return createService(

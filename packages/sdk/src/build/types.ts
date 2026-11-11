@@ -4,11 +4,13 @@ import type { ChainId } from "../core/chains/ids.js";
 export type UnsignedTx =
   | { kind: "stellar"; xdr: string; networkPassphrase: string }
   | { kind: "evm"; chainId: number; to: `0x${string}`; data: `0x${string}`; value: "0" }
-  | { kind: "sui"; json: string };
+  | { kind: "sui"; json: string }
+  /** A legacy Solana transaction, serialized without signatures, base64. */
+  | { kind: "solana"; transaction: string };
 
 /** One signature in a transfer, in the order the wallet should be asked. */
 export interface TransferStep {
-  id: "approve" | "burn" | "claim";
+  id: "approve" | "burn" | "open_account" | "claim";
   chain: ChainId;
   /** One sentence a person can read before signing. */
   description: string;

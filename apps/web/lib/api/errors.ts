@@ -15,6 +15,8 @@ export type ApiErrorCode =
   | "transaction_rejected"
   | "upstream_unavailable"
   | "not_found"
+  | "not_ready"
+  | "already_delivered"
   | "rate_limited"
   | "unauthorized";
 
@@ -30,6 +32,8 @@ export const ERROR_STATUS: Record<ApiErrorCode, number> = {
   transaction_rejected: 422,
   upstream_unavailable: 503,
   not_found: 404,
+  not_ready: 409,
+  already_delivered: 409,
   rate_limited: 429,
   unauthorized: 401,
 };

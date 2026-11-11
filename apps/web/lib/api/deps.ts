@@ -32,6 +32,8 @@ export interface Deps {
   delivery(tx: string, srcDomain: number): Promise<Record<string, unknown> | null>;
   /** Sui to Stellar: switched on, and the per-transfer cap in 6-decimal units (null: none). */
   suiStellar: { enabled: boolean; maxUnits: bigint | null };
+  /** A Sui burn's progress, as `/api/sui-stellar/status` answers it. Null if unreadable. */
+  suiStatus?(digest: string): Promise<Record<string, unknown> | null>;
   /** What building a transaction reads. Absent where nothing is built (the MCP tools). */
   build?: BuildDeps;
 }
@@ -58,4 +60,31 @@ export interface BuildDeps {
   evmWrapperOn: boolean;
   /** The Sui burn, built against the Sui node. Throws `InsufficientUsdcError` when short. */
   suiBurn(p: { sender: string; amount: bigint; stellarRecipient: string }): Promise<TransferStep>;
+  /** Circle's message and attestation for a burn, as `/api/attestation` answers it. */
+  attestation(tx: string, srcDomain: number): Promise<Record<string, unknown> | null>;
+  /** Whether the mint on an EVM chain is still open, and would succeed sent by `payer`. */
+  evmClaimCheck(
+    chain: EvmChain,
+    payer: string,
+    message: `0x${string}`,
+    attestation: `0x${string}`,
+  ): Promise<{ state: "open" | "delivered" | "expired" } | { state: "refused"; reason: string }>;
+  /** The Solana mint, and opening the recipient's account first when it is missing. */
+  solanaClaim(input: {
+    message: string;
+    attestation: string;
+    usdcMint: string;
+    sourceDomainId: number;
+    payer: string;
+    recipientOwner?: string;
+  }): Promise<
+    | { state: "ready"; setup: string | null; mint: string }
+    | { state: "needs-owner"; reason: string }
+    | { state: "delivered" }
+  >;
+  /** The Stellar mint of a Sui burn, with `payer` paying the fee. */
+  suiClaim(
+    digest: string,
+    payer: string,
+  ): Promise<{ ok: true; xdr: string } | { ok: false; reason: string; delivered?: boolean }>;
 }

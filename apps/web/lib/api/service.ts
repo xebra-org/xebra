@@ -1,6 +1,6 @@
 import { StrKey } from "@stellar/stellar-sdk";
 import type { CircleHealth } from "@xebra/cctp-client";
-import { type BurnRecipient, FINALITY } from "@xebra/cctp-evm";
+import { type BurnRecipient, FINALITY, encodeReceiveMessage } from "@xebra/cctp-evm";
 import {
   InsufficientUsdcError,
   type TransferStep,
@@ -17,6 +17,7 @@ import {
   checkAddressOn,
   checkSolanaAddress,
   chooseMaxFee,
+  evmChainForDomain,
   evmDestinationsFrom,
   evmSources,
   formatUsdc,
@@ -115,6 +116,8 @@ const STANDARD_FINALITY = 2000;
 /** How long a signed Stellar request stays valid; the contract refuses beyond an hour. */
 const REQUEST_TTL_SECONDS = 600;
 const SUI_ADDRESS = /^0x[0-9a-fA-F]{64}$/;
+/** A Sui transaction digest: base58, 32 bytes. */
+const SUI_DIGEST = /^[1-9A-HJ-NP-Za-km-z]{32,64}$/;
 
 function checkSender(from: SourceId, sender: string): void {
   const ok =
@@ -497,9 +500,7 @@ export function createService(deps: Deps, now: () => number = Date.now) {
   }
 
   async function transferStatus(r: { chain: SourceId; tx: string }): Promise<TransferStatus> {
-    if (r.chain === "sui") {
-      throw new ApiError("invalid_request", "Sui transfers are tracked on the Sui page for now.");
-    }
+    if (r.chain === "sui") return suiStatus(r.tx.trim());
     const tx = r.tx.trim().toLowerCase();
     const kind = r.chain === "stellar" ? /^[0-9a-f]{64}$/ : /^0x[0-9a-f]{64}$/;
     if (!kind.test(tx)) {
@@ -728,12 +729,222 @@ export function createService(deps: Deps, now: () => number = Date.now) {
     return { quote: priced.quote, steps };
   }
 
+  async function suiStatus(digest: string): Promise<TransferStatus> {
+    if (!SUI_DIGEST.test(digest)) {
+      throw new ApiError("invalid_request", "tx must be a Sui transaction digest.");
+    }
+    if (!deps.suiStellar.enabled || !deps.suiStatus) {
+      throw new ApiError("route_unavailable", "Sui to Stellar is not switched on here.");
+    }
+    const answer = await deps.suiStatus(digest);
+    if (!answer) {
+      throw new ApiError(
+        "upstream_unavailable",
+        "Circle's status could not be read just now. That does not mean the transfer failed. Try again shortly.",
+      );
+    }
+    const circleState = String(answer.state ?? "unknown");
+    const refusal = typeof answer.refusal === "string" ? answer.refusal.slice(0, 200) : null;
+    // Circle not having indexed the burn yet is "not yet", the same as waiting for attestation.
+    const state: DeliveryState =
+      circleState !== "complete"
+        ? "pending"
+        : answer.delivered === true
+          ? "delivered"
+          : refusal
+            ? "failed"
+            : "needs_claim";
+    return {
+      state,
+      chain: "sui",
+      tx: digest,
+      deliveryTx: null,
+      reason: refusal,
+      // Finished through POST /v1/claims; the Sui page takes no link.
+      claimUrl: null,
+      circleState,
+    };
+  }
+
+  /**
+   * The unsigned mint for a transfer whose delivery did not complete on its own, with `payer`
+   * paying the destination's fee. Checked before it is returned: a mint that already happened, or
+   * one that would revert, is refused here instead of costing anyone a fee.
+   */
+  async function buildClaim(r: {
+    chain: SourceId;
+    tx: string;
+    payer: string;
+    /** Solana only: the wallet that owns the recipient's USDC account, when it must be opened. */
+    recipientOwner?: string;
+  }): Promise<{ steps: TransferStep[] }> {
+    const b = deps.build;
+    if (!b) throw new Error("buildClaim needs the build dependencies");
+    const payer = r.payer.trim();
+
+    if (r.chain === "sui") {
+      const digest = r.tx.trim();
+      if (!SUI_DIGEST.test(digest)) {
+        throw new ApiError("invalid_request", "tx must be a Sui transaction digest.");
+      }
+      if (!StrKey.isValidEd25519PublicKey(payer)) {
+        throw new ApiError(
+          "invalid_request",
+          "payer must be the Stellar account (G...) that pays the fee.",
+        );
+      }
+      const plan = await b.suiClaim(digest, payer);
+      if (!plan.ok) {
+        if (plan.delivered)
+          throw new ApiError("already_delivered", "This transfer has already been delivered.");
+        throw new ApiError(
+          /attested/.test(plan.reason) ? "not_ready" : "transaction_rejected",
+          plan.reason,
+        );
+      }
+      return {
+        steps: [
+          {
+            id: "claim",
+            chain: "stellar",
+            description: "Mint the USDC on Stellar and pay it to the recipient the burn names.",
+            tx: {
+              kind: "stellar",
+              xdr: plan.xdr,
+              networkPassphrase: b.stellarWrapper?.networkPassphrase ?? "",
+            },
+            expiresAt: null,
+          },
+        ],
+      };
+    }
+
+    const tx = r.tx.trim().toLowerCase();
+    const kind = r.chain === "stellar" ? /^[0-9a-f]{64}$/ : /^0x[0-9a-f]{64}$/;
+    if (!kind.test(tx)) {
+      throw new ApiError(
+        "invalid_request",
+        r.chain === "stellar"
+          ? "tx must be 64 hex characters, without 0x."
+          : "tx must be 0x followed by 64 hex characters.",
+      );
+    }
+    const srcDomain =
+      r.chain === "stellar" ? STELLAR_CCTP_DOMAIN : EVM_CHAINS[r.chain].cctpDomainId;
+    const att = await b.attestation(tx, srcDomain);
+    if (!att || att.status === "unknown") {
+      throw new ApiError(
+        "upstream_unavailable",
+        `Circle's record of this burn could not be read just now${typeof att?.reason === "string" ? ` (${att.reason})` : ""}. Try again shortly.`,
+      );
+    }
+    if (att.status !== "complete") {
+      throw new ApiError(
+        "not_ready",
+        "Circle has not attested this burn yet. Try again in a few minutes.",
+      );
+    }
+    const message = String(att.message) as `0x${string}`;
+    const attestation = String(att.attestation) as `0x${string}`;
+    const destinationDomain = Number(att.destinationDomain);
+
+    const evm = evmChainForDomain(destinationDomain);
+    if (evm) {
+      if (!checkAddressOn(evm, payer).ok) {
+        throw new ApiError(
+          "invalid_request",
+          `payer must be the ${evm.name} address that pays the gas.`,
+        );
+      }
+      const check = await b.evmClaimCheck(evm, payer, message, attestation);
+      if (check.state === "delivered") {
+        throw new ApiError("already_delivered", "This transfer has already been delivered.");
+      }
+      if (check.state === "expired") {
+        throw new ApiError(
+          "transaction_rejected",
+          "Circle's signature on this Fast transfer has expired. Open the claim page to have it signed again.",
+        );
+      }
+      if (check.state === "refused") {
+        throw new ApiError(
+          "transaction_rejected",
+          `${evm.name} would reject this mint: ${check.reason}`,
+        );
+      }
+      return {
+        steps: [
+          {
+            id: "claim",
+            chain: evm.id,
+            description: `Mint the USDC on ${evm.name} to the recipient the burn names.`,
+            tx: {
+              kind: "evm",
+              chainId: evm.chainId,
+              to: evm.messageTransmitterAddress as `0x${string}`,
+              data: encodeReceiveMessage(message, attestation),
+              value: "0",
+            },
+            expiresAt: null,
+          },
+        ],
+      };
+    }
+
+    if (destinationDomain === stellarDestination("solana").domain) {
+      if (!checkSolanaAddress(payer).ok) {
+        throw new ApiError("invalid_request", "payer must be the Solana wallet that pays the fee.");
+      }
+      const prep = await b.solanaClaim({
+        message,
+        attestation,
+        usdcMint: String(att.usdcMint),
+        sourceDomainId: Number(att.sourceDomainId),
+        payer,
+        ...(r.recipientOwner ? { recipientOwner: r.recipientOwner.trim() } : {}),
+      });
+      if (prep.state === "delivered") {
+        throw new ApiError("already_delivered", "This transfer has already been delivered.");
+      }
+      if (prep.state === "needs-owner") {
+        throw new ApiError("invalid_request", `Claiming needs recipientOwner: ${prep.reason}.`, {
+          needs: "recipientOwner",
+        });
+      }
+      const steps: TransferStep[] = [];
+      if (prep.setup) {
+        steps.push({
+          id: "open_account",
+          chain: "solana",
+          description:
+            "Open the recipient's USDC account on Solana (about 0.002 SOL that cannot be reclaimed). Confirm it before the next step.",
+          tx: { kind: "solana", transaction: prep.setup },
+          expiresAt: null,
+        });
+      }
+      steps.push({
+        id: "claim",
+        chain: "solana",
+        description: "Mint the USDC on Solana into the recipient's USDC account.",
+        tx: { kind: "solana", transaction: prep.mint },
+        expiresAt: null,
+      });
+      return { steps };
+    }
+
+    throw new ApiError(
+      "invalid_request",
+      "This burn's destination cannot be claimed through the API.",
+    );
+  }
+
   return {
     routes,
     checkRoute,
     quoteOptions,
     quote,
     buildTransfer,
+    buildClaim,
     transferStatus,
     SOURCE_NAME,
     DEST_NAME,
