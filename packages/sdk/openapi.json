@@ -2,7 +2,7 @@
   "openapi": "3.1.0",
   "info": {
     "title": "Xebra API",
-    "version": "0.0.0",
+    "version": "0.1.0",
     "description": "Native USDC between chains over Circle CCTP. The API prices transfers and builds unsigned transactions; your user's wallet signs them. Xebra never holds keys or funds.",
     "license": {
       "name": "Apache-2.0",

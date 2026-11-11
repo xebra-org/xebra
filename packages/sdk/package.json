@@ -1,6 +1,6 @@
 {
   "name": "@xebra/sdk",
-  "version": "0.0.0",
+  "version": "0.1.0",
   "description": "Native USDC between chains over Circle CCTP: routes, quotes, unsigned transactions and transfer status.",
   "license": "Apache-2.0",
   "type": "module",
@@ -8,26 +8,47 @@
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "exports": {
-    ".": "./dist/index.js",
-    "./core": "./dist/core/index.js",
-    "./build": "./dist/build/index.js",
-    "./openapi": "./dist/api/openapi.js",
-    "./openapi.json": "./openapi.json"
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./core": {
+      "types": "./dist/core/index.d.ts",
+      "import": "./dist/core/index.js"
+    },
+    "./build": {
+      "types": "./dist/build/index.d.ts",
+      "import": "./dist/build/index.js"
+    },
+    "./openapi": {
+      "types": "./dist/api/openapi.d.ts",
+      "import": "./dist/api/openapi.js"
+    },
+    "./openapi.json": "./openapi.json",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "dist",
+    "openapi.json",
+    "README.md",
+    "LICENSE"
+  ],
+  "engines": {
+    "node": ">=20"
   },
   "scripts": {
-    "build": "tsc -p tsconfig.build.json",
-    "dev": "tsc -p tsconfig.build.json --watch",
+    "build": "tsup",
+    "dev": "tsup --watch",
     "test": "vitest run",
     "test:watch": "vitest",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "clean": "rm -rf dist .turbo",
-    "openapi": "tsc -p tsconfig.build.json && node scripts/write-openapi.mjs"
+    "openapi": "tsup && node scripts/write-openapi.mjs"
   },
   "dependencies": {
     "@mysten/sui": "2.22.1",
     "@stellar/stellar-base": "^13.0.0",
     "@stellar/stellar-sdk": "^13.0.0",
-    "@xebra/cctp-evm": "workspace:*",
     "viem": "^2.21.0",
     "zod": "4.6.7",
     "zod-openapi": "6.0.2"
@@ -35,8 +56,31 @@
   "devDependencies": {
     "@readme/openapi-parser": "10.0.0",
     "@types/node": "^22.10.0",
+    "@xebra/cctp-evm": "workspace:*",
     "@xebra/network-config": "workspace:*",
+    "tsup": "8.5.1",
     "typescript": "^5.7.0",
     "vitest": "^2.1.0"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/xebra-org/xebra.git",
+    "directory": "packages/sdk"
+  },
+  "homepage": "https://docs.xebra.exchange",
+  "bugs": {
+    "url": "https://github.com/xebra-org/xebra/issues"
+  },
+  "keywords": [
+    "usdc",
+    "cctp",
+    "circle",
+    "stellar",
+    "bridge",
+    "sdk"
+  ],
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
   }
 }

@@ -1,0 +1,51 @@
+name: Publish @xebra/sdk
+
+# Publishes packages/sdk to npm when a tag `sdk-v<version>` is pushed, after the same checks CI
+# runs. The tag must match package.json's version, so a tag cannot publish something other than
+# what it names. `pnpm publish` rewrites the workspace references; provenance ties the package to
+# this workflow run.
+
+on:
+  push:
+    tags: ["sdk-v*"]
+
+permissions:
+  contents: read
+  # Needed for npm provenance.
+  id-token: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9.15.0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          registry-url: https://registry.npmjs.org
+
+      - run: pnpm install --frozen-lockfile
+
+      - name: The tag names this version
+        run: |
+          version=$(node -p "require('./packages/sdk/package.json').version")
+          if [ "sdk-v$version" != "$GITHUB_REF_NAME" ]; then
+            echo "Tag $GITHUB_REF_NAME does not match packages/sdk version $version" >&2
+            exit 1
+          fi
+
+      - run: pnpm --filter './packages/*' build
+      - run: pnpm --filter @xebra/sdk typecheck
+      - run: pnpm --filter @xebra/sdk test
+
+      - name: Publish
+        run: pnpm --filter @xebra/sdk publish --access public --no-git-checks
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          NPM_CONFIG_PROVENANCE: "true"
