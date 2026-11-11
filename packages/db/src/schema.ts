@@ -126,20 +126,29 @@ export const intents = pgTable("intents", {
 });
 
 /** Append-only mirror of on-chain events — Postgres is a projection, chain state stays
- *  canonical (see module doc comment). Never updated, only inserted. */
-export const escrowEvents = pgTable("escrow_events", {
-  id: text("id").primaryKey(), // e.g. `${chainId}:${txRef}:${logIndex}`
-  intentHash: text("intent_hash")
-    .notNull()
-    .references(() => intents.intentHash),
-  chainId: integer("chain_id")
-    .notNull()
-    .references(() => chains.id),
-  eventType: text("event_type").notNull(), // "Opened" | "Claimed" | "Challenged" | "Resolved" | "Finalized" | "Refunded"
-  txRef: text("tx_ref").notNull(),
-  blockOrLedgerNumber: bigint("block_or_ledger_number", { mode: "bigint" }),
-  observedAt: timestamp("observed_at", { withTimezone: true }).notNull().defaultNow(),
-});
+ *  canonical (see module doc comment). Never updated, only inserted.
+ *
+ *  `intent_hash` deliberately has no foreign key to `intents`: the event bus does not order
+ *  events per intent, so a lifecycle event can arrive before its `IntentOpened`. It is recorded
+ *  here anyway, and the projector derives the intent's status from this log when the
+ *  `intents` row is created (apps/projector/src/projector.ts). */
+export const escrowEvents = pgTable(
+  "escrow_events",
+  {
+    id: text("id").primaryKey(), // e.g. `${chainId}:${txRef}:${logIndex}`
+    intentHash: text("intent_hash").notNull(),
+    chainId: integer("chain_id")
+      .notNull()
+      .references(() => chains.id),
+    eventType: text("event_type").notNull(), // "Opened" | "Claimed" | "Challenged" | "Resolved" | "Finalized" | "Refunded"
+    txRef: text("tx_ref").notNull(),
+    blockOrLedgerNumber: bigint("block_or_ledger_number", { mode: "bigint" }),
+    observedAt: timestamp("observed_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => ({
+    byIntent: index("escrow_events_intent_hash_idx").on(table.intentHash),
+  }),
+);
 
 export const claims = pgTable("claims", {
   intentHash: text("intent_hash")

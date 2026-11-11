@@ -29,6 +29,13 @@
       "when": 1788910966631,
       "tag": "0003_cultured_blob",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1794408098807,
+      "tag": "0004_rare_otto_octavius",
+      "breakpoints": true
     }
   ]
 }
