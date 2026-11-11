@@ -1,3 +1,4 @@
+import { SOURCE_URL, X_URL } from "../../lib/site";
 import { cn } from "../ui/cn";
 import { ArrowUpRight } from "../ui/icons";
 import { StripeRule } from "../ui/stripe-rule";
@@ -44,7 +45,8 @@ export function SiteFooter({
               {contractLabel}
             </FooterLink>
           )}
-          <FooterLink href="https://github.com/drydocs/xebra">Source</FooterLink>
+          <FooterLink href={SOURCE_URL}>Source</FooterLink>
+          <FooterLink href={X_URL}>X</FooterLink>
         </ul>
       </div>
     </footer>

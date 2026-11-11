@@ -249,7 +249,7 @@ The contracts have **not had an external audit**. They are tested (unit, propert
 
 ## Reporting a problem
 
-Do not open a public issue for anything that could put funds at risk. Use GitHub's private vulnerability reporting on [the repository](https://github.com/drydocs/xebra/security), as described in its SECURITY.md.
+Do not open a public issue for anything that could put funds at risk. Use GitHub's private vulnerability reporting on [the repository](https://github.com/xebra-org/xebra/security), as described in its SECURITY.md.
 `,
   };
 }

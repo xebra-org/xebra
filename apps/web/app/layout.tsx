@@ -5,7 +5,7 @@ import { AmbientBackground } from "../components/site/ambient-background";
 import { env } from "../lib/env";
 import { hasEvmRoutes } from "../lib/evm-chains";
 import { JsonLd, organizationLd, websiteLd } from "../lib/seo/json-ld";
-import { IS_PRODUCTION_DEPLOYMENT, SITE_NAME, SITE_URL, SOURCE_URL } from "../lib/site";
+import { IS_PRODUCTION_DEPLOYMENT, SITE_NAME, SITE_URL, SOURCE_URL, X_HANDLE } from "../lib/site";
 import { Providers } from "./providers";
 import "./globals.css";
 
@@ -88,6 +88,7 @@ export const metadata: Metadata = {
   },
   twitter: {
     card: "summary_large_image",
+    site: X_HANDLE,
     title: TITLE,
     description: MANY_ROUTES
       ? "Native USDC between chains, over Circle's CCTP."

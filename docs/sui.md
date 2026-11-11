@@ -90,7 +90,7 @@ Known limits: G... recipients only; standard finality only (Stellar has no Fast 
 server instance, so two instances racing one digest can waste a failed fee but not funds. The standalone command-line
 versions are in `scripts/sui-to-stellar/`.
 
-## Sui to Monad (built 2026-11-11)
+## Sui to Monad (live since 2026-11-11)
 
 Same page, same wallet: "Send to" picks Stellar or Monad. Unlike Stellar, nothing of ours finishes the transfer: the burn
 carries Circle's `cctp-forward` hook, `mintRecipient` is the Monad address (left-padded), `destinationCaller` is zero (the
@@ -107,9 +107,24 @@ finalities; the burn uses Standard (2000) because Sui finalises in about a secon
 was held that way on 2026-11-11, so the old coin-listing builder reported "not enough USDC"). Both routes now take the coin
 with the SDK's `coinWithBalance`, which draws from coins or the address balance.
 
-Proof so far: the real burn transaction, built by the app for that tester's address, simulated successfully on Sui mainnet
-(2.5 USDC, `MessageSent` to domain 15, `max_fee` 50993, `cctp-forward` hook). No real Sui -> Monad transfer has been
-made yet.
+Before launch, the app's own burn for that tester's address simulated successfully on Sui mainnet (2.5 USDC, `MessageSent`
+to domain 15, `max_fee` 50993, `cctp-forward` hook).
+
+### First real transfer (2026-11-11), delivered by Circle in 5 seconds
+
+Sent from the page in production, the day the route went live, by the same tester whose USDC sits in a Sui address balance.
+
+| | |
+|---|---|
+| Sui burn | `F7qiEMaT7q7pbfQ2H44SeV4URQQVfNpffmpt3J5yH8pD`, 2026-11-11 14:17:03 UTC, 5 USDC |
+| Circle | attested, `forwardState` COMPLETE, `maxFee` 51009 = `feeExecuted` 51009 |
+| Monad mint | `0xc059d8bec6594bd8dcb29282e424d229895cbe30ffffb5e1247618096889f336`, block 121340899, 14:17:08 UTC |
+| Recipient | `0x2ea1a81aa3931c2abf6f23421d7c1493a252eaa6` received 4.948991 USDC |
+| Circle's fee | 0.051009 USDC to `0xfc1bdd1f…6379` |
+
+So, as on every other forwarded route: Circle keeps the whole `maxFee`, the recipient gets exactly amount minus `maxFee`,
+and nobody needs MON. Burn to mint took 5 seconds (Sui finality plus Monad's). Read on 2026-11-11 from Iris
+(`/v2/messages/8?transactionHash=…`) and the Monad receipt (`rpc.monad.xyz`).
 
 # Sui as a destination
 
