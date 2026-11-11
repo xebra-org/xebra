@@ -1,0 +1,1014 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "Xebra API",
+    "version": "0.0.0",
+    "description": "Native USDC between chains over Circle CCTP. The API prices transfers and builds unsigned transactions; your user's wallet signs them. Xebra never holds keys or funds.",
+    "license": {
+      "name": "Apache-2.0",
+      "identifier": "Apache-2.0"
+    }
+  },
+  "servers": [
+    {
+      "url": "https://api.xebra.exchange"
+    }
+  ],
+  "tags": [
+    {
+      "name": "Routes",
+      "description": "Which chains reach which, right now."
+    },
+    {
+      "name": "Quotes",
+      "description": "What a transfer costs and what the recipient gets."
+    },
+    {
+      "name": "Transfers",
+      "description": "Unsigned transactions, and how a transfer is getting on."
+    },
+    {
+      "name": "Claims",
+      "description": "Finishing a delivery that did not complete on its own."
+    },
+    {
+      "name": "System",
+      "description": "Liveness."
+    }
+  ],
+  "paths": {
+    "/v1/routes": {
+      "get": {
+        "operationId": "listRoutes",
+        "tags": [
+          "Routes"
+        ],
+        "summary": "List live routes",
+        "responses": {
+          "200": {
+            "description": "Every route Xebra sends on right now.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Routes"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The request is malformed: a missing or unknown field, or a value of the wrong shape.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many requests. Wait for `Retry-After` seconds.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Circle or a chain could not be read just now. Nothing was decided; ask again.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/quote": {
+      "get": {
+        "operationId": "getQuote",
+        "tags": [
+          "Quotes"
+        ],
+        "summary": "Price a transfer",
+        "description": "Read-only. Fees move, so a quote expires; building a transfer prices it again. A Solana recipient with no USDC account costs more; that is priced when the transfer is built.",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "from",
+            "schema": {
+              "$ref": "#/components/schemas/ChainId"
+            },
+            "required": true,
+            "description": "A chain, as the API names it."
+          },
+          {
+            "in": "query",
+            "name": "to",
+            "schema": {
+              "$ref": "#/components/schemas/ChainId"
+            },
+            "required": true,
+            "description": "A chain, as the API names it."
+          },
+          {
+            "in": "query",
+            "name": "amount",
+            "schema": {
+              "$ref": "#/components/schemas/Amount"
+            },
+            "required": true,
+            "description": "USDC, as a decimal string with at most 6 places."
+          },
+          {
+            "in": "query",
+            "name": "speed",
+            "schema": {
+              "$ref": "#/components/schemas/Speed"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The price.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Quote"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The request is malformed: a missing or unknown field, or a value of the wrong shape.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "The route is not offered, or the amount is outside its bounds.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many requests. Wait for `Retry-After` seconds.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Circle or a chain could not be read just now. Nothing was decided; ask again.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/transfers": {
+      "post": {
+        "operationId": "createTransfer",
+        "tags": [
+          "Transfers"
+        ],
+        "summary": "Build a transfer",
+        "description": "Checks the sender, the recipient and the sender's balance, prices the transfer, and returns the unsigned transactions in signing order. Nothing is signed or sent.",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TransferRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The quote and the steps to sign.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TransferBuild"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The request is malformed: a missing or unknown field, or a value of the wrong shape.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "The transfer cannot be built as asked; `code` says why.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many requests. Wait for `Retry-After` seconds.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Circle or a chain could not be read just now. Nothing was decided; ask again.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/transfers/{chain}/{tx}": {
+      "get": {
+        "operationId": "getTransfer",
+        "tags": [
+          "Transfers"
+        ],
+        "summary": "A transfer's status",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "chain",
+            "schema": {
+              "$ref": "#/components/schemas/ChainId"
+            },
+            "required": true,
+            "description": "A chain, as the API names it."
+          },
+          {
+            "in": "path",
+            "name": "tx",
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128,
+              "description": "The burn's transaction hash or Sui digest."
+            },
+            "required": true,
+            "description": "The burn's transaction hash or Sui digest."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Where the transfer is.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TransferStatus"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The request is malformed: a missing or unknown field, or a value of the wrong shape.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many requests. Wait for `Retry-After` seconds.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Circle or a chain could not be read just now. Nothing was decided; ask again.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/claims": {
+      "post": {
+        "operationId": "createClaim",
+        "tags": [
+          "Claims"
+        ],
+        "summary": "Build a claim",
+        "description": "The unsigned mint for a transfer whose delivery did not complete, checked so that a mint already made or one that would fail is refused before anyone pays.",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ClaimRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The steps to sign.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClaimBuild"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The request is malformed: a missing or unknown field, or a value of the wrong shape.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Not attested yet, or already delivered.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "The mint would be rejected; `detail` gives the chain's reason.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many requests. Wait for `Retry-After` seconds.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Circle or a chain could not be read just now. Nothing was decided; ask again.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/health": {
+      "get": {
+        "operationId": "getHealth",
+        "tags": [
+          "System"
+        ],
+        "summary": "Liveness",
+        "responses": {
+          "200": {
+            "description": "The API is up.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Health"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "ChainId": {
+        "type": "string",
+        "enum": [
+          "stellar",
+          "solana",
+          "sui",
+          "avalanche",
+          "optimism",
+          "arbitrum",
+          "base",
+          "polygon",
+          "unichain",
+          "codex",
+          "sonic",
+          "worldchain",
+          "monad",
+          "sei",
+          "xdc",
+          "hyperevm",
+          "ink",
+          "arc"
+        ],
+        "description": "A chain, as the API names it.",
+        "example": "stellar"
+      },
+      "Amount": {
+        "type": "string",
+        "pattern": "^\\d{1,12}(\\.\\d{1,6})?$",
+        "description": "USDC, as a decimal string with at most 6 places.",
+        "example": "25.5"
+      },
+      "Speed": {
+        "type": "string",
+        "enum": [
+          "standard",
+          "fast"
+        ],
+        "description": "Standard waits for finality; Fast is attested sooner for Circle's fee."
+      },
+      "TransferRequest": {
+        "type": "object",
+        "properties": {
+          "from": {
+            "$ref": "#/components/schemas/ChainId"
+          },
+          "to": {
+            "$ref": "#/components/schemas/ChainId"
+          },
+          "amount": {
+            "$ref": "#/components/schemas/Amount"
+          },
+          "sender": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128,
+            "description": "The address that signs and pays."
+          },
+          "recipient": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128,
+            "description": "Who receives, on the destination."
+          },
+          "speed": {
+            "$ref": "#/components/schemas/Speed"
+          },
+          "maxTotalFee": {
+            "description": "Refuse if fees have risen above this, typically the total you showed.",
+            "$ref": "#/components/schemas/AmountOut"
+          }
+        },
+        "required": [
+          "from",
+          "to",
+          "amount",
+          "sender",
+          "recipient"
+        ],
+        "additionalProperties": false
+      },
+      "AmountOut": {
+        "type": "string",
+        "pattern": "^\\d{1,12}(\\.\\d{1,6})?$",
+        "description": "USDC, as a decimal string with at most 6 places.",
+        "example": "0.35"
+      },
+      "ClaimRequest": {
+        "type": "object",
+        "properties": {
+          "chain": {
+            "description": "The chain the burn was made on.",
+            "$ref": "#/components/schemas/ChainId"
+          },
+          "tx": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128
+          },
+          "payer": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128,
+            "description": "Pays the destination's fee and signs."
+          },
+          "recipientOwner": {
+            "description": "Solana only: the wallet that owns the recipient's USDC account, when it must be opened.",
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128
+          }
+        },
+        "required": [
+          "chain",
+          "tx",
+          "payer"
+        ],
+        "additionalProperties": false
+      },
+      "Routes": {
+        "type": "object",
+        "properties": {
+          "routes": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Route"
+            }
+          },
+          "complete": {
+            "type": "boolean",
+            "description": "False when part of the list could not be read just now; ask again shortly."
+          }
+        },
+        "required": [
+          "routes",
+          "complete"
+        ],
+        "additionalProperties": false
+      },
+      "Route": {
+        "type": "object",
+        "properties": {
+          "from": {
+            "$ref": "#/components/schemas/ChainId"
+          },
+          "to": {
+            "$ref": "#/components/schemas/ChainId"
+          },
+          "speeds": {
+            "minItems": 1,
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Speed"
+            }
+          }
+        },
+        "required": [
+          "from",
+          "to",
+          "speeds"
+        ],
+        "additionalProperties": false
+      },
+      "Problem": {
+        "type": "object",
+        "properties": {
+          "type": {
+            "type": "string",
+            "format": "uri",
+            "example": "https://docs.xebra.exchange/errors/route_unavailable"
+          },
+          "title": {
+            "type": "string"
+          },
+          "status": {
+            "type": "integer",
+            "minimum": -9007199254740991,
+            "maximum": 9007199254740991
+          },
+          "detail": {
+            "type": "string"
+          },
+          "code": {
+            "type": "string",
+            "enum": [
+              "invalid_request",
+              "unauthorized",
+              "not_found",
+              "not_ready",
+              "already_delivered",
+              "invalid_amount",
+              "invalid_recipient",
+              "route_unavailable",
+              "amount_below_minimum",
+              "amount_above_maximum",
+              "insufficient_balance",
+              "fee_above_limit",
+              "transaction_rejected",
+              "rate_limited",
+              "upstream_unavailable"
+            ]
+          },
+          "minimum": {
+            "$ref": "#/components/schemas/AmountOut"
+          },
+          "maximum": {
+            "$ref": "#/components/schemas/AmountOut"
+          },
+          "have": {
+            "$ref": "#/components/schemas/AmountOut"
+          },
+          "need": {
+            "$ref": "#/components/schemas/AmountOut"
+          },
+          "total": {
+            "$ref": "#/components/schemas/AmountOut"
+          },
+          "limit": {
+            "$ref": "#/components/schemas/AmountOut"
+          },
+          "needs": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "type",
+          "title",
+          "status",
+          "detail",
+          "code"
+        ],
+        "additionalProperties": false,
+        "description": "An RFC 9457 problem. `detail` is written for a person."
+      },
+      "Quote": {
+        "type": "object",
+        "properties": {
+          "from": {
+            "$ref": "#/components/schemas/ChainId"
+          },
+          "to": {
+            "$ref": "#/components/schemas/ChainId"
+          },
+          "speed": {
+            "$ref": "#/components/schemas/Speed"
+          },
+          "amount": {
+            "$ref": "#/components/schemas/AmountOut"
+          },
+          "recipientGets": {
+            "$ref": "#/components/schemas/AmountOut"
+          },
+          "fees": {
+            "$ref": "#/components/schemas/Fees"
+          },
+          "minimum": {
+            "$ref": "#/components/schemas/AmountOut"
+          },
+          "maximum": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/AmountOut"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "circleStatus": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "ok",
+                  "degraded"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "expiresAt": {
+            "type": "string",
+            "format": "date-time",
+            "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+          }
+        },
+        "required": [
+          "from",
+          "to",
+          "speed",
+          "amount",
+          "recipientGets",
+          "fees",
+          "minimum",
+          "maximum",
+          "circleStatus",
+          "expiresAt"
+        ],
+        "additionalProperties": false
+      },
+      "Fees": {
+        "type": "object",
+        "properties": {
+          "xebra": {
+            "description": "What Xebra keeps.",
+            "$ref": "#/components/schemas/AmountOut"
+          },
+          "circle": {
+            "description": "Circle's transfer fee (Fast only).",
+            "$ref": "#/components/schemas/AmountOut"
+          },
+          "delivery": {
+            "description": "What Circle is paid to deliver on the destination.",
+            "$ref": "#/components/schemas/AmountOut"
+          },
+          "total": {
+            "$ref": "#/components/schemas/AmountOut"
+          }
+        },
+        "required": [
+          "xebra",
+          "circle",
+          "delivery",
+          "total"
+        ],
+        "additionalProperties": false
+      },
+      "TransferBuild": {
+        "type": "object",
+        "properties": {
+          "quote": {
+            "$ref": "#/components/schemas/Quote"
+          },
+          "steps": {
+            "minItems": 1,
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/TransferStep"
+            }
+          }
+        },
+        "required": [
+          "quote",
+          "steps"
+        ],
+        "additionalProperties": false
+      },
+      "TransferStep": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "enum": [
+              "approve",
+              "burn",
+              "open_account",
+              "claim"
+            ]
+          },
+          "chain": {
+            "$ref": "#/components/schemas/ChainId"
+          },
+          "description": {
+            "type": "string"
+          },
+          "tx": {
+            "$ref": "#/components/schemas/UnsignedTx"
+          },
+          "expiresAt": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time",
+                "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "id",
+          "chain",
+          "description",
+          "tx",
+          "expiresAt"
+        ],
+        "additionalProperties": false,
+        "description": "One signature, in the order the wallet should be asked."
+      },
+      "UnsignedTx": {
+        "oneOf": [
+          {
+            "type": "object",
+            "properties": {
+              "kind": {
+                "type": "string",
+                "const": "stellar"
+              },
+              "xdr": {
+                "type": "string"
+              },
+              "networkPassphrase": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "xdr",
+              "networkPassphrase"
+            ],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "kind": {
+                "type": "string",
+                "const": "evm"
+              },
+              "chainId": {
+                "type": "integer",
+                "minimum": -9007199254740991,
+                "maximum": 9007199254740991
+              },
+              "to": {
+                "type": "string",
+                "pattern": "^0x[0-9a-fA-F]{40}$"
+              },
+              "data": {
+                "type": "string",
+                "pattern": "^0x[0-9a-fA-F]*$"
+              },
+              "value": {
+                "type": "string",
+                "const": "0"
+              }
+            },
+            "required": [
+              "kind",
+              "chainId",
+              "to",
+              "data",
+              "value"
+            ],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "kind": {
+                "type": "string",
+                "const": "sui"
+              },
+              "json": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "json"
+            ],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "kind": {
+                "type": "string",
+                "const": "solana"
+              },
+              "transaction": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "transaction"
+            ],
+            "additionalProperties": false
+          }
+        ],
+        "description": "A transaction for the user's wallet to sign.",
+        "type": "object"
+      },
+      "TransferStatus": {
+        "type": "object",
+        "properties": {
+          "state": {
+            "type": "string",
+            "enum": [
+              "pending",
+              "delivering",
+              "delivered",
+              "needs_claim",
+              "failed"
+            ]
+          },
+          "chain": {
+            "$ref": "#/components/schemas/ChainId"
+          },
+          "tx": {
+            "type": "string"
+          },
+          "deliveryTx": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "reason": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "claimUrl": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "uri"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "state",
+          "chain",
+          "tx",
+          "deliveryTx",
+          "reason",
+          "claimUrl"
+        ],
+        "additionalProperties": false
+      },
+      "ClaimBuild": {
+        "type": "object",
+        "properties": {
+          "steps": {
+            "minItems": 1,
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/TransferStep"
+            }
+          }
+        },
+        "required": [
+          "steps"
+        ],
+        "additionalProperties": false
+      },
+      "Health": {
+        "type": "object",
+        "properties": {
+          "status": {
+            "type": "string",
+            "const": "ok"
+          },
+          "version": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "status",
+          "version"
+        ],
+        "additionalProperties": false
+      }
+    }
+  }
+}

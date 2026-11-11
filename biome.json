@@ -14,7 +14,8 @@
       "coverage/**",
       "**/*.sol",
       "**/convex/_generated/**",
-      "**/.convex/**"
+      "**/.convex/**",
+      "packages/sdk/openapi.json"
     ]
   },
   "formatter": {
