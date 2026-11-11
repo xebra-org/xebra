@@ -90,10 +90,30 @@ function invalid(issues: Array<{ path: PropertyKey[]; message: string }>): ApiEr
 async function readBody(req: Request): Promise<unknown> {
   const declared = Number(req.headers.get("content-length") ?? "0");
   if (declared > MAX_BODY_BYTES) throw new ApiError("invalid_request", "The body is too large.");
-  const text = await req.text();
-  if (text.length > MAX_BODY_BYTES) throw new ApiError("invalid_request", "The body is too large.");
+  // Read in chunks and stop at the cap: a chunked upload declares no length.
+  const chunks: Uint8Array[] = [];
+  let size = 0;
+  const reader = req.body?.getReader();
+  if (reader) {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      size += value.byteLength;
+      if (size > MAX_BODY_BYTES) {
+        await reader.cancel();
+        throw new ApiError("invalid_request", "The body is too large.");
+      }
+      chunks.push(value);
+    }
+  }
+  const bytes = new Uint8Array(size);
+  let offset = 0;
+  for (const c of chunks) {
+    bytes.set(c, offset);
+    offset += c.byteLength;
+  }
   try {
-    return JSON.parse(text);
+    return JSON.parse(new TextDecoder().decode(bytes));
   } catch {
     throw new ApiError("invalid_request", "The body is not valid JSON.");
   }

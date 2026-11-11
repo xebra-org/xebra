@@ -3,6 +3,7 @@ import type { CircleHealth } from "@xebra/cctp-client";
 import { type BurnRecipient, FINALITY, encodeReceiveMessage } from "@xebra/cctp-evm";
 import {
   InsufficientUsdcError,
+  StellarSimulationError,
   type TransferStep,
   buildEvmBridge,
   buildStellarBridge,
@@ -130,6 +131,23 @@ function checkSender(from: SourceId, sender: string): void {
     throw new ApiError(
       "invalid_request",
       `sender must be the ${from === "stellar" ? "Stellar account (G...)" : from === "sui" ? "Sui address (0x + 64 hex)" : `${EVM_CHAINS[from].name} address`} that will sign.`,
+    );
+  }
+}
+
+/**
+ * Runs a read against Circle or a chain. Our own refusals pass through; anything else means the
+ * upstream could not be asked, which is a "try again" (503), never a verdict on the transfer.
+ */
+async function upstream<T>(what: string, read: () => Promise<T>): Promise<T> {
+  try {
+    return await read();
+  } catch (err) {
+    if (err instanceof ApiError || err instanceof InsufficientUsdcError) throw err;
+    console.error(`${what} could not be read`, err);
+    throw new ApiError(
+      "upstream_unavailable",
+      `${what} could not be read just now. Try again shortly.`,
     );
   }
 }
@@ -551,6 +569,43 @@ export function createService(deps: Deps, now: () => number = Date.now) {
   }
 
   /**
+   * A Solana wallet's USDC token account, and whether Circle must open it (which costs more).
+   * Refuses rather than guesses when the lookup fails, because the price depends on the answer.
+   */
+  async function solanaRecipient(
+    recipient: string,
+  ): Promise<{ tokenAccount: Uint8Array; owner: Uint8Array; opensAccount: boolean }> {
+    const b = deps.build;
+    if (!b) throw new Error("solanaRecipient needs the build dependencies");
+    const check = checkSolanaAddress(recipient.trim());
+    if (!check.ok || !check.bytes) {
+      throw new ApiError(
+        "invalid_recipient",
+        `That is not a Solana address: ${sentence(check.error ?? recipient)}`,
+      );
+    }
+    const found = await upstream("The recipient's Solana account", () =>
+      b.solanaRecipient(recipient.trim()),
+    );
+    if (found.status === "unknown") {
+      throw new ApiError(
+        "upstream_unavailable",
+        "Whether the recipient has a USDC account on Solana could not be read just now, and the price depends on it. Try again shortly.",
+      );
+    }
+    return {
+      tokenAccount: solanaAddressToBytes32(found.tokenAccount),
+      owner: check.bytes,
+      opensAccount: found.status === "missing",
+    };
+  }
+
+  /** Whether a transfer to this Solana wallet must also open its USDC account. */
+  async function solanaOpensAccount(recipient: string): Promise<boolean> {
+    return (await solanaRecipient(recipient)).opensAccount;
+  }
+
+  /**
    * Prices the transfer for this sender and recipient, checks what can be checked before anyone
    * signs (addresses, the recipient's account, the sender's balance), and returns the unsigned
    * transactions in signing order. Nothing is signed or sent.
@@ -576,24 +631,10 @@ export function createService(deps: Deps, now: () => number = Date.now) {
     let mintRecipient: Uint8Array | null = null;
     let solana: { tokenAccount: Uint8Array; owner: Uint8Array } | null = null;
     if (r.to === "solana") {
-      const check = checkSolanaAddress(recipient);
-      if (!check.ok || !check.bytes) {
-        throw new ApiError(
-          "invalid_recipient",
-          `That is not a Solana address: ${sentence(check.error ?? recipient)}`,
-        );
-      }
-      const found = await b.solanaRecipient(recipient);
-      if (found.status === "unknown") {
-        throw new ApiError(
-          "upstream_unavailable",
-          "Whether the recipient has a USDC account on Solana could not be read just now, and the price depends on it. Try again shortly.",
-        );
-      }
-      opensAccount = found.status === "missing";
-      const tokenAccount = solanaAddressToBytes32(found.tokenAccount);
-      solana = { tokenAccount, owner: check.bytes };
-      mintRecipient = tokenAccount;
+      const found = await solanaRecipient(recipient);
+      opensAccount = found.opensAccount;
+      solana = { tokenAccount: found.tokenAccount, owner: found.owner };
+      mintRecipient = found.tokenAccount;
     } else if (r.to === "stellar") {
       if (!StrKey.isValidEd25519PublicKey(recipient)) {
         throw new ApiError(
@@ -601,7 +642,9 @@ export function createService(deps: Deps, now: () => number = Date.now) {
           "The recipient must be a Stellar account address starting with G.",
         );
       }
-      const account = await b.stellarAccount(recipient);
+      const account = await upstream("The recipient's Stellar account", () =>
+        b.stellarAccount(recipient),
+      );
       if (!account.exists) {
         throw new ApiError(
           "invalid_recipient",
@@ -642,7 +685,9 @@ export function createService(deps: Deps, now: () => number = Date.now) {
 
     if (r.from === "sui") {
       try {
-        const step = await b.suiBurn({ sender, amount: r.amount, stellarRecipient: recipient });
+        const step = await upstream("The Sui node", () =>
+          b.suiBurn({ sender, amount: r.amount, stellarRecipient: recipient }),
+        );
         return { quote: priced.quote, steps: [step] };
       } catch (err) {
         if (err instanceof InsufficientUsdcError) throw short(err.have, err.need, "Sui");
@@ -656,7 +701,16 @@ export function createService(deps: Deps, now: () => number = Date.now) {
       if (!b.stellarWrapper) {
         throw new ApiError("route_unavailable", "Sending from Stellar is not configured here.");
       }
-      const account = await b.stellarAccount(sender);
+      // Read like the page reads it: no build while the contract's destinations are unknown.
+      if ((await deps.stellarRoutes()).domains === null) {
+        throw new ApiError(
+          "upstream_unavailable",
+          "The bridge contract could not be read just now. Try again shortly.",
+        );
+      }
+      const account = await upstream("The sender's Stellar account", () =>
+        b.stellarAccount(sender),
+      );
       if (!account.exists) {
         throw new ApiError(
           "insufficient_balance",
@@ -689,9 +743,16 @@ export function createService(deps: Deps, now: () => number = Date.now) {
         });
         return { quote: priced.quote, steps: [step] };
       } catch (err) {
+        if (err instanceof StellarSimulationError) {
+          throw new ApiError(
+            "transaction_rejected",
+            `Stellar would reject this transfer: ${humanizeContractError(formatError(err), b.stellarWrapper.wrapperContractId)}`,
+          );
+        }
+        console.error("stellar build failed", err);
         throw new ApiError(
-          "transaction_rejected",
-          `Stellar would reject this transfer: ${humanizeContractError(formatError(err), b.stellarWrapper.wrapperContractId)}`,
+          "upstream_unavailable",
+          "Stellar's RPC could not be reached to prepare the transfer. Try again shortly.",
         );
       }
     }
@@ -715,7 +776,9 @@ export function createService(deps: Deps, now: () => number = Date.now) {
           createAccountFor: opensAccount ? bytesToHex(solana.owner) : undefined,
         }
       : recipient;
-    const { balance, allowance } = await b.evmUsdc(source, sender, source.tokenMessengerAddress);
+    const { balance, allowance } = await upstream(`The sender's USDC on ${source.name}`, () =>
+      b.evmUsdc(source, sender, source.tokenMessengerAddress),
+    );
     if (balance < r.amount) throw short(balance, r.amount, source.name);
     if (spendableUsdc(source, balance) < r.amount) {
       throw new ApiError(
@@ -737,7 +800,17 @@ export function createService(deps: Deps, now: () => number = Date.now) {
       via: null,
       allowance,
       deadline: 0n,
-    });
+    }).map((step) =>
+      // Circle's fee is fixed into the burn when it is built. If an approval comes first and takes
+      // longer than the quote lasts, build again: the approval stands, and the burn is re-priced.
+      step.id === "burn"
+        ? {
+            ...step,
+            expiresAt: priced.quote.expiresAt,
+            description: `${step.description} Signed after ${priced.quote.expiresAt}, build it again first: the fee may have moved.`,
+          }
+        : step,
+    );
     return { quote: priced.quote, steps };
   }
 
@@ -806,13 +879,13 @@ export function createService(deps: Deps, now: () => number = Date.now) {
         );
       }
       // The payer is the transaction's source, so it has to exist (and hold XLM for the fee).
-      if (!(await b.stellarAccount(payer)).exists) {
+      if (!(await upstream("The payer's Stellar account", () => b.stellarAccount(payer))).exists) {
         throw new ApiError(
           "invalid_request",
           "payer's Stellar account does not exist yet. It needs XLM to pay the fee.",
         );
       }
-      const plan = await b.suiClaim(digest, payer);
+      const plan = await upstream("Circle's record of this burn", () => b.suiClaim(digest, payer));
       if (!plan.ok) {
         if (plan.delivered)
           throw new ApiError("already_delivered", "This transfer has already been delivered.");
@@ -850,7 +923,7 @@ export function createService(deps: Deps, now: () => number = Date.now) {
     }
     const srcDomain =
       r.chain === "stellar" ? STELLAR_CCTP_DOMAIN : EVM_CHAINS[r.chain].cctpDomainId;
-    const att = await b.attestation(tx, srcDomain);
+    const att = await upstream("Circle's record of this burn", () => b.attestation(tx, srcDomain));
     if (!att || att.status === "unknown") {
       throw new ApiError(
         "upstream_unavailable",
@@ -875,7 +948,9 @@ export function createService(deps: Deps, now: () => number = Date.now) {
           `payer must be the ${evm.name} address that pays the gas.`,
         );
       }
-      const check = await b.evmClaimCheck(evm, payer, message, attestation);
+      const check = await upstream(`${evm.name}'s RPC`, () =>
+        b.evmClaimCheck(evm, payer, message, attestation),
+      );
       if (check.state === "delivered") {
         throw new ApiError("already_delivered", "This transfer has already been delivered.");
       }
@@ -914,14 +989,16 @@ export function createService(deps: Deps, now: () => number = Date.now) {
       if (!checkSolanaAddress(payer).ok) {
         throw new ApiError("invalid_request", "payer must be the Solana wallet that pays the fee.");
       }
-      const prep = await b.solanaClaim({
-        message,
-        attestation,
-        usdcMint: String(att.usdcMint),
-        sourceDomainId: Number(att.sourceDomainId),
-        payer,
-        ...(r.recipientOwner ? { recipientOwner: r.recipientOwner.trim() } : {}),
-      });
+      const prep = await upstream("Solana's RPC", () =>
+        b.solanaClaim({
+          message,
+          attestation,
+          usdcMint: String(att.usdcMint),
+          sourceDomainId: Number(att.sourceDomainId),
+          payer,
+          ...(r.recipientOwner ? { recipientOwner: r.recipientOwner.trim() } : {}),
+        }),
+      );
       if (prep.state === "delivered") {
         throw new ApiError("already_delivered", "This transfer has already been delivered.");
       }
@@ -964,6 +1041,7 @@ export function createService(deps: Deps, now: () => number = Date.now) {
     quote,
     buildTransfer,
     buildClaim,
+    solanaOpensAccount,
     transferStatus,
     SOURCE_NAME,
     DEST_NAME,

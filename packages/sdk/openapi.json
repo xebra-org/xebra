@@ -130,6 +130,17 @@
             "schema": {
               "$ref": "#/components/schemas/Speed"
             }
+          },
+          {
+            "in": "query",
+            "name": "recipient",
+            "schema": {
+              "description": "Optional. For Solana, pass it: a wallet with no USDC account yet costs more to deliver to, and the quote includes that.",
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
+            },
+            "description": "Optional. For Solana, pass it: a wallet with no USDC account yet costs more to deliver to, and the quote includes that."
           }
         ],
         "responses": {

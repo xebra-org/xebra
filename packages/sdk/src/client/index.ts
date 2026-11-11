@@ -122,6 +122,13 @@ export function createXebraClient(opts: XebraClientOptions = {}) {
       Object.entries(q).filter((e): e is [string, string] => e[1] !== undefined),
     ).toString();
 
+  const getTransfer = (chain: ChainId, tx: string, signal?: AbortSignal): Promise<TransferStatus> =>
+    call(
+      `/v1/transfers/${encodeURIComponent(chain)}/${encodeURIComponent(tx)}`,
+      TransferStatusSchema,
+      signal ? { signal } : {},
+    );
+
   return {
     /** Every route Xebra sends on right now. */
     routes: (): Promise<Routes> => call("/v1/routes", RoutesSchema),
@@ -129,7 +136,7 @@ export function createXebraClient(opts: XebraClientOptions = {}) {
     /** What a transfer costs and what the recipient gets. Read-only. */
     quote: (q: QuoteRequest): Promise<Quote> =>
       call(
-        `/v1/quote?${query({ from: q.from, to: q.to, amount: q.amount, speed: q.speed })}`,
+        `/v1/quote?${query({ from: q.from, to: q.to, amount: q.amount, speed: q.speed, recipient: q.recipient })}`,
         QuoteSchema,
       ),
 
@@ -138,12 +145,7 @@ export function createXebraClient(opts: XebraClientOptions = {}) {
       call("/v1/transfers", TransferBuildSchema, { method: "POST", body: r }),
 
     /** Where a transfer is, by the burn's transaction hash (or Sui digest). */
-    getTransfer: (chain: ChainId, tx: string, signal?: AbortSignal): Promise<TransferStatus> =>
-      call(
-        `/v1/transfers/${encodeURIComponent(chain)}/${encodeURIComponent(tx)}`,
-        TransferStatusSchema,
-        signal ? { signal } : {},
-      ),
+    getTransfer,
 
     /** The unsigned mint for a transfer whose delivery did not complete on its own. */
     createClaim: (r: ClaimRequest): Promise<ClaimBuild> =>
@@ -164,7 +166,7 @@ export function createXebraClient(opts: XebraClientOptions = {}) {
       const deadline = Date.now() + (o.timeoutMs ?? 30 * 60_000);
       for (;;) {
         try {
-          const status = await this.getTransfer(chain, tx, o.signal);
+          const status = await getTransfer(chain, tx, o.signal);
           if (SETTLED.has(status.state)) return status;
         } catch (err) {
           const transient =

@@ -6,8 +6,14 @@ import {
   scValToNative,
   type xdr,
 } from "@stellar/stellar-sdk";
+import { FINALITY, encodeDepositForBurnWithHook } from "@xebra/cctp-evm";
 import { InsufficientUsdcError, type TransferStep } from "@xebra/sdk/build";
-import { EVM_CHAINS, stellarDestination } from "@xebra/sdk/core";
+import {
+  EVM_CHAINS,
+  bytesToHex,
+  solanaAddressToBytes32,
+  stellarDestination,
+} from "@xebra/sdk/core";
 import { describe, expect, it, vi } from "vitest";
 import type { BuildDeps, Deps } from "./deps";
 import { ApiError } from "./errors";
@@ -300,5 +306,157 @@ describe("buildTransfer: what gets signed", () => {
     });
     expect(steps).toEqual([SUI_STEP]);
     expect(quote.recipientGets).toBe(1_000_000n);
+  });
+});
+
+describe("buildTransfer: the exact figures signed", () => {
+  it("puts the quoted amount and Circle's fee into the Stellar request, in stroops", async () => {
+    const { quote, steps } = await svc().buildTransfer({
+      ...toStellar,
+      to: "base",
+      recipient: RECIPIENT,
+    });
+    const req = bridgeRequest(steps[0]);
+    expect(req.amount).toBe(10_000_000n * 10n);
+    expect(req.max_fee).toBe(quote.fees.delivery * 10n);
+    // Xebra's share is shown rounded up to whole 6-decimal units, never down.
+    const xebraStroops = (req.max_wrapper_fee as bigint) - (req.max_fee as bigint);
+    expect((xebraStroops + 9n) / 10n).toBe(quote.fees.xebra);
+  });
+
+  const toSolana = (status: "exists" | "missing") =>
+    svc(
+      { solanaRecipient: async () => ({ tokenAccount: TOKEN_ACCOUNT, status }) },
+      {
+        stellarRoutes: async () => ({
+          destinations: [stellarDestination("solana")],
+          domains: new Map([
+            [5, { ...cfg(), accountCreation: true, maxForwardFeeNewAccount: 4_500_000n }],
+          ]),
+        }),
+      },
+    );
+
+  it("mints to the token account, never the wallet, when the account exists", async () => {
+    const { steps } = await toSolana("exists").buildTransfer({
+      ...toStellar,
+      to: "solana",
+      recipient: SOLANA_WALLET,
+    });
+    const req = bridgeRequest(steps[0]);
+    expect(
+      Buffer.from(req.mint_recipient as Buffer).equals(
+        Buffer.from(solanaAddressToBytes32(TOKEN_ACCOUNT)),
+      ),
+    ).toBe(true);
+    expect(req.recipient_needs_account).toBe(false);
+    expect(Buffer.from(req.recipient_owner as Buffer).equals(Buffer.alloc(32))).toBe(true);
+  });
+
+  it("names the wallet as owner, and still mints to the token account, when Circle opens it", async () => {
+    const { steps } = await toSolana("missing").buildTransfer({
+      ...toStellar,
+      to: "solana",
+      recipient: SOLANA_WALLET,
+    });
+    const req = bridgeRequest(steps[0]);
+    expect(
+      Buffer.from(req.mint_recipient as Buffer).equals(
+        Buffer.from(solanaAddressToBytes32(TOKEN_ACCOUNT)),
+      ),
+    ).toBe(true);
+    expect(
+      Buffer.from(req.recipient_owner as Buffer).equals(
+        Buffer.from(solanaAddressToBytes32(SOLANA_WALLET)),
+      ),
+    ).toBe(true);
+  });
+
+  for (const status of ["exists", "missing"] as const) {
+    it(`encodes an EVM burn to Solana with the token account (${status})`, async () => {
+      const { quote, steps } = await svc({
+        solanaRecipient: async () => ({ tokenAccount: TOKEN_ACCOUNT, status }),
+        evmUsdc: async () => ({ balance: 1_000_000_000n, allowance: 1_000_000_000n }),
+      }).buildTransfer({
+        from: "arc",
+        to: "solana",
+        amount: 25_000_000n,
+        sender: EVM_SENDER,
+        recipient: SOLANA_WALLET,
+      });
+      const burn = steps.find((x) => x.id === "burn");
+      if (burn?.tx.kind !== "evm") throw new Error("no EVM burn");
+      expect(burn.tx.data).toBe(
+        encodeDepositForBurnWithHook({
+          amount: 25_000_000n,
+          destinationDomain: 5,
+          recipient: {
+            kind: "solana",
+            tokenAccount: bytesToHex(solanaAddressToBytes32(TOKEN_ACCOUNT)),
+            createAccountFor:
+              status === "missing" ? bytesToHex(solanaAddressToBytes32(SOLANA_WALLET)) : undefined,
+          },
+          burnToken: EVM_CHAINS.arc.usdcAddress,
+          // What Circle may keep is the quote's delivery plus its transfer fee.
+          maxFee: quote.fees.delivery + quote.fees.circle,
+          minFinalityThreshold: FINALITY.standard,
+        }),
+      );
+    });
+  }
+
+  it("dates an EVM burn by its quote, since Circle's fee is fixed into it", async () => {
+    const { quote, steps } = await svc().buildTransfer({
+      from: "arc",
+      to: "base",
+      amount: 25_000_000n,
+      sender: EVM_SENDER,
+      recipient: RECIPIENT,
+    });
+    expect(steps.find((x) => x.id === "burn")?.expiresAt).toBe(quote.expiresAt);
+  });
+});
+
+describe("buildTransfer: an upstream that cannot be reached", () => {
+  it("is a 503 to try again, not a rejection, when Stellar's RPC fails", async () => {
+    const err = await refusal(
+      svc({
+        stellarRpc: () => ({
+          getAccount: async () => {
+            throw new Error("fetch failed");
+          },
+          getLatestLedger: async () => ({ sequence: 1 }),
+          prepareTransaction: async (tx) => tx,
+        }),
+      }).buildTransfer({ ...toStellar, to: "base", recipient: RECIPIENT }),
+    );
+    expect(err).toMatchObject({ code: "upstream_unavailable", status: 503 });
+  });
+
+  it("is a 503 when an account read fails", async () => {
+    const err = await refusal(
+      svc({
+        stellarAccount: async () => {
+          throw new Error("socket hang up");
+        },
+      }).buildTransfer({ ...toStellar, to: "base", recipient: RECIPIENT }),
+    );
+    expect(err.code).toBe("upstream_unavailable");
+    expect(err.detail).not.toContain("socket");
+  });
+
+  it("builds nothing while the contract's destinations cannot be read, as the page does", async () => {
+    const err = await refusal(
+      svc(
+        {},
+        {
+          stellarRoutes: async () => ({
+            destinations: [stellarDestination("base")],
+            domains: null,
+          }),
+        },
+      ).buildTransfer({ ...toStellar, to: "base", recipient: RECIPIENT }),
+    );
+    expect(err.code).toBe("upstream_unavailable");
   });
 });

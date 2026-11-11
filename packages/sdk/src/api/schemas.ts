@@ -58,6 +58,10 @@ export const QuoteRequestSchema = z.object({
   to: ChainIdSchema,
   amount: AmountSchema,
   speed: SpeedSchema.optional(),
+  recipient: z.string().min(1).max(128).optional().meta({
+    description:
+      "Optional. For Solana, pass it: a wallet with no USDC account yet costs more to deliver to, and the quote includes that.",
+  }),
 });
 
 export const FeesSchema = z

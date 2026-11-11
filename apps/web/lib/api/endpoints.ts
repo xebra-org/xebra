@@ -64,10 +64,17 @@ export function endpoints(service: Service) {
         from: "query",
         input: QuoteRequestSchema,
         run: async (q) => {
+          const r = route(q.from, q.to);
+          // Only Solana's price depends on the recipient (opening its USDC account costs more).
+          const opensAccount =
+            r.to === "solana" && q.recipient
+              ? await service.solanaOpensAccount(q.recipient)
+              : false;
           const priced = await service.quote({
-            ...route(q.from, q.to),
+            ...r,
             amount: units(q.amount),
             ...(q.speed ? { speed: q.speed } : {}),
+            opensAccount,
           });
           return quoteToWire(priced.quote);
         },

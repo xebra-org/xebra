@@ -118,6 +118,15 @@ describe("waitForDelivery", () => {
     expect(fetch).toHaveBeenCalledTimes(1);
   });
 
+  it("works when taken off the client", async () => {
+    const { waitForDelivery } = createXebraClient({
+      fetch: async () => json(200, STATUS("delivered")),
+    });
+    expect((await waitForDelivery("stellar", "a".repeat(64), { intervalMs: 1 })).state).toBe(
+      "delivered",
+    );
+  });
+
   it("gives up at its deadline", async () => {
     const client = createXebraClient({ fetch: async () => json(200, STATUS("pending")) });
     await expect(

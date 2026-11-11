@@ -126,6 +126,17 @@ export interface StellarBridgeInput {
   ttlSeconds: number;
 }
 
+/**
+ * The contract (or the SAC) refused the call when it was simulated: a real rejection, as opposed to
+ * the RPC being unreachable. Carries the RPC's message.
+ */
+export class StellarSimulationError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "StellarSimulationError";
+  }
+}
+
 /** The three Soroban RPC calls a build makes; `rpc.Server` satisfies it. */
 export interface StellarBuildRpc {
   getAccount(address: string): Promise<Account>;
@@ -142,8 +153,8 @@ const TX_TIMEOUT_SECS = 120;
  * wrapper, is the `caller` passed to Circle.
  *
  * Simulation attaches the auth entries and resource footprint. If the contract would reject the
- * request it fails here, before anyone is asked to sign; the error is passed through as the RPC
- * gave it, for the caller to explain.
+ * request it fails here, before anyone is asked to sign, as `StellarSimulationError`; any other
+ * failure (the RPC unreachable) is passed through as it came.
  */
 export async function buildStellarBridge(
   server: StellarBuildRpc,
@@ -192,7 +203,16 @@ export async function buildStellarBridge(
     .addOperation(contract.call("bridge", request))
     .build();
 
-  const prepared = await server.prepareTransaction(tx);
+  let prepared: Transaction;
+  try {
+    prepared = await server.prepareTransaction(tx);
+  } catch (err) {
+    // prepareTransaction throws for a failed simulation and for a failed request alike; only the
+    // first is the contract saying no.
+    const message = err instanceof Error ? err.message : String(err);
+    if (/HostError|Error\(|simulat/i.test(message)) throw new StellarSimulationError(message);
+    throw err;
+  }
   const maxTime = Number(prepared.timeBounds?.maxTime ?? 0);
   return {
     id: "burn",

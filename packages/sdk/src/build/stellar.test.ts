@@ -8,7 +8,12 @@ import {
   type xdr,
 } from "@stellar/stellar-sdk";
 import { describe, expect, it } from "vitest";
-import { APPROVAL_TTL_LEDGERS, type StellarBuildRpc, buildStellarBridge } from "./stellar.js";
+import {
+  APPROVAL_TTL_LEDGERS,
+  type StellarBuildRpc,
+  StellarSimulationError,
+  buildStellarBridge,
+} from "./stellar.js";
 
 const WRAPPER = "CCPVTWII2TW6VVSVA4JQ2KFHICGBG4QVAHPIGUPSIW3E4VNPUI4Y2WQR";
 const USER = Keypair.random().publicKey();
@@ -101,6 +106,21 @@ describe("buildStellarBridge", () => {
         { wrapperContractId: WRAPPER, networkPassphrase: Networks.PUBLIC },
         INPUT,
       ),
-    ).rejects.toThrow("#19");
+    ).rejects.toThrow(StellarSimulationError);
+  });
+
+  it("does not call an unreachable RPC a rejection", async () => {
+    const rpc = fakeRpc({
+      prepareTransaction: async () => {
+        throw new Error("fetch failed: ECONNRESET");
+      },
+    });
+    const err = await buildStellarBridge(
+      rpc,
+      { wrapperContractId: WRAPPER, networkPassphrase: Networks.PUBLIC },
+      INPUT,
+    ).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(Error);
+    expect(err).not.toBeInstanceOf(StellarSimulationError);
   });
 });

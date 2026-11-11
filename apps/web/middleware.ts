@@ -57,6 +57,7 @@ export const config = {
     "/admin",
     "/admin/:path*",
     // Every path on the API host, and only there; the site's own pages never pass through this.
-    { source: "/:path*", has: [{ type: "host", value: "api.xebra.exchange" }] },
+    // The value is a regular expression, so the dots are escaped. Hosts reach Vercel lower-cased.
+    { source: "/:path*", has: [{ type: "host", value: "api\\.xebra\\.exchange" }] },
   ],
 };

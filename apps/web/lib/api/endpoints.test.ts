@@ -6,10 +6,20 @@ import {
   TransferBuildSchema,
   TransferStatusSchema,
 } from "@xebra/sdk";
+import { stellarDestination } from "@xebra/sdk/core";
 import { describe, expect, it } from "vitest";
 import type { Deps } from "./deps";
 import { endpoints } from "./endpoints";
-import { RECIPIENT, SENDER, STELLAR_TX, buildDeps, deps } from "./fakes";
+import {
+  RECIPIENT,
+  SENDER,
+  SOLANA_WALLET,
+  STELLAR_TX,
+  buildDeps,
+  cfg,
+  deps,
+  health,
+} from "./fakes";
 import { preflight } from "./http";
 import { createService } from "./service";
 
@@ -92,6 +102,39 @@ describe("answers that parse with their schemas", () => {
   });
 });
 
+describe("quoting Solana", () => {
+  it("prices opening the recipient's USDC account when the wallet has none", async () => {
+    const calls: unknown[][] = [];
+    const v1 = endpoints(
+      createService(
+        deps({
+          build: buildDeps({
+            solanaRecipient: async () => ({
+              tokenAccount: "8BnEgHoWFysVcuFFX7QztDmzuH8r5ZFvyP3sYwn1XTh6",
+              status: "missing",
+            }),
+          }),
+          circle: async (...args: unknown[]) => {
+            calls.push(args);
+            return health();
+          },
+          stellarRoutes: async () => ({
+            destinations: [stellarDestination("solana")],
+            domains: new Map([
+              [5, { ...cfg(), accountCreation: true, maxForwardFeeNewAccount: 4_500_000n }],
+            ]),
+          }),
+        }),
+      ),
+    );
+    const res = await v1.quote(
+      get(`/quote?from=stellar&to=solana&amount=10&recipient=${SOLANA_WALLET}`),
+    );
+    expect(res.status).toBe(200);
+    expect(calls.at(-1)).toEqual([27, 5, true]);
+  });
+});
+
 describe("amounts", () => {
   for (const bad of ["0", "1e3", "1.1234567", "-1", "", "abc"]) {
     it(`refuses ${JSON.stringify(bad)} as invalid_amount`, async () => {
@@ -149,6 +192,25 @@ describe("bad requests", () => {
     const res = await api().quote(get("/quote?from=stellar&to=sui&amount=10"));
     expect(res.status).toBe(422);
     expect((await problemOf(res)).code).toBe("route_unavailable");
+  });
+
+  it("refuses an oversized body that declares no length", async () => {
+    const big = new TextEncoder().encode(JSON.stringify({ pad: "x".repeat(20_000) }));
+    const stream = new ReadableStream<Uint8Array>({
+      start(c) {
+        for (let i = 0; i < big.length; i += 1024) c.enqueue(big.slice(i, i + 1024));
+        c.close();
+      },
+    });
+    const req = new Request(`${BASE}/transfers`, {
+      method: "POST",
+      body: stream,
+      duplex: "half",
+    } as RequestInit);
+    expect(req.headers.get("content-length")).toBeNull();
+    const res = await api().createTransfer(req);
+    expect(res.status).toBe(400);
+    expect((await problemOf(res)).detail).toContain("too large");
   });
 
   it("refuses an oversized body", async () => {
