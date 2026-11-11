@@ -27,12 +27,7 @@
     "./openapi.json": "./openapi.json",
     "./package.json": "./package.json"
   },
-  "files": [
-    "dist",
-    "openapi.json",
-    "README.md",
-    "LICENSE"
-  ],
+  "files": ["dist", "openapi.json", "README.md", "LICENSE"],
   "engines": {
     "node": ">=20"
   },
@@ -71,14 +66,7 @@
   "bugs": {
     "url": "https://github.com/xebra-org/xebra/issues"
   },
-  "keywords": [
-    "usdc",
-    "cctp",
-    "circle",
-    "stellar",
-    "bridge",
-    "sdk"
-  ],
+  "keywords": ["usdc", "cctp", "circle", "stellar", "bridge", "sdk"],
   "publishConfig": {
     "access": "public",
     "provenance": true
