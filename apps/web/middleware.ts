@@ -1,9 +1,37 @@
 import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
 import { decideGate } from "./lib/admin/gate";
+import { decideApiHost, isApiHost } from "./lib/api/host";
 
-/** Gate for the admin panel only. See lib/admin/gate.ts for why this is not the security boundary. */
+/**
+ * Two jobs, kept apart:
+ *  - `api.xebra.exchange` serves `/v1` and nothing else (`lib/api/host.ts`);
+ *  - the admin panel's gate. See lib/admin/gate.ts for why this is not the security boundary.
+ */
 export function middleware(req: NextRequest) {
+  if (isApiHost(req.headers.get("host"))) {
+    const decision = decideApiHost(req.nextUrl.pathname);
+    if (decision.action === "pass") return NextResponse.next();
+    if (decision.action === "redirect") return NextResponse.redirect(decision.location, 308);
+    return new NextResponse(
+      JSON.stringify({
+        type: "https://docs.xebra.exchange/errors/not_found",
+        title: "Not found",
+        status: 404,
+        detail: "The API lives under /v1. See https://docs.xebra.exchange/api.",
+        code: "not_found",
+      }),
+      {
+        status: 404,
+        headers: {
+          "Content-Type": "application/problem+json",
+          "Access-Control-Allow-Origin": "*",
+          "Cache-Control": "no-store",
+        },
+      },
+    );
+  }
+
   const decision = decideGate({
     password: process.env.ADMIN_PASSWORD,
     allowedIps: process.env.ADMIN_ALLOWED_IPS,
@@ -24,4 +52,11 @@ export function middleware(req: NextRequest) {
   });
 }
 
-export const config = { matcher: ["/admin", "/admin/:path*"] };
+export const config = {
+  matcher: [
+    "/admin",
+    "/admin/:path*",
+    // Every path on the API host, and only there; the site's own pages never pass through this.
+    { source: "/:path*", has: [{ type: "host", value: "api.xebra.exchange" }] },
+  ],
+};
