@@ -1,12 +1,12 @@
-import { SuiGrpcClient } from "@mysten/sui/grpc";
+import type { SuiGrpcClient } from "@mysten/sui/grpc";
 import { Transaction, type TransactionObjectArgument } from "@mysten/sui/transactions";
 import {
   STELLAR_DOMAIN,
   burnDestinationCaller,
   forwarderAsSuiAddress,
   stellarForwardHook,
-} from "@xebra/sdk/core";
-import { suiRpcUrl } from "./config";
+} from "../core/cctp/sui-stellar.js";
+import type { TransferStep } from "./types.js";
 
 /**
  * Builds the Sui side of the transfer: Circle's CCTP V2 `deposit_for_burn` to domain 27, then the
@@ -52,10 +52,6 @@ function must1<T>(r: readonly T[]): [T] {
 function must2<T>(r: readonly T[]): [T, T] {
   if (r[0] === undefined || r[1] === undefined) throw new Error("missing Move call result");
   return [r[0], r[1]];
-}
-
-export function suiClient(): SuiGrpcClient {
-  return new SuiGrpcClient({ network: "mainnet", baseUrl: suiRpcUrl() });
 }
 
 /** The serialized transaction for the wallet to sign, plus the sender's USDC balance for the UI. */
@@ -137,4 +133,19 @@ export async function buildBurn(
 
   // Resolved against the node so the wallet gets object versions and a gas budget, not a recipe.
   return { transaction: await tx.toJSON({ client }) };
+}
+
+/** `buildBurn` as the step a wallet signs. */
+export async function buildSuiBurn(
+  client: SuiGrpcClient,
+  p: { sender: string; amount: bigint; stellarRecipient: string },
+): Promise<TransferStep> {
+  const { transaction } = await buildBurn(client, p);
+  return {
+    id: "burn",
+    chain: "sui",
+    description: "Burn USDC on Sui; Circle attests it and it is minted to the Stellar recipient.",
+    tx: { kind: "sui", json: transaction },
+    expiresAt: null,
+  };
 }

@@ -3,11 +3,9 @@ import {
   type Finality,
   decodeUint256,
   encodeAllowance,
-  encodeApprove,
   encodeBalanceOf,
-  encodeDepositForBurnWithHook,
-  encodeWrapperBridge,
 } from "@xebra/cctp-evm";
+import { type EvmBurnInput, evmApproveCall, evmBurnCall, evmBurnTarget } from "@xebra/sdk/build";
 import { type EvmChain, formatUsdc6 } from "@xebra/sdk/core";
 import {
   type Hex,
@@ -138,27 +136,18 @@ export async function submitEvmBridge(req: EvmBridgeRequest): Promise<EvmBridgeR
   const { provider, from, source, destination, amount, maxFee } = req;
   const via = req.via ?? null;
   const step = (s: EvmBridgeStep) => req.onStep?.(s);
+  const burnInput: EvmBurnInput = {
+    source,
+    destination,
+    recipient: req.recipient,
+    amount,
+    maxFee,
+    finality: req.finality,
+    via: via ? { address: via.address, maxWrapperFee: via.maxWrapperFee } : null,
+  };
   // Who takes the USDC and is called: the wrapper, or Circle's messenger.
-  const target = via?.address ?? source.tokenMessengerAddress;
-  const encodeBurn = (deadline: bigint) =>
-    via
-      ? encodeWrapperBridge({
-          amount,
-          destinationDomain: destination.cctpDomainId,
-          recipient: req.recipient,
-          maxFee,
-          minFinalityThreshold: req.finality,
-          maxWrapperFee: via.maxWrapperFee,
-          deadline,
-        })
-      : encodeDepositForBurnWithHook({
-          amount,
-          destinationDomain: destination.cctpDomainId,
-          recipient: req.recipient,
-          burnToken: source.usdcAddress,
-          maxFee,
-          minFinalityThreshold: req.finality,
-        });
+  const target = evmBurnTarget(burnInput);
+  const encodeBurn = (deadline: bigint) => evmBurnCall(burnInput, deadline).data;
 
   // Built first: an argument the encoder refuses must fail before any wallet prompt. The deadline
   // is set for real just before the burn, after any approval has confirmed.
@@ -185,8 +174,7 @@ export async function submitEvmBridge(req: EvmBridgeRequest): Promise<EvmBridgeR
     step("approving");
     approvalTxHash = await sendTransaction(provider, {
       from,
-      to: source.usdcAddress,
-      data: encodeApprove(target, amount),
+      ...evmApproveCall(burnInput),
       chainId: source.chainId,
     });
 

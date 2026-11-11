@@ -9,7 +9,8 @@
   "types": "./dist/index.d.ts",
   "exports": {
     ".": "./dist/index.js",
-    "./core": "./dist/core/index.js"
+    "./core": "./dist/core/index.js",
+    "./build": "./dist/build/index.js"
   },
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
@@ -20,7 +21,10 @@
     "clean": "rm -rf dist .turbo"
   },
   "dependencies": {
+    "@mysten/sui": "2.22.1",
     "@stellar/stellar-base": "^13.0.0",
+    "@stellar/stellar-sdk": "^13.0.0",
+    "@xebra/cctp-evm": "workspace:*",
     "viem": "^2.21.0"
   },
   "devDependencies": {

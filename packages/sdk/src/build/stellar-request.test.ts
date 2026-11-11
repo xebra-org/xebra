@@ -1,6 +1,6 @@
 import type { xdr } from "@stellar/stellar-sdk";
 import { describe, expect, it } from "vitest";
-import { encodeBridgeRequest } from "./cctp-bridge";
+import { encodeBridgeRequest } from "./stellar.js";
 
 /**
  * The encoding contract between this app and `contracts/stellar-cctp-wrapper-v2`.

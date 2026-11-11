@@ -1,11 +1,7 @@
 import { StrKey } from "@stellar/stellar-sdk";
+import { InsufficientUsdcError, SUI_ADDRESS, buildBurn } from "@xebra/sdk/build";
 import { formatUsdcAmount, parseUsdcAmount } from "@xebra/sdk/core";
-import {
-  InsufficientUsdcError,
-  SUI_ADDRESS,
-  buildBurn,
-  suiClient,
-} from "../../../../lib/sui-stellar/build-burn";
+import { suiClient } from "../../../../lib/sui-stellar/client";
 import {
   maxUsdcBase,
   notFound,
