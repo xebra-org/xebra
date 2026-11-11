@@ -3,7 +3,7 @@ import type React from "react";
 
 // A mainnet pilot behind a switch. Not for a search engine until it has carried real transfers.
 export const metadata: Metadata = {
-  title: "Send USDC from Sui to Stellar",
+  title: "Send USDC from Sui",
   robots: { index: false, follow: false },
 };
 

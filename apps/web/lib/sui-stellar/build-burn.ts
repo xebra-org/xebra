@@ -1,10 +1,12 @@
 import { SuiGrpcClient } from "@mysten/sui/grpc";
-import { Transaction, type TransactionObjectArgument } from "@mysten/sui/transactions";
+import { Transaction, coinWithBalance } from "@mysten/sui/transactions";
+import { FORWARD_HOOK, addressToBytes32 } from "@xebra/cctp-evm";
 import { STELLAR_DOMAIN, forwarderAsSuiAddress, stellarForwardHook } from "./cctp";
 import { suiRpcUrl } from "./config";
 
 /**
- * Builds the Sui side of the transfer: Circle's CCTP V2 `deposit_for_burn` to domain 27, then the
+ * Builds the Sui side of a transfer: Circle's CCTP V2 `deposit_for_burn` (to Stellar, domain 27, or
+ * to an EVM chain through Circle's Forwarding Service), then the
  * two calls that settle the burn (`handler::burn`, `complete_burn`). The sequence is Circle's own
  * (sui-cctp `addDepositForBurnV2`); the IDs are from developers.circle.com/cctp/references/sui-packages
  * and were checked against mainnet on 2026-11-05.
@@ -23,10 +25,12 @@ const CFG = {
 } as const;
 
 const DENY_LIST_ID = "0x403";
-/** Stellar has no Fast Transfer; standard finality, no fee. */
+/**
+ * Standard finality on every route from Sui. Sui finalises in about a second, so Fast buys nothing,
+ * and Circle quotes no transfer fee for Standard.
+ */
 const STANDARD_FINALITY = 2000;
-/** A wallet with thousands of dust coins should still produce a small transaction. */
-const MAX_COINS_MERGED = 200;
+const ZERO_ADDRESS = "0x0";
 
 export const SUI_ADDRESS = /^0x[0-9a-fA-F]{64}$/;
 
@@ -53,58 +57,94 @@ export function suiClient(): SuiGrpcClient {
   return new SuiGrpcClient({ network: "mainnet", baseUrl: suiRpcUrl() });
 }
 
-/** The serialized transaction for the wallet to sign, plus the sender's USDC balance for the UI. */
-export async function buildBurn(
+/** Sui to Stellar: the serialized burn for the wallet to sign. */
+export function buildBurn(
   client: SuiGrpcClient,
   p: { sender: string; amount: bigint; stellarRecipient: string },
 ): Promise<{ transaction: string }> {
-  const coins: { objectId: string; balance: string }[] = [];
-  let single: { objectId: string; balance: string } | undefined;
-  let cursor: string | null = null;
-  do {
-    const page = await client.core.listCoins({
-      owner: p.sender,
-      coinType: CFG.usdcType,
-      cursor,
-    });
-    single = page.objects.find((c) => BigInt(c.balance) >= p.amount);
-    if (single) break;
-    coins.push(...page.objects);
-    cursor = page.hasNextPage && coins.length < MAX_COINS_MERGED ? page.cursor : null;
-  } while (cursor);
+  return burnTransaction(client, {
+    sender: p.sender,
+    amount: p.amount,
+    destinationDomain: STELLAR_DOMAIN,
+    mintRecipient: forwarderAsSuiAddress(),
+    // destinationCaller zero: anyone may complete the mint, which is what lets us relay it.
+    destinationCaller: ZERO_ADDRESS,
+    maxFee: 0n,
+    hookData: stellarForwardHook(p.stellarRecipient),
+  });
+}
+
+/**
+ * Sui to an EVM chain, delivered by Circle's Forwarding Service: the recipient is the
+ * `mintRecipient`, the hook is Circle's `cctp-forward` request, and `maxFee` pays Circle for the
+ * delivery (all of it is kept, see `lib/evm-forward-fee.ts`). `destinationCaller` is zero, as
+ * Circle's forwarder requires, which also keeps a failed delivery claimable by anyone at `/claim`.
+ *
+ * The caller has already validated the recipient for that chain and priced `maxFee`.
+ */
+export function buildEvmBurn(
+  client: SuiGrpcClient,
+  p: {
+    sender: string;
+    amount: bigint;
+    evmRecipient: string;
+    destinationDomain: number;
+    maxFee: bigint;
+  },
+): Promise<{ transaction: string }> {
+  if (p.maxFee <= 0n || p.maxFee >= p.amount) {
+    throw new Error("maxFee must be above zero and below the amount");
+  }
+  return burnTransaction(client, {
+    sender: p.sender,
+    amount: p.amount,
+    destinationDomain: p.destinationDomain,
+    mintRecipient: addressToBytes32(p.evmRecipient),
+    destinationCaller: ZERO_ADDRESS,
+    maxFee: p.maxFee,
+    hookData: Buffer.from(FORWARD_HOOK.slice(2), "hex"),
+  });
+}
+
+interface BurnArgs {
+  sender: string;
+  amount: bigint;
+  destinationDomain: number;
+  /** 32 bytes as a Sui address argument. */
+  mintRecipient: string;
+  destinationCaller: string;
+  maxFee: bigint;
+  hookData: Uint8Array;
+}
+
+async function burnTransaction(
+  client: SuiGrpcClient,
+  p: BurnArgs,
+): Promise<{ transaction: string }> {
+  // Both kinds of holding count: coin objects, and the address balance Sui now keeps per account
+  // (a wallet can hold all of its USDC there and no coins at all). The SDK's `coinWithBalance`
+  // draws from either and merges as needed; this check only gives a clear refusal first.
+  const { balance } = await client.core.getBalance({ owner: p.sender, coinType: CFG.usdcType });
+  const have = BigInt(balance.balance);
+  if (have < p.amount) throw new InsufficientUsdcError(have, p.amount);
 
   const tx = new Transaction();
   tx.setSender(p.sender);
-
-  let primary: TransactionObjectArgument;
-  if (single) {
-    primary = tx.object(single.objectId);
-  } else {
-    const total = coins.reduce((s, c) => s + BigInt(c.balance), 0n);
-    const first = coins[0];
-    if (!first || total < p.amount) throw new InsufficientUsdcError(total, p.amount);
-    primary = tx.object(first.objectId);
-    if (coins.length > 1) {
-      tx.mergeCoins(
-        primary,
-        coins.slice(1).map((c) => tx.object(c.objectId)),
-      );
-    }
-  }
-  const [coin] = must1(tx.splitCoins(primary, [p.amount]));
+  const coin = tx.add(
+    coinWithBalance({ type: CFG.usdcType, balance: p.amount, useGasCoin: false }),
+  );
 
   const [receipt, returned] = must2(
     tx.moveCall({
       target: `${CFG.tmmV2PackageId}::deposit_for_burn::deposit_for_burn`,
       arguments: [
         coin,
-        tx.pure.u32(STELLAR_DOMAIN),
-        tx.pure.address(forwarderAsSuiAddress()),
-        // destinationCaller zero: anyone may complete the mint, which is what lets us relay it.
-        tx.pure.address("0x0"),
-        tx.pure.u256(0n),
+        tx.pure.u32(p.destinationDomain),
+        tx.pure.address(p.mintRecipient),
+        tx.pure.address(p.destinationCaller),
+        tx.pure.u256(p.maxFee),
         tx.pure.u32(STANDARD_FINALITY),
-        tx.pure.vector("u8", Array.from(stellarForwardHook(p.stellarRecipient))),
+        tx.pure.vector("u8", Array.from(p.hookData)),
         tx.object(CFG.tmmV2StateId),
       ],
       typeArguments: [CFG.usdcType],

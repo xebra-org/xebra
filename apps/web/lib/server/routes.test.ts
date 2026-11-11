@@ -1,8 +1,14 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { isOfferedRoute, normaliseTxHash, readDomain, readSource } from "./routes";
 
 const STELLAR = 27;
 const HEX = "ab".repeat(32);
+/** A real Sui digest (the first Sui to Stellar burn): base58, mixed case. */
+const SUI_TX = "37cRcRxVbwscXJAjLfqmXh19CDdKeHMBVJ1GMSqJKEE7";
+
+afterEach(() => {
+  vi.unstubAllEnvs();
+});
 
 describe("readSource", () => {
   it("means Stellar when no source is named, so every existing link still works", () => {
@@ -106,5 +112,39 @@ describe("readDomain", () => {
     expect(readDomain(null)).toBeNull();
     expect(readDomain("2 6")).toBeNull();
     expect(readDomain("1e2")).toBeNull();
+  });
+});
+
+describe("Sui as a source", () => {
+  it("is refused while the Sui page is off", () => {
+    vi.stubEnv("SUI_STELLAR_ENABLED", "");
+    expect(readSource("8", STELLAR)).toBeNull();
+    expect(isOfferedRoute(8, 15, STELLAR)).toBe(false);
+  });
+
+  it("is read once the page is on, and sends to Monad by default and nowhere else", () => {
+    vi.stubEnv("SUI_STELLAR_ENABLED", "true");
+    vi.stubEnv("SUI_SENDS_TO_EVM", undefined as unknown as string);
+    expect(readSource("8", STELLAR)).toEqual({ domain: 8, kind: "sui" });
+    expect(isOfferedRoute(8, 15, STELLAR)).toBe(true);
+    for (const no of [6, 26, 27, 5, 0]) {
+      expect(isOfferedRoute(8, no, STELLAR), String(no)).toBe(false);
+    }
+  });
+
+  it("follows SUI_SENDS_TO_EVM, ignoring names it does not know", () => {
+    vi.stubEnv("SUI_STELLAR_ENABLED", "true");
+    vi.stubEnv("SUI_SENDS_TO_EVM", "base, nonsense");
+    expect(isOfferedRoute(8, 6, STELLAR)).toBe(true);
+    expect(isOfferedRoute(8, 15, STELLAR)).toBe(false);
+    vi.stubEnv("SUI_SENDS_TO_EVM", "none");
+    expect(isOfferedRoute(8, 15, STELLAR)).toBe(false);
+  });
+
+  it("keeps a digest's case, and refuses hex hashes", () => {
+    expect(normaliseTxHash("sui", ` ${SUI_TX} `)).toBe(SUI_TX);
+    for (const bad of [null, "", `0x${HEX}`, "0OIl".repeat(10), `${SUI_TX}!`]) {
+      expect(normaliseTxHash("sui", bad), String(bad)).toBeNull();
+    }
   });
 });

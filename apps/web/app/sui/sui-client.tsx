@@ -11,6 +11,7 @@ import { GlassCard, InsetTray } from "../../components/ui/glass-card";
 import { ArrowRight, Check } from "../../components/ui/icons";
 import { Notice } from "../../components/ui/notice";
 import { useWallets } from "../../components/wallet/wallet-provider";
+import { EVM_CHAINS, type EvmChainId } from "../../lib/evm-chains";
 import { reportError } from "../../lib/format-error";
 import { claimOnStellar } from "../../lib/sui-stellar/claim-client";
 import {
@@ -19,6 +20,7 @@ import {
   signAndExecuteSui,
   watchSuiWallets,
 } from "../../lib/wallets/sui";
+import { type SuiDestination, SuiDestinationPicker, SuiToEvm, recallSuiEvm } from "./sui-evm";
 
 /**
  * Sui to Stellar: connect a Sui wallet, burn USDC, and watch it arrive.
@@ -62,7 +64,7 @@ function recall(): string | null {
 /** Whether a Sui transfer is in the address (`?tx=`) or was being followed in this browser. */
 export function hasRememberedSuiTransfer(): boolean {
   const fromUrl = new URLSearchParams(window.location.search).get("tx")?.trim() ?? "";
-  return DIGEST.test(fromUrl) || recall() !== null;
+  return DIGEST.test(fromUrl) || recall() !== null || recallSuiEvm() !== null;
 }
 
 const short = (s: string) => `${s.slice(0, 6)}...${s.slice(-4)}`;
@@ -81,28 +83,38 @@ function problem(where: Problem["where"], label: string, err: unknown): Problem 
 export function SuiClient({
   maxUsdc,
   relayerEnabled,
+  evmDestinations = [],
 }: {
   maxUsdc: string | null;
   relayerEnabled: boolean;
+  evmDestinations?: EvmChainId[];
 }) {
+  const where =
+    evmDestinations.length === 0
+      ? "Stellar"
+      : `Stellar or ${evmDestinations.map((id) => EVM_CHAINS[id].name).join(" or ")}`;
   return (
     <main className="mx-auto flex w-full max-w-lg flex-col gap-6 px-4 py-14 sm:px-5 sm:py-20">
       <header className="px-1">
         <h1 className="text-2xl font-semibold tracking-tight text-bone [text-wrap:balance]">
-          Send USDC from Sui to Stellar
+          {evmDestinations.length === 0 ? "Send USDC from Sui to Stellar" : "Send USDC from Sui"}
         </h1>
         <p className="mt-3 text-[0.8125rem] leading-relaxed text-bone/50">
-          Burn native USDC on Sui with Circle&rsquo;s CCTP and it is minted on Stellar to the
+          Burn native USDC on Sui with Circle&rsquo;s CCTP and it is minted on {where} to the
           address you choose. No wrapped tokens, and Xebra never holds your funds.
         </p>
       </header>
 
       <Notice tone="info" title="Pilot on mainnet">
-        Real USDC{maxUsdc !== null ? `, up to ${maxUsdc} per transfer` : ""}. Check the Stellar
+        Real USDC{maxUsdc !== null ? `, up to ${maxUsdc} per transfer` : ""}. Check the recipient
         address twice: the mint goes only to the address you enter, and a burn cannot be undone.
       </Notice>
 
-      <SuiTransfer maxUsdc={maxUsdc} relayerEnabled={relayerEnabled} />
+      <SuiTransfer
+        maxUsdc={maxUsdc}
+        relayerEnabled={relayerEnabled}
+        evmDestinations={evmDestinations}
+      />
     </main>
   );
 }
@@ -115,12 +127,15 @@ export function SuiClient({
 export function SuiTransfer({
   maxUsdc,
   relayerEnabled,
+  evmDestinations = [],
   embedded = false,
   sourcePicker,
   onBusyChange,
 }: {
   maxUsdc: string | null;
   relayerEnabled: boolean;
+  /** EVM chains the server lets Sui send to, delivered by Circle's Forwarding Service. */
+  evmDestinations?: EvmChainId[];
   embedded?: boolean;
   sourcePicker?: React.ReactNode;
   onBusyChange?: (busy: boolean) => void;
@@ -132,6 +147,8 @@ export function SuiTransfer({
   const [recipient, setRecipient] = useState("");
   const [step, setStep] = useState<"idle" | "preparing" | "signing">("idle");
   const [error, setError] = useState<Problem | null>(null);
+  const [to, setTo] = useState<SuiDestination>("stellar");
+  const evmKey = evmDestinations.join(",");
 
   const [digest, setDigest] = useState<string | null>(null);
   const [attest, setAttest] = useState<Attest>("unknown");
@@ -147,18 +164,30 @@ export function SuiTransfer({
   useEffect(() => watchSuiWallets(setWallets), []);
 
   // Changing the source chain on the bridge screen is blocked while a transfer is on screen.
+  // On an EVM destination `SuiToEvm` reports instead.
   useEffect(() => {
+    if (to !== "stellar") return;
     onBusyChange?.(step !== "idle" || (digest !== null && delivery.kind !== "done"));
-  }, [onBusyChange, step, digest, delivery.kind]);
+  }, [onBusyChange, to, step, digest, delivery.kind]);
 
   // A transfer already under way: from the address bar, else from this browser.
   useEffect(() => {
     // Read from the address after mounting rather than through `useSearchParams`, which would make
     // the bridge screen this is embedded in client-rendered only.
     const fromUrl = new URLSearchParams(window.location.search).get("tx")?.trim() ?? "";
-    const start = DIGEST.test(fromUrl) ? fromUrl : recall();
+    if (DIGEST.test(fromUrl)) {
+      setDigest(fromUrl);
+      return;
+    }
+    // A transfer to an EVM chain is followed by `SuiToEvm`, which reads its own record.
+    const evm = recallSuiEvm();
+    if (evm && evmKey.split(",").includes(evm.chain)) {
+      setTo(evm.chain);
+      return;
+    }
+    const start = recall();
     if (start) setDigest(start);
-  }, []);
+  }, [evmKey]);
 
   const connect = useCallback(async (entry: SuiWalletEntry) => {
     setError(null);
@@ -336,8 +365,8 @@ export function SuiTransfer({
         ? "Confirm in your wallet"
         : "Burn on Sui";
 
-  const form = (
-    <div className="flex flex-col gap-6">
+  const walletSection = (
+    <>
       <WalletSection
         wallets={wallets}
         account={account}
@@ -348,6 +377,28 @@ export function SuiTransfer({
           setAccount(null);
         }}
       />
+      {error?.where === "connect" && <ProblemNotice problem={error} />}
+    </>
+  );
+
+  const destinations: SuiDestination[] = ["stellar", ...evmDestinations];
+  const picker =
+    destinations.length > 1 ? (
+      <SuiDestinationPicker
+        value={to}
+        options={destinations}
+        onChange={(d) => {
+          setError(null);
+          setTo(d);
+        }}
+        disabled={step !== "idle"}
+      />
+    ) : null;
+
+  const form = (
+    <div className="flex flex-col gap-6">
+      {walletSection}
+      {picker}
 
       <Field
         id="sui-amount"
@@ -388,7 +439,7 @@ export function SuiTransfer({
         />
       </Field>
 
-      {error && <ProblemNotice problem={error} />}
+      {error?.where === "send" && <ProblemNotice problem={error} />}
 
       <Button
         size="lg"
@@ -401,21 +452,48 @@ export function SuiTransfer({
     </div>
   );
 
+  const evmChain = to === "stellar" ? null : EVM_CHAINS[to];
+  const body = evmChain ? (
+    <SuiToEvm
+      chain={evmChain}
+      wallet={wallet}
+      account={account}
+      maxUsdc={maxUsdc}
+      walletSection={walletSection}
+      picker={picker}
+      {...(onBusyChange ? { onBusyChange } : {})}
+    />
+  ) : null;
+
   if (embedded) {
     return (
       <>
         <h2 id="bridge-heading" className="sr-only">
-          Bridge USDC from Sui to Stellar
+          Bridge USDC from Sui to {evmChain ? evmChain.name : "Stellar"}
         </h2>
         <div className="px-5 py-6 sm:px-6">
           {sourcePicker}
           <Notice tone="info" title="Pilot on mainnet" className="mb-6">
-            Real USDC{maxUsdc !== null ? `, up to ${maxUsdc} per transfer` : ""}. Check the Stellar
-            address twice: the mint goes only to the address you enter, and a burn cannot be undone.
+            Real USDC{maxUsdc !== null ? `, up to ${maxUsdc} per transfer` : ""}. Check the
+            recipient address twice: the mint goes only to the address you enter, and a burn cannot
+            be undone.
           </Notice>
-          {progress ?? form}
+          {body ?? progress ?? form}
         </div>
       </>
+    );
+  }
+
+  if (body) {
+    return (
+      <GlassCard labelledBy="sui-form-title" spotlight={false}>
+        <div className="p-5 sm:p-6">
+          <h2 id="sui-form-title" className="sr-only">
+            Transfer details
+          </h2>
+          {body}
+        </div>
+      </GlassCard>
     );
   }
 

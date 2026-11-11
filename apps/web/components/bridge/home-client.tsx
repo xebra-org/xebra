@@ -5,7 +5,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { SuiTransfer, hasRememberedSuiTransfer } from "../../app/sui/sui-client";
 import { type DeepLink, hasDeepLink, parseDeepLink } from "../../lib/deep-link";
 import { env, isCctpRailConfigured } from "../../lib/env";
-import { EVM_CHAINS, type EvmChainId, evmSources } from "../../lib/evm-chains";
+import { EVM_CHAINS, type EvmChainId, evmSources, isEvmChainId } from "../../lib/evm-chains";
 import { SiteFooter } from "../site/site-footer";
 import { TopBar } from "../site/top-bar";
 import { Eyebrow } from "../ui/badge";
@@ -37,6 +37,8 @@ type SourceId = "stellar" | "sui" | EvmChainId;
 interface SuiSource {
   relayer: boolean;
   maxUsdc: string | null;
+  /** EVM chains Sui also sends to. */
+  evm: EvmChainId[];
 }
 
 export function HomeClient({ children }: { children?: React.ReactNode }) {
@@ -52,14 +54,30 @@ export function HomeClient({ children }: { children?: React.ReactNode }) {
     let live = true;
     fetch("/api/sui-stellar/config", { cache: "no-store" })
       .then((r) => (r.ok ? r.json() : null))
-      .then((c: { enabled?: boolean; relayer?: boolean; maxUsdc?: string | null } | null) => {
-        if (!live || !c?.enabled) return;
-        setSui({ relayer: c.relayer === true, maxUsdc: c.maxUsdc ?? null });
-        // A transfer this browser was following comes back on screen, as it does on /sui.
-        if (hasRememberedSuiTransfer() && !parseDeepLink(window.location.search).from) {
-          setFrom("sui");
-        }
-      })
+      .then(
+        (
+          c: {
+            enabled?: boolean;
+            relayer?: boolean;
+            maxUsdc?: string | null;
+            evm?: unknown;
+          } | null,
+        ) => {
+          if (!live || !c?.enabled) return;
+          setSui({
+            relayer: c.relayer === true,
+            maxUsdc: c.maxUsdc ?? null,
+            // Only names this build knows: a newer server cannot make the page render a chain it lacks.
+            evm: Array.isArray(c.evm)
+              ? c.evm.filter((id): id is EvmChainId => typeof id === "string" && isEvmChainId(id))
+              : [],
+          });
+          // A transfer this browser was following comes back on screen, as it does on /sui.
+          if (hasRememberedSuiTransfer() && !parseDeepLink(window.location.search).from) {
+            setFrom("sui");
+          }
+        },
+      )
       .catch(() => {
         // Off, or offline: the Sui source simply is not offered.
       });
@@ -171,6 +189,7 @@ export function HomeClient({ children }: { children?: React.ReactNode }) {
                 embedded
                 maxUsdc={sui.maxUsdc}
                 relayerEnabled={sui.relayer}
+                evmDestinations={sui.evm}
                 sourcePicker={sourcePicker}
                 onBusyChange={setBusy}
               />

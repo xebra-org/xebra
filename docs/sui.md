@@ -74,6 +74,7 @@ Server environment (Vercel, read at request time, not build inputs):
 | `SUI_STELLAR_RELAYER_SECRET` | Funded mainnet Stellar secret that pays the fee (about 0.02 XLM per completion). Unset: users can burn but nothing completes it. Use a dedicated account holding a small float. |
 | `SUI_STELLAR_MAX_USDC` | Optional per-transfer cap in USDC. Unset means no cap (it was 10 until 2026-11-08). |
 | `SUI_RPC_URL` | Sui fullnode, default Mysten's public mainnet node. |
+| `SUI_SENDS_TO_EVM` | EVM chains Sui also sends to (comma list of chain ids, e.g. `monad`), or `none`. Unset means `monad`. Only while `SUI_STELLAR_ENABLED=true`. |
 
 On the main bridge screen, Sui appears in the "Send from" picker when `SUI_STELLAR_ENABLED=true`
 (`/api/sui-stellar/config` tells the page). It is the same transfer as `/sui`, embedded in the plate.
@@ -88,6 +89,27 @@ another browser shows as delivered instead of waiting forever.
 Known limits: G... recipients only; standard finality only (Stellar has no Fast Transfer); the in-flight guard is per
 server instance, so two instances racing one digest can waste a failed fee but not funds. The standalone command-line
 versions are in `scripts/sui-to-stellar/`.
+
+## Sui to Monad (built 2026-11-11)
+
+Same page, same wallet: "Send to" picks Stellar or Monad. Unlike Stellar, nothing of ours finishes the transfer: the burn
+carries Circle's `cctp-forward` hook, `mintRecipient` is the Monad address (left-padded), `destinationCaller` is zero (the
+forwarder requires it), and `maxFee` is Circle's `high` delivery quote, priced by `planEvmFee` (chain ceiling 0.5 USDC, at most
+a tenth of the amount). Iris quoted Sui -> Monad forwarding at about 0.051 USDC (2026-11-11), minimum fee 0 at both
+finalities; the burn uses Standard (2000) because Sui finalises in about a second anyway. Circle keeps the whole `maxFee`.
+
+- `POST /api/sui-evm/build` reprices from a fresh quote and refuses (409) if the fee went above what the page showed.
+- Progress is `/api/delivery?src=8&tx=<digest>`; a failed delivery is claimed at `/claim?tx=<digest>&src=8` with an EVM
+  wallet on Monad (the claim page now accepts Sui as a source).
+- `/api/circle-health?src=8&dst=15` answers for the routes `SUI_SENDS_TO_EVM` names.
+
+**Address balances.** Sui accounts can hold USDC as an address balance with no coin objects (the pilot tester's 49.7 USDC
+was held that way on 2026-11-11, so the old coin-listing builder reported "not enough USDC"). Both routes now take the coin
+with the SDK's `coinWithBalance`, which draws from coins or the address balance.
+
+Proof so far: the real burn transaction, built by the app for that tester's address, simulated successfully on Sui mainnet
+(2.5 USDC, `MessageSent` to domain 15, `max_fee` 50993, `cctp-forward` hook). No real Sui -> Monad transfer has been
+made yet.
 
 # Sui as a destination
 
