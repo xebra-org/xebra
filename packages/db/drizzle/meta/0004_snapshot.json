@@ -53,12 +53,8 @@
           "name": "assets_chain_id_chains_id_fk",
           "tableFrom": "assets",
           "tableTo": "chains",
-          "columnsFrom": [
-            "chain_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
+          "columnsFrom": ["chain_id"],
+          "columnsTo": ["id"],
           "onDelete": "no action",
           "onUpdate": "no action"
         }
@@ -66,10 +62,7 @@
       "compositePrimaryKeys": {
         "assets_chain_id_asset_id_pk": {
           "name": "assets_chain_id_asset_id_pk",
-          "columns": [
-            "chain_id",
-            "asset_id"
-          ]
+          "columns": ["chain_id", "asset_id"]
         }
       },
       "uniqueConstraints": {},
@@ -144,12 +137,8 @@
           "name": "cctp_transfers_source_chain_id_chains_id_fk",
           "tableFrom": "cctp_transfers",
           "tableTo": "chains",
-          "columnsFrom": [
-            "source_chain_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
+          "columnsFrom": ["source_chain_id"],
+          "columnsTo": ["id"],
           "onDelete": "no action",
           "onUpdate": "no action"
         },
@@ -157,12 +146,8 @@
           "name": "cctp_transfers_dest_chain_id_chains_id_fk",
           "tableFrom": "cctp_transfers",
           "tableTo": "chains",
-          "columnsFrom": [
-            "dest_chain_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
+          "columnsFrom": ["dest_chain_id"],
+          "columnsTo": ["id"],
           "onDelete": "no action",
           "onUpdate": "no action"
         }
@@ -284,12 +269,8 @@
           "name": "claims_intent_hash_intents_intent_hash_fk",
           "tableFrom": "claims",
           "tableTo": "intents",
-          "columnsFrom": [
-            "intent_hash"
-          ],
-          "columnsTo": [
-            "intent_hash"
-          ],
+          "columnsFrom": ["intent_hash"],
+          "columnsTo": ["intent_hash"],
           "onDelete": "no action",
           "onUpdate": "no action"
         }
@@ -355,12 +336,8 @@
           "name": "corridors_source_chain_id_chains_id_fk",
           "tableFrom": "corridors",
           "tableTo": "chains",
-          "columnsFrom": [
-            "source_chain_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
+          "columnsFrom": ["source_chain_id"],
+          "columnsTo": ["id"],
           "onDelete": "no action",
           "onUpdate": "no action"
         },
@@ -368,12 +345,8 @@
           "name": "corridors_dest_chain_id_chains_id_fk",
           "tableFrom": "corridors",
           "tableTo": "chains",
-          "columnsFrom": [
-            "dest_chain_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
+          "columnsFrom": ["dest_chain_id"],
+          "columnsTo": ["id"],
           "onDelete": "no action",
           "onUpdate": "no action"
         }
@@ -454,12 +427,8 @@
           "name": "escrow_events_chain_id_chains_id_fk",
           "tableFrom": "escrow_events",
           "tableTo": "chains",
-          "columnsFrom": [
-            "chain_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
+          "columnsFrom": ["chain_id"],
+          "columnsTo": ["id"],
           "onDelete": "no action",
           "onUpdate": "no action"
         }
@@ -562,12 +531,8 @@
           "name": "intents_corridor_id_corridors_id_fk",
           "tableFrom": "intents",
           "tableTo": "corridors",
-          "columnsFrom": [
-            "corridor_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
+          "columnsFrom": ["corridor_id"],
+          "columnsTo": ["id"],
           "onDelete": "no action",
           "onUpdate": "no action"
         }
@@ -728,12 +693,8 @@
           "name": "relay_jobs_cctp_transfer_id_cctp_transfers_id_fk",
           "tableFrom": "relay_jobs",
           "tableTo": "cctp_transfers",
-          "columnsFrom": [
-            "cctp_transfer_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
+          "columnsFrom": ["cctp_transfer_id"],
+          "columnsTo": ["id"],
           "onDelete": "no action",
           "onUpdate": "no action"
         }
@@ -786,12 +747,8 @@
           "name": "solver_inventory_snapshots_chain_id_chains_id_fk",
           "tableFrom": "solver_inventory_snapshots",
           "tableTo": "chains",
-          "columnsFrom": [
-            "chain_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
+          "columnsFrom": ["chain_id"],
+          "columnsTo": ["id"],
           "onDelete": "no action",
           "onUpdate": "no action"
         }
@@ -850,52 +807,27 @@
     "public.attestation_status": {
       "name": "attestation_status",
       "schema": "public",
-      "values": [
-        "pending",
-        "attested",
-        "failed"
-      ]
+      "values": ["pending", "attested", "failed"]
     },
     "public.chain_kind": {
       "name": "chain_kind",
       "schema": "public",
-      "values": [
-        "evm",
-        "stellar",
-        "solana"
-      ]
+      "values": ["evm", "stellar", "solana"]
     },
     "public.challenge_status": {
       "name": "challenge_status",
       "schema": "public",
-      "values": [
-        "none",
-        "challenged",
-        "resolved_valid",
-        "resolved_invalid"
-      ]
+      "values": ["none", "challenged", "resolved_valid", "resolved_invalid"]
     },
     "public.intent_status": {
       "name": "intent_status",
       "schema": "public",
-      "values": [
-        "open",
-        "claimed",
-        "challenged",
-        "finalized",
-        "refunded"
-      ]
+      "values": ["open", "claimed", "challenged", "finalized", "refunded"]
     },
     "public.relay_job_status": {
       "name": "relay_job_status",
       "schema": "public",
-      "values": [
-        "queued",
-        "waiting_attestation",
-        "submitted",
-        "confirmed",
-        "failed"
-      ]
+      "values": ["queued", "waiting_attestation", "submitted", "confirmed", "failed"]
     }
   },
   "schemas": {},
