@@ -1,31 +1,30 @@
 import { cn } from "../ui/cn";
 
 /**
- * The Xebra mark: a zebra flank.
+ * The Xebra mark: a crossing.
  *
- * Four stripes, no two the same width, tapering as they curve over the shoulder — a zebra's
- * stripes are individual, which is the whole reason the animal is a good name for a bridge
- * that fingerprints each transfer. Drawn as round-capped strokes that stay inside the frame
- * rather than clipped to it, so the component needs no `<clipPath>` and can therefore be
- * rendered more than once on a page without colliding ids.
+ * Four stripes of a zebra crossing seen from the kerb, narrowing as they run away from you: a
+ * safe way across, which is what the bridge is for. The same drawing as `public/icon.svg`, here
+ * in `currentColor` inside a quiet frame so it sits on any surface. Plain paths, no ids, so it
+ * can appear more than once on a page.
  */
 export function XebraMark({ className }: { className?: string }) {
   return (
-    <svg viewBox="0 0 32 32" fill="none" aria-hidden="true" className={cn("h-8 w-8", className)}>
+    <svg viewBox="0 0 64 64" fill="none" aria-hidden="true" className={cn("h-8 w-8", className)}>
       <rect
-        x="0.6"
-        y="0.6"
-        width="30.8"
-        height="30.8"
-        rx="9.6"
+        x="1.2"
+        y="1.2"
+        width="61.6"
+        height="61.6"
+        rx="14"
         className="fill-bone/[0.06] stroke-bone/25"
-        strokeWidth="1.2"
+        strokeWidth="2.4"
       />
-      <g stroke="currentColor" strokeLinecap="round" fill="none">
-        <path d="M6.6 25.2c2.4-6 2.6-11.4 1.2-17.6" strokeWidth="2.4" opacity="0.55" />
-        <path d="M12.6 26.6c2.6-6.8 2.7-13.6 1.1-20.4" strokeWidth="3.4" />
-        <path d="M19.2 26c2.5-6.5 2.6-12.9 1.2-19.6" strokeWidth="2.1" opacity="0.85" />
-        <path d="M25 24.3c1.8-5.2 1.9-10.1 1.1-14.6" strokeWidth="1.3" opacity="0.5" />
+      <g fill="currentColor">
+        <path d="M9 53H16.88L23.14 17H18.52Z" />
+        <path d="M21.71 53H29.59L30.58 17H25.97Z" />
+        <path d="M34.41 53H42.29L38.03 17H33.42Z" />
+        <path d="M47.12 53H55L45.48 17H40.86Z" />
       </g>
     </svg>
   );
