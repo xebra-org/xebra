@@ -1,1 +1,11 @@
 blank_issues_enabled: true
+contact_links:
+  - name: Report a security vulnerability
+    url: https://github.com/xebra-org/xebra/security/advisories/new
+    about: Anything that could put funds at risk. Please don't open a public issue.
+  - name: Transfer hasn't arrived
+    url: https://xebra.exchange/claim
+    about: Anyone can claim a transfer Circle has attested. Try this before opening an issue.
+  - name: Docs, API and SDK reference
+    url: https://docs.xebra.exchange
+    about: Guides, the API reference and an explanation of every error code.

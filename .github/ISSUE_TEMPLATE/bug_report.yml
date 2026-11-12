@@ -1,0 +1,59 @@
+name: Bug report
+description: Something in Xebra doesn't work the way it should
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        **Could this put funds at risk, leave a transfer stuck, or get past a contract's auth checks?** Stop here and report it privately through [SECURITY.md](https://github.com/xebra-org/xebra/blob/main/SECURITY.md) instead.
+  - type: dropdown
+    id: component
+    attributes:
+      label: Component
+      options:
+        - Web app (xebra.exchange)
+        - Claim page
+        - API (api.xebra.exchange/v1)
+        - SDK (@xebra/sdk)
+        - MCP server
+        - Docs (docs.xebra.exchange)
+        - Stellar wrapper contract
+        - EVM wrapper contract
+        - Admin panel
+        - Other
+    validations:
+      required: true
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: What you expected
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Go to …
+        2. Enter …
+        3. See …
+    validations:
+      required: true
+  - type: input
+    id: tx
+    attributes:
+      label: Transaction or burn hash
+      description: If this involves a real transfer, the source chain and its hash.
+      placeholder: "stellar: 3f2a…"
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: Browser and wallet, or SDK version and runtime.
+      placeholder: "Chrome 142, Freighter 5.3 / @xebra/sdk 0.1.0 on Node 22"
