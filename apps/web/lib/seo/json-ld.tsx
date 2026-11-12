@@ -1,4 +1,12 @@
-import { LOGO_PATH, SITE_DESCRIPTION, SITE_NAME, SITE_URL, SOURCE_URL, absoluteUrl } from "../site";
+import {
+  LOGO_PATH,
+  SITE_DESCRIPTION,
+  SITE_NAME,
+  SITE_URL,
+  SOURCE_URL,
+  X_URL,
+  absoluteUrl,
+} from "../site";
 import type { Doc } from "./docs";
 import type { Faq } from "./faq";
 
@@ -29,7 +37,7 @@ export function organizationLd() {
     name: SITE_NAME,
     url: SITE_URL,
     logo: absoluteUrl(LOGO_PATH),
-    sameAs: [SOURCE_URL],
+    sameAs: [X_URL, SOURCE_URL],
   };
 }
 

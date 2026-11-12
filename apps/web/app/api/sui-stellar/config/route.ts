@@ -1,5 +1,10 @@
 import { formatUsdcAmount } from "@xebra/sdk/core";
-import { maxUsdcBase, relayerSecret, suiStellarEnabled } from "../../../../lib/sui-stellar/config";
+import {
+  maxUsdcBase,
+  relayerSecret,
+  suiEvmDestinations,
+  suiStellarEnabled,
+} from "../../../../lib/sui-stellar/config";
 
 /**
  * What the bridge screen needs to know before it offers Sui as a source. Always answers 200, so a
@@ -16,6 +21,8 @@ export function GET(): Response {
           enabled,
           relayer: relayerSecret() !== null,
           maxUsdc: cap === null ? null : formatUsdcAmount(cap),
+          // EVM chains Sui also sends to, delivered by Circle's Forwarding Service.
+          evm: suiEvmDestinations().map((c) => c.id),
         }
       : { enabled },
     { headers: { "cache-control": "no-store" } },

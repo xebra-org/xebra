@@ -1,4 +1,5 @@
 import { CCTP_DOMAIN, evmChainForDomain, isArcToSolana, isEvmRoute } from "@xebra/network-config";
+import { SUI_CCTP_DOMAIN, suiSendsToDomain, suiStellarEnabled } from "../sui-stellar/config";
 
 /**
  * Which burns the server will ask Circle about, and how each chain writes a transaction hash.
@@ -11,7 +12,7 @@ import { CCTP_DOMAIN, evmChainForDomain, isArcToSolana, isEvmRoute } from "@xebr
  * rate budget, and are not a general-purpose lookup for every chain Circle supports.
  */
 
-export type SourceKind = "stellar" | "evm";
+export type SourceKind = "stellar" | "evm" | "sui";
 
 export interface Source {
   domain: number;
@@ -20,6 +21,8 @@ export interface Source {
 
 const STELLAR_HASH = /^[0-9a-f]{64}$/;
 const EVM_HASH = /^0x[0-9a-f]{64}$/;
+/** A Sui transaction digest: base58, so case matters and it is never lower-cased. */
+const SUI_DIGEST = /^[1-9A-HJ-NP-Za-km-z]{32,64}$/;
 const DOMAIN = /^\d{1,4}$/;
 
 /**
@@ -31,6 +34,8 @@ export function readSource(raw: string | null, stellarDomain: number): Source | 
   if (!DOMAIN.test(raw)) return null;
   const domain = Number(raw);
   if (domain === stellarDomain) return { domain, kind: "stellar" };
+  // Sui is a source only while its page is switched on.
+  if (domain === SUI_CCTP_DOMAIN) return suiStellarEnabled() ? { domain, kind: "sui" } : null;
   return evmChainForDomain(domain) ? { domain, kind: "evm" } : null;
 }
 
@@ -40,15 +45,21 @@ export function readSource(raw: string | null, stellarDomain: number): Source | 
  * a hash pasted against the wrong source should be told so, not looked up and reported "pending".
  */
 export function normaliseTxHash(kind: SourceKind, raw: string | null | undefined): string | null {
+  if (kind === "sui") {
+    const digest = raw?.trim();
+    return digest && SUI_DIGEST.test(digest) ? digest : null;
+  }
   const tx = raw?.trim().toLowerCase();
   if (!tx) return null;
   return (kind === "evm" ? EVM_HASH : STELLAR_HASH).test(tx) ? tx : null;
 }
 
 export const txHashHint = (kind: SourceKind) =>
-  kind === "evm"
-    ? "tx must be 0x followed by 64 hex characters"
-    : "tx must be a 64-character hex string";
+  kind === "sui"
+    ? "tx must be a Sui transaction digest"
+    : kind === "evm"
+      ? "tx must be 0x followed by 64 hex characters"
+      : "tx must be a 64-character hex string";
 
 /** A CCTP domain from a query parameter, or null. */
 export function readDomain(raw: string | null): number | null {
@@ -72,5 +83,7 @@ export function isOfferedRoute(
   if (source === stellarDomain) {
     return destination === CCTP_DOMAIN.solana || evmChainForDomain(destination) !== null;
   }
+  // Sui to the EVM chains its switch names, delivered by Circle's Forwarding Service.
+  if (source === SUI_CCTP_DOMAIN) return suiSendsToDomain(destination);
   return isEvmRoute(source, destination) || isArcToSolana(source, destination);
 }

@@ -12,7 +12,10 @@ export const SITE_NAME = "Xebra";
 export const SITE_TAGLINE = "native USDC between chains";
 export const SITE_DESCRIPTION =
   "Move native USDC between Stellar, Solana, Arc and EVM chains over Circle's CCTP. Circle burns it on one chain and mints it on the other: no wrapped token, no pool, and nobody holds your funds.";
-export const SOURCE_URL = "https://github.com/drydocs/xebra";
+export const SOURCE_URL = "https://github.com/xebra-org/xebra";
+/** Xebra on X. The handle is also what link previews name as the site's account. */
+export const X_HANDLE = "@xebra_exchange";
+export const X_URL = "https://x.com/xebra_exchange";
 export const LOGO_PATH = "/icon-512.png";
 /**
  * When the written pages last changed, for the sitemap and structured data. A date, not the build
@@ -69,6 +72,12 @@ export function pageMetadata({
       locale: "en_US",
       images,
     },
-    twitter: { card: "summary_large_image", title: fullTitle, description, images: [image] },
+    twitter: {
+      card: "summary_large_image",
+      site: X_HANDLE,
+      title: fullTitle,
+      description,
+      images: [image],
+    },
   };
 }

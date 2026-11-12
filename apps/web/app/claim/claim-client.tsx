@@ -81,15 +81,20 @@ type Attestation =
 
 const STELLAR_HASH = /^[0-9a-f]{64}$/;
 const EVM_HASH = /^0x[0-9a-f]{64}$/;
+/** A Sui transaction digest: base58, so it is never lower-cased. */
+const SUI_DIGEST = /^[1-9A-HJ-NP-Za-km-z]{32,64}$/;
 /** Solana's CCTP domain. The one destination claimed with a Solana wallet instead of an EVM one. */
 const SOLANA_DOMAIN = 5;
 
 /** Where the burn was made: "stellar", or an EVM chain's CCTP domain as a string. */
 type Source = string;
 const STELLAR: Source = "stellar";
+/** Sui's CCTP domain. A Sui burn to an EVM chain is claimed there like any EVM-bound one. */
+const SUI: Source = "8";
 
 const SOURCES: Array<{ value: Source; label: string }> = [
   { value: STELLAR, label: "Stellar" },
+  { value: SUI, label: "Sui" },
   ...Object.values(EVM_CHAINS).map((c) => ({ value: String(c.cctpDomainId), label: c.name })),
 ];
 
@@ -121,8 +126,14 @@ export function ClaimClient() {
   // Arriving from the receipt carries the hash, so the common path is one click rather than a
   // copy-paste of 64 characters.
   useEffect(() => {
-    const fromLink = params.get("tx")?.trim().toLowerCase();
+    const raw = params.get("tx")?.trim();
+    const fromLink = raw?.toLowerCase();
     const src = params.get("src");
+    if (src === SUI) {
+      setSource(SUI);
+      if (raw && SUI_DIGEST.test(raw)) setTxHash(raw);
+      return;
+    }
     const chain = src !== null && /^\d+$/.test(src) ? evmChainForDomain(Number(src)) : null;
     if (chain) {
       setSource(String(chain.cctpDomainId));
@@ -144,9 +155,14 @@ export function ClaimClient() {
   }, [provider]);
 
   async function lookUp() {
-    const hash = txHash.trim().toLowerCase();
+    const onSui = source === SUI;
+    const hash = onSui ? txHash.trim() : txHash.trim().toLowerCase();
     const onStellar = source === STELLAR;
-    if (!(onStellar ? STELLAR_HASH : EVM_HASH).test(hash)) {
+    if (onSui && !SUI_DIGEST.test(hash)) {
+      setError("That is not a Sui transaction digest. Copy it from your wallet or a Sui explorer.");
+      return;
+    }
+    if (!onSui && !(onStellar ? STELLAR_HASH : EVM_HASH).test(hash)) {
       setError(
         onStellar
           ? EVM_HASH.test(hash)
@@ -270,7 +286,13 @@ export function ClaimClient() {
             spellCheck={false}
             value={txHash}
             onChange={(e) => setTxHash(e.target.value)}
-            placeholder={source === STELLAR ? "64 hex characters" : "0x and 64 hex characters"}
+            placeholder={
+              source === STELLAR
+                ? "64 hex characters"
+                : source === SUI
+                  ? "Sui transaction digest"
+                  : "0x and 64 hex characters"
+            }
             className="tabular min-w-0 flex-1 rounded-tray bg-obsidian-sunken px-3 py-2.5 font-mono text-xs text-bone/80 ring-1 ring-inset ring-bone/10 transition-colors duration-200 placeholder:font-sans placeholder:text-bone/25 focus:outline-none focus:ring-bone/30"
           />
           <button
