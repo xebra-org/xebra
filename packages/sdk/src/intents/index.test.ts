@@ -5,6 +5,7 @@ import {
   INTENTS_CHAINS,
   type IntentsToken,
   createIntentsRouter,
+  intentsAccountFor,
   toIntentsChain,
   toXebraChain,
   usdcChainOf,
@@ -234,5 +235,21 @@ describe("buildDeposit", () => {
       }),
     ).rejects.toThrow("does not move USDC from stellar to arbitrum");
     expect(client.createTransfer).not.toHaveBeenCalled();
+  });
+});
+
+describe("intentsAccountFor", () => {
+  it("names a Stellar wallet's Intents account by its public key in hex", () => {
+    // The SEP-53 test account; the hex is its base32-decoded key, checked outside this library.
+    expect(intentsAccountFor("GBXFXNDLV4LSWA4VB7YIL5GBD7BVNR22SGBTDKMO2SBZZHDXSKZYCP7L")).toBe(
+      "6e5bb46baf172b03950ff085f4c11fc356c75a918331a98ed4839c9c7792b381",
+    );
+  });
+
+  it("refuses anything that is not a Stellar account address", () => {
+    expect(() =>
+      intentsAccountFor("CCPVTWII2TW6VVSVA4JQ2KFHICGBG4QVAHPIGUPSIW3E4VNPUI4Y2WQR"),
+    ).toThrow();
+    expect(() => intentsAccountFor("alice.near")).toThrow();
   });
 });

@@ -22,6 +22,7 @@
  * Nothing here holds a key or signs: the user's own wallet signs what `buildDeposit` returns.
  */
 
+import { StrKey } from "@stellar/stellar-base";
 import type { TransferBuild } from "../api/schemas.js";
 import type { XebraClient } from "../client/index.js";
 import { EVM_CHAINS, type EvmChainId, isEvmChainId } from "../core/chains/evm.js";
@@ -60,6 +61,25 @@ export function toXebraChain(name: string): ChainId | null {
 /** NEAR Intents' name for a Xebra chain, or null if Intents does not list it. */
 export function toIntentsChain(chain: ChainId): IntentsChain | null {
   return XEBRA_TO_INTENTS.get(chain) ?? null;
+}
+
+/**
+ * The NEAR Intents account a Stellar wallet already owns.
+ *
+ * Intents accepts intents signed with Stellar's signed-message standard (SEP-53), and names the
+ * signer's account after its ed25519 public key in hex, NEAR's implicit-account rule
+ * (`PublicKey::to_implicit_account_id` in near/intents). So every Stellar address has an Intents
+ * account without creating anything, and a refund sent there is the user's to withdraw by signing
+ * with the same wallet.
+ */
+export function intentsAccountFor(stellarAddress: string): string {
+  if (!StrKey.isValidEd25519PublicKey(stellarAddress)) {
+    throw new Error(`Not a Stellar account address: ${stellarAddress}`);
+  }
+  // No Buffer: this runs in browsers too.
+  return Array.from(StrKey.decodeEd25519PublicKey(stellarAddress), (b) =>
+    b.toString(16).padStart(2, "0"),
+  ).join("");
 }
 
 /** Circle's USDC on Solana (the mint). */
