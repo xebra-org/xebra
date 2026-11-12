@@ -103,6 +103,22 @@ async function post<T>(path: string, body: unknown): Promise<T> {
   return json;
 }
 
+function withTimeout<T>(p: Promise<T>, ms: number, message: string): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const t = setTimeout(() => reject(new Error(message)), ms);
+    p.then(
+      (v) => {
+        clearTimeout(t);
+        resolve(v);
+      },
+      (e) => {
+        clearTimeout(t);
+        reject(e);
+      },
+    );
+  });
+}
+
 const minutes = (s: number | undefined) =>
   s === undefined ? "-" : s < 90 ? `about ${Math.round(s)} s` : `about ${Math.round(s / 60)} min`;
 
@@ -159,39 +175,64 @@ export function NearIntentsClient() {
     return () => clearTimeout(t);
   }, [amount, recipient, destination, sender]);
 
+  // Each press gets a number. Cancelling bumps it, so a wallet or network answer that arrives
+  // after the person gave up is ignored instead of yanking the page into a transfer they left.
+  const attempt = useRef(0);
+
+  const cancel = useCallback(() => {
+    attempt.current += 1;
+    setStep("idle");
+    setSendError("Cancelled. Nothing was sent: no transaction reached Stellar.");
+  }, []);
+
   const send = useCallback(async () => {
     if (!kit || !sender || !destination) return;
+    const mine = ++attempt.current;
+    const live = () => mine === attempt.current;
     setSendError(null);
     try {
       setStep("preparing");
-      const prepared = await post<{
-        hub: string;
-        depositAddress: string;
-        intents: { amountOutFormatted: string };
-        build: { steps: { tx: { kind: string; xdr?: string; networkPassphrase?: string } }[] };
-      }>("/api/near-intents/prepare", {
-        amount: amount.trim(),
-        sender,
-        destinationAsset: destination.assetId,
-        recipient: recipient.trim(),
-      });
+      console.info("[xebra] near-intents: asking NEAR Intents for a deposit address");
+      const prepared = await withTimeout(
+        post<{
+          hub: string;
+          depositAddress: string;
+          intents: { amountOutFormatted: string };
+          build: { steps: { tx: { kind: string; xdr?: string; networkPassphrase?: string } }[] };
+        }>("/api/near-intents/prepare", {
+          amount: amount.trim(),
+          sender,
+          destinationAsset: destination.assetId,
+          recipient: recipient.trim(),
+        }),
+        60_000,
+        "NEAR Intents took too long to issue a deposit address. Nothing was sent; try again.",
+      );
+      if (!live()) return;
       const tx = prepared.build.steps[0]?.tx;
       if (prepared.build.steps.length !== 1 || tx?.kind !== "stellar" || !tx.xdr) {
         throw new Error("Expected a single Stellar transaction to sign.");
       }
+      console.info("[xebra] near-intents: deposit address", prepared.depositAddress);
+
       setStep("signing");
       const passphrase = tx.networkPassphrase ?? env.stellarNetworkPassphrase;
       const { signedTxXdr } = await kit.signTransaction(tx.xdr, {
         networkPassphrase: passphrase,
         address: sender,
       });
+      if (!live()) return;
+      console.info("[xebra] near-intents: signed, submitting to Stellar");
+
       setStep("submitting");
       const server = new rpc.Server(env.sorobanRpcUrl);
-      const { txHash } = await submitSigned(
-        server,
-        TransactionBuilder.fromXDR(signedTxXdr, passphrase),
-        "transfer",
+      const { txHash } = await withTimeout(
+        submitSigned(server, TransactionBuilder.fromXDR(signedTxXdr, passphrase), "transfer"),
+        45_000,
+        "Stellar's network did not answer within 45 seconds. Check your wallet's activity before trying again: if the transaction shows there, it went through.",
       );
+      if (!live()) return;
+      console.info("[xebra] near-intents: submitted", txHash);
       const t: Tracked = {
         depositAddress: prepared.depositAddress,
         tx: txHash,
@@ -202,9 +243,9 @@ export function NearIntentsClient() {
       remember(t);
       setTracked(t);
     } catch (e) {
-      setSendError(reportError("The transfer", e));
+      if (live()) setSendError(reportError("The transfer", e));
     } finally {
-      setStep("idle");
+      if (live()) setStep("idle");
     }
   }, [kit, sender, destination, amount, recipient]);
 
@@ -306,8 +347,20 @@ export function NearIntentsClient() {
                         : "Send through Xebra"}
                 </Button>
               )}
+              {step === "signing" && (
+                <div className="flex items-center justify-between gap-4 text-xs leading-relaxed text-bone/45">
+                  <span>No window? Open your wallet extension: the request waits there.</span>
+                  <button
+                    type="button"
+                    onClick={cancel}
+                    className="shrink-0 text-bone/70 underline-offset-4 hover:text-bone hover:underline"
+                  >
+                    Cancel
+                  </button>
+                </div>
+              )}
               {sendError && (
-                <Notice tone="alarm" title="Nothing was sent">
+                <Notice tone="alarm" title="The transfer stopped">
                   {sendError}
                 </Notice>
               )}
