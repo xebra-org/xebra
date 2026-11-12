@@ -69,6 +69,11 @@ jobs:
 
       - run: pnpm exec turbo run test --filter='!./contracts/*'
 
+      # The docs site: the build compiles every SDK sample (Twoslash) and generates the API
+      # reference from packages/sdk/openapi.json; the link check fails on any broken page or anchor.
+      - run: pnpm --filter docs build
+      - run: pnpm --filter docs check:links
+
   soroban:
     name: soroban contracts
     runs-on: ubuntu-latest
