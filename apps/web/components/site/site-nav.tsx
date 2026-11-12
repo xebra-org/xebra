@@ -10,6 +10,7 @@ export const SITE_NAV = [
   { href: "/fees", label: "Fees" },
   { href: "/security", label: "Security" },
   { href: "/faq", label: "FAQ" },
+  { href: "https://docs.xebra.exchange", label: "Docs" },
 ] as const;
 
 /**
