@@ -1,0 +1,122 @@
+---
+title: Sui to Stellar
+description: Burn USDC on Sui and mint it to a Stellar account, finishing the mint with a claim.
+---
+
+Sui to Stellar is two transactions on two chains. The user's Sui wallet burns USDC through Circle's
+CCTP. Once Circle has attested the burn, a Stellar transaction mints it to the recipient. Through the
+API you submit that second transaction yourself, with any Stellar account paying the network fee.
+
+The route is Standard speed only, and it appears in [`GET /v1/routes`](/docs/api/routes/list-routes)
+only while it is switched on.
+
+<Callout title="Fees on this route (2026-11-12)">
+  On 2026-11-12 a Sui to Stellar quote shows every fee as zero: Circle charges nothing for Standard, and
+  Xebra has no fee contract on Sui yet. That will change. Always show the `fees` from
+  [the quote](/docs/api/quotes/get-quote), never an assumption. A quote's `maximum`, when it is not null,
+  is the most one transfer may carry.
+</Callout>
+
+## What you need
+
+- The sender's Sui address: `0x` and 64 hex characters. It must hold enough USDC, and SUI for gas.
+- The recipient's Stellar account (`G...`). It must already exist and have a USDC trustline. If not,
+  the API refuses with [`invalid_recipient`](/docs/errors/invalid_recipient) before anything is signed.
+- A Sui wallet that implements the Wallet Standard's `sui:signAndExecuteTransaction`.
+- A Stellar account to pay for the mint: the recipient, the sender's own Stellar account, or yours. It
+  needs a little XLM. It does not need to be the recipient; the mint always pays the recipient the burn
+  names.
+
+## The flow
+
+<Steps>
+<Step>
+
+### Build the burn
+
+Call `createTransfer` with `from: "sui"`, `to: "stellar"`. The answer has one step, `id: "burn"`, with
+`tx.kind: "sui"`. `tx.json` is the transaction in the Sui TypeScript SDK's JSON form, with the coins
+already chosen (merged and split as needed). The burn names the recipient; nothing later can change it.
+
+</Step>
+<Step>
+
+### Sign and execute on Sui
+
+Hand `tx.json` to the wallet's `sui:signAndExecuteTransaction`. The wallet returns the transaction
+digest. That digest is the transfer's identifier from now on.
+
+</Step>
+<Step>
+
+### Wait for Circle
+
+Poll `getTransfer("sui", digest)`, or call `waitForDelivery`. The state is `pending` until Circle has
+attested the burn. It then becomes `needs_claim`: the USDC is ready to mint on Stellar.
+
+</Step>
+<Step>
+
+### Mint on Stellar
+
+Call `createClaim` with `chain: "sui"`, the digest as `tx`, and the paying Stellar account as `payer`.
+It returns one step, `id: "claim"`, `tx.kind: "stellar"`, whose source is the payer. Sign it in the
+payer's wallet and submit it to Soroban RPC. When it lands the state is `delivered`.
+
+</Step>
+</Steps>
+
+## In code
+
+```ts twoslash
+import { createXebraClient } from "@xebra/sdk";
+
+// Your Sui wallet (Wallet Standard): sign and execute, return the digest.
+declare function signAndExecuteSui(transactionJson: string): Promise<string>;
+// Your Stellar wallet and RPC: sign, submit, wait for the ledger, return the hash.
+declare function signAndSubmitStellar(xdr: string, networkPassphrase: string): Promise<string>;
+
+const xebra = createXebraClient();
+
+const { quote, steps } = await xebra.createTransfer({
+  from: "sui",
+  to: "stellar",
+  amount: "25",
+  sender: "0xSuiSender...", // 0x and 64 hex characters
+  recipient: "GRECIPIENT...", // a Stellar account with a USDC trustline
+});
+console.log(`${quote.recipientGets} USDC will arrive`);
+
+const burn = steps[0];
+if (!burn || burn.tx.kind !== "sui") throw new Error("expected one Sui step");
+const digest = await signAndExecuteSui(burn.tx.json);
+
+const status = await xebra.waitForDelivery("sui", digest);
+if (status.state === "needs_claim") {
+  const claim = await xebra.createClaim({ chain: "sui", tx: digest, payer: "GPAYER..." });
+  for (const step of claim.steps) {
+    if (step.tx.kind !== "stellar") throw new Error("expected a Stellar step");
+    await signAndSubmitStellar(step.tx.xdr, step.tx.networkPassphrase);
+  }
+}
+```
+
+## When the claim is refused
+
+- [`not_ready`](/docs/errors/not_ready): Circle has not attested the burn yet. Ask again in a few minutes.
+- [`already_delivered`](/docs/errors/already_delivered): the USDC has already been minted. Nothing to do.
+- [`invalid_request`](/docs/errors/invalid_request): the payer is not a Stellar account, or does not
+  exist yet. Fund it with XLM first.
+- [`transaction_rejected`](/docs/errors/transaction_rejected): Circle's record of the burn is not a
+  transfer this route can mint (for example, it is not a USDC burn to Stellar). The problem's `detail`
+  says why.
+
+A `failed` state on a Sui transfer means the same thing: Circle's record was read and refused. `reason`
+carries the explanation, and `claimUrl` is always null on Sui; finish Sui transfers with
+[`POST /v1/claims`](/docs/api/claims/create-claim).
+
+<Callout title="On xebra.exchange the mint is automatic">
+  The Xebra web app finishes the Stellar mint for its own users. Transfers started through the API are
+  not finished for you: submit the claim as above. The burn is safe while it waits: whoever submits the
+  mint, it can only pay the recipient the burn names.
+</Callout>

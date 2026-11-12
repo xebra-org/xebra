@@ -1,0 +1,35 @@
+---
+title: fee_above_limit
+description: "422 Fee above your limit."
+---
+
+HTTP **422**. `type`: `https://docs.xebra.exchange/errors/fee_above_limit`
+
+## What it means
+
+Fees rose above the `maxTotalFee` you sent, between your quote and the build.
+
+## What to do
+
+Quote again, show the new total to the user, and build with the new limit if they accept it.
+
+## Extra fields
+
+- `total`: The fees now.
+- `limit`: The `maxTotalFee` you sent.
+
+## Example
+
+```json
+{
+  "type": "https://docs.xebra.exchange/errors/fee_above_limit",
+  "title": "Fee above your limit",
+  "status": 422,
+  "detail": "…",
+  "code": "fee_above_limit",
+  "total": "…",
+  "limit": "…"
+}
+```
+
+Every error has this shape. See [Errors](/docs/errors) for how to handle them.

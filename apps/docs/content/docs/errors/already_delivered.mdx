@@ -1,0 +1,28 @@
+---
+title: already_delivered
+description: "409 Already delivered."
+---
+
+HTTP **409**. `type`: `https://docs.xebra.exchange/errors/already_delivered`
+
+## What it means
+
+A claim was asked for a transfer whose USDC has already been minted on the destination.
+
+## What to do
+
+Nothing to do: the recipient has the funds. Look up the mint with [`GET /v1/transfers/{chain}/{tx}`](/docs/api/transfers/get-transfer); its `deliveryTx` is the mint.
+
+## Example
+
+```json
+{
+  "type": "https://docs.xebra.exchange/errors/already_delivered",
+  "title": "Already delivered",
+  "status": 409,
+  "detail": "…",
+  "code": "already_delivered"
+}
+```
+
+Every error has this shape. See [Errors](/docs/errors) for how to handle them.

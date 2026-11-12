@@ -1,0 +1,14 @@
+{
+  "title": "Guides",
+  "pages": [
+    "index",
+    "send-from-stellar",
+    "send-from-evm",
+    "sui-to-stellar",
+    "track-a-transfer",
+    "claim-a-stuck-transfer",
+    "wallet-integration",
+    "webhooks",
+    "integrator-fees"
+  ]
+}

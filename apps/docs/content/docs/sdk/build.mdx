@@ -1,0 +1,153 @@
+---
+title: Build
+description: Build unsigned transfer transactions yourself with @xebra/sdk/build, against your own RPC.
+---
+
+`@xebra/sdk/build` holds the builders the API itself uses. Use it when you would rather not depend
+on the Xebra API to build transactions: for example to build against your own Soroban, EVM or Sui
+node.
+
+<Callout type="warn" title="You take on what the API checks">
+  The API reads balances, allowances, the wrapper contract's settings and Circle's live fees before
+  it builds, and refuses a transfer that would fail. When you build yourself, those reads and checks
+  are yours. A burn with a wrong recipient or a wrong domain cannot be undone. If you only want a
+  different RPC for signing, use the [client](/docs/sdk/client) and keep building on the API.
+</Callout>
+
+Each builder returns `TransferStep` objects, the same shape [`createTransfer`](/docs/sdk/client#createtransferr)
+returns. Nothing here signs or sends.
+
+```ts twoslash
+import { buildEvmBridge, buildStellarBridge, buildSuiBurn } from "@xebra/sdk/build";
+```
+
+## From Stellar
+
+`buildStellarBridge` builds a call to Xebra's wrapper contract on Stellar, `bridge()`, and simulates
+it. It is one transaction and one signature: the user's authorization covers both Xebra's fee and
+Circle's burn. If the contract would refuse, simulation fails and it throws
+`StellarSimulationError` before anyone is asked to sign. Any other failure, such as the RPC being
+unreachable, is passed through as it came.
+
+```ts twoslash
+import { buildStellarBridge } from "@xebra/sdk/build";
+declare const recipientBytes32: Uint8Array;
+const Networks = { PUBLIC: "Public Global Stellar Network ; September 2015" };
+const rpc = { Server: class {} as unknown as new (url: string) => Parameters<typeof buildStellarBridge>[0] };
+// ---cut---
+// import { rpc, Networks } from "@stellar/stellar-sdk";
+const server = new rpc.Server("https://your-soroban-rpc.example");
+
+const step = await buildStellarBridge(
+  server,
+  {
+    wrapperContractId: "C...", // Xebra's wrapper; see Security for the current address
+    networkPassphrase: Networks.PUBLIC,
+  },
+  {
+    user: "G...", // the sender, who signs
+    amount: 250_000_000n, // stroops: 25 USDC
+    destinationDomain: 6, // Circle's CCTP domain for the destination
+    mintRecipient: recipientBytes32, // the recipient, as 32 bytes
+    maxFee: 3_500_000n, // stroops Circle may keep to deliver
+    maxWrapperFee: 3_000_000n, // stroops: the most Xebra may take, from your quote
+    minFinalityThreshold: 2000, // Standard, the only speed Stellar has
+    recipientNeedsAccount: false,
+    recipientOwner: null,
+    ttlSeconds: 600, // the contract refuses more than one hour
+  },
+);
+```
+
+Amounts here are Stellar stroops (7 decimals), not the 6-decimal units the API uses. Convert with
+[`parseUsdc`](/docs/sdk/core#amounts).
+
+`server` needs only `getAccount`, `getLatestLedger` and `prepareTransaction`; an `rpc.Server` from
+`@stellar/stellar-sdk` has all three. The signed transaction stays submittable for about two
+minutes (its time bounds); `step.expiresAt` says exactly when.
+
+What you supply that the API would otherwise work out:
+
+- `destinationDomain`: the destination's CCTP domain, from `EVM_CHAINS[id].cctpDomainId` or 5 for
+  Solana. The wrapper only sends to domains it has committed; read them with its `get_domains`.
+- `mintRecipient`: an EVM address left-padded to 32 bytes, or for Solana the recipient's USDC
+  token account. Check it first with [`checkAddressOn` or `checkSolanaAddress`](/docs/sdk/core#addresses),
+  whose result carries `bytes`.
+- `maxFee`: what Circle keeps to deliver. Circle keeps all of it, so it is not a ceiling to pad.
+  `chooseMaxFee` in `/core` picks it from Circle's forward-fee quote and the contract's caps.
+- `maxWrapperFee`: Xebra's fee as you showed it. The contract refuses to take more.
+- `recipientNeedsAccount` and `recipientOwner`: Solana only, when the recipient has no USDC
+  account yet and Circle should open it. Must match how the fee was priced.
+
+## From an EVM chain
+
+`buildEvmBridge` is pure: you read the allowance and choose the deadline, and it returns an
+`approve` step when the allowance is short, then the `burn`.
+
+```ts twoslash
+import { buildEvmBridge } from "@xebra/sdk/build";
+import { EVM_CHAINS } from "@xebra/sdk/core";
+declare const allowance: bigint;
+// ---cut---
+const steps = buildEvmBridge({
+  from: "0xSender...",
+  source: EVM_CHAINS.base,
+  destination: EVM_CHAINS.arc,
+  recipient: "0xRecipient...", // an EVM address on the destination
+  amount: 50_000_000n, // 6-decimal units: 50 USDC
+  maxFee: 20_000n, // what Circle may keep
+  finality: 2000, // 2000 Standard, 1000 Fast
+  via: null, // null: call Circle's TokenMessenger directly
+  allowance, // the sender's current USDC allowance to the burn target
+  deadline: 0n, // only used through a wrapper
+});
+```
+
+- `via: null` calls Circle's `TokenMessenger` directly. With `via: { address, maxWrapperFee }`, the
+  burn goes through Xebra's wrapper at that address, which takes its fee and enforces `deadline`
+  (unix seconds). The wrappers in use are in `XEBRA_WRAPPERS` in `/core`.
+- The approval is for exactly `amount`, to the wrapper or to Circle, never unlimited.
+- Read the allowance from the chain just before building. If the user approves elsewhere in
+  between, you may ask for an approval they do not need.
+- On a direct route nothing on chain bounds `maxFee`, and Circle keeps all of it. Use
+  [`planEvmFee`](/docs/sdk/core#fees) to choose it, which also refuses fees above a tenth of the
+  amount.
+
+For Solana as the destination, `recipient` is `{ kind: "solana", tokenAccount, createAccountFor? }`:
+the recipient's USDC token account as 32-byte hex, never the wallet address. Circle mints into the
+account named, and a wallet address there strands the transfer.
+
+Lower-level pieces are exported too: `evmApproveCall`, `evmBurnCall` and `evmBurnTarget`.
+
+## From Sui to Stellar
+
+`buildSuiBurn` builds Circle's CCTP V2 burn on Sui for a Stellar recipient. It reads the sender's
+USDC coins from your Sui node, merges them if no single coin covers the amount, and resolves the
+transaction against the node, so the wallet gets a complete transaction.
+
+```ts twoslash
+import { buildSuiBurn } from "@xebra/sdk/build";
+declare const client: Parameters<typeof buildSuiBurn>[0]; // a SuiGrpcClient from @mysten/sui/grpc
+// ---cut---
+const step = await buildSuiBurn(client, {
+  sender: "0x...", // the Sui address that signs: 0x and 64 hex characters
+  amount: 25_000_000n, // 6-decimal units: 25 USDC
+  stellarRecipient: "G...", // a Stellar account or contract
+});
+// step.tx.kind === "sui"; step.tx.json is the serialized transaction for the wallet
+```
+
+If the sender does not hold enough USDC it throws `InsufficientUsdcError`, with `have` and `need`
+in 6-decimal units. `buildBurn` returns the same transaction without the step around it.
+
+The burn names Circle's `CctpForwarder` on Stellar as recipient and destination caller, with a hook
+that carries the Stellar recipient. See [Sui to Stellar](/docs/guides/sui-to-stellar) for how
+delivery and claims work on this route.
+
+## Types
+
+`TransferStep` and `UnsignedTx` are exported from `/build` as well as from the package root:
+
+```ts twoslash
+import type { TransferStep, UnsignedTx } from "@xebra/sdk/build";
+```

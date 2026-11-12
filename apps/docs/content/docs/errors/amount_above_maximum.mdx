@@ -1,0 +1,33 @@
+---
+title: amount_above_maximum
+description: "422 Amount above the maximum."
+---
+
+HTTP **422**. `type`: `https://docs.xebra.exchange/errors/amount_above_maximum`
+
+## What it means
+
+The amount is above what this route takes in one transfer.
+
+## What to do
+
+Send at most `maximum`, or split the amount into several transfers.
+
+## Extra fields
+
+- `maximum`: The largest amount this route takes in one transfer.
+
+## Example
+
+```json
+{
+  "type": "https://docs.xebra.exchange/errors/amount_above_maximum",
+  "title": "Amount above the maximum",
+  "status": 422,
+  "detail": "…",
+  "code": "amount_above_maximum",
+  "maximum": "…"
+}
+```
+
+Every error has this shape. See [Errors](/docs/errors) for how to handle them.

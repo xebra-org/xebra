@@ -1,0 +1,162 @@
+---
+title: Wallet integration
+description: How to hand each kind of unsigned transaction to Stellar, EVM, Sui and Solana wallets.
+---
+
+Every step the API returns carries a `tx` with a `kind`. Xebra never signs or sends: your user's
+wallet does. This page shows how to pass each kind to the wallets Xebra's own app uses. The code here
+uses each wallet's library, not `@xebra/sdk`, so it is illustrative rather than compiled.
+
+| `tx.kind` | Fields | Signed by |
+|---|---|---|
+| `stellar` | `xdr`, `networkPassphrase` | A Stellar wallet; then submitted to Soroban RPC |
+| `evm` | `chainId`, `to`, `data`, `value` (always `"0"`) | An EIP-1193 wallet, which also submits it |
+| `sui` | `json` | A Sui wallet, which also executes it |
+| `solana` | `transaction` (base64) | A Solana wallet; then sent to Solana RPC. Claims only |
+
+Ask for signatures in the order of `steps`, and wait for each to land before the next.
+
+## Stellar
+
+`tx.xdr` is a complete, prepared transaction envelope whose source is the signer. The wallet signs the
+envelope; you submit it.
+
+<Tabs items={["Freighter", "LOBSTR", "Stellar Wallets Kit"]}>
+<Tab value="Freighter">
+
+```ts
+import { signTransaction } from "@stellar/freighter-api";
+
+const { signedTxXdr, error } = await signTransaction(step.tx.xdr, {
+  networkPassphrase: step.tx.networkPassphrase,
+  address: sender, // the G... address the transfer was built for
+});
+if (error) throw new Error(error.message);
+```
+
+</Tab>
+<Tab value="LOBSTR">
+
+LOBSTR's browser extension, through `@lobstrco/signer-extension-api`. LOBSTR's phone app is not
+reachable this way.
+
+```ts
+import { isConnected, signTransaction } from "@lobstrco/signer-extension-api";
+
+if (!(await isConnected())) throw new Error("Install or unlock the LOBSTR extension.");
+const signedTxXdr = await signTransaction(step.tx.xdr);
+```
+
+</Tab>
+<Tab value="Stellar Wallets Kit">
+
+xebra.exchange signs through `@creit.tech/stellar-wallets-kit`, which wraps both of the above.
+
+```ts
+kit.setWallet("freighter"); // or "lobstr"
+const { signedTxXdr } = await kit.signTransaction(step.tx.xdr, {
+  networkPassphrase: step.tx.networkPassphrase,
+});
+```
+
+</Tab>
+</Tabs>
+
+Then submit with `@stellar/stellar-sdk` and wait for the ledger:
+
+```ts
+import { TransactionBuilder, rpc } from "@stellar/stellar-sdk";
+
+const server = new rpc.Server("https://your-soroban-rpc.example");
+const signed = TransactionBuilder.fromXDR(signedTxXdr, step.tx.networkPassphrase);
+const sent = await server.sendTransaction(signed);
+if (sent.status === "TRY_AGAIN_LATER") throw new Error("Not queued; nothing moved. Try again.");
+if (sent.status === "ERROR") throw new Error("Rejected; nothing moved.");
+
+// PENDING or DUPLICATE: poll until it is in a ledger.
+let result = await server.getTransaction(sent.hash);
+while (result.status === "NOT_FOUND") {
+  await new Promise((r) => setTimeout(r, 2000));
+  result = await server.getTransaction(sent.hash);
+}
+if (result.status !== "SUCCESS") throw new Error(`Failed in ledger: ${sent.hash}`);
+const burnHash = sent.hash; // track with chain "stellar"
+```
+
+## EVM (EIP-1193)
+
+Put the wallet on `tx.chainId` first, adding the network if the wallet has never seen it. The chain's
+details are in `EVM_CHAINS` from `@xebra/sdk/core`.
+
+```ts
+import { EVM_CHAINS } from "@xebra/sdk/core";
+
+const chain = Object.values(EVM_CHAINS).find((c) => c.chainId === step.tx.chainId)!;
+const chainIdHex = `0x${chain.chainId.toString(16)}`;
+
+try {
+  await provider.request({ method: "wallet_switchEthereumChain", params: [{ chainId: chainIdHex }] });
+} catch (err) {
+  if ((err as { code?: number }).code !== 4902) throw err; // 4902: the wallet does not know it
+  await provider.request({
+    method: "wallet_addEthereumChain",
+    params: [{
+      chainId: chainIdHex,
+      chainName: chain.name,
+      nativeCurrency: chain.nativeCurrency,
+      rpcUrls: [chain.rpcUrl],
+      blockExplorerUrls: [chain.explorerUrl],
+    }],
+  });
+}
+
+const hash = await provider.request({
+  method: "eth_sendTransaction",
+  params: [{ from: sender, to: step.tx.to, data: step.tx.data, value: "0x0", chainId: chainIdHex }],
+});
+// Wait for the receipt (eth_getTransactionReceipt) before the next step.
+```
+
+With viem, the same call is `walletClient.sendTransaction({ account, chain, to: step.tx.to, data: step.tx.data, value: 0n })`.
+Gas, nonce and fee settings are the wallet's to choose.
+
+## Sui (Wallet Standard)
+
+`tx.json` is a transaction in the Sui TypeScript SDK's JSON form. Hand it to the wallet's
+`sui:signAndExecuteTransaction` feature; the wallet signs, executes and returns the digest.
+
+```ts
+import { getWallets } from "@wallet-standard/app";
+
+const wallet = getWallets().get().find((w) => "sui:signAndExecuteTransaction" in w.features)!;
+const { accounts } = await wallet.features["standard:connect"].connect();
+const account = accounts.find((a) => a.chains.includes("sui:mainnet"))!;
+
+const { digest } = await wallet.features["sui:signAndExecuteTransaction"].signAndExecuteTransaction({
+  transaction: { toJSON: async () => step.tx.json },
+  account,
+  chain: "sui:mainnet",
+});
+// track with chain "sui" and tx = digest
+```
+
+With `@mysten/dapp-kit`, pass `Transaction.from(step.tx.json)` (from `@mysten/sui/transactions`) to
+`signAndExecuteTransaction`.
+
+## Solana (claims)
+
+Solana appears only in claims. `tx.transaction` is a legacy transaction serialized without signatures,
+in base64, with the payer as fee payer.
+
+```ts
+import { Connection, Transaction } from "@solana/web3.js";
+
+const connection = new Connection("https://your-solana-rpc.example", "confirmed");
+const tx = Transaction.from(Buffer.from(step.tx.transaction, "base64"));
+const signed = await wallet.signTransaction(tx); // Phantom, Solflare, or any wallet adapter
+const signature = await connection.sendRawTransaction(signed.serialize());
+await connection.confirmTransaction(signature, "confirmed");
+```
+
+See [Claim a stuck transfer](/docs/guides/claim-a-stuck-transfer) for why to rebuild the claim after an
+`open_account` step.

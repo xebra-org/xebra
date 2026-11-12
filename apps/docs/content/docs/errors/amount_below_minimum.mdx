@@ -1,0 +1,33 @@
+---
+title: amount_below_minimum
+description: "422 Amount below the minimum."
+---
+
+HTTP **422**. `type`: `https://docs.xebra.exchange/errors/amount_below_minimum`
+
+## What it means
+
+The amount is too small for this route: below the bridge contract's minimum, or so small that fees would take more than a tenth of it.
+
+## What to do
+
+Send at least `minimum`. Minimums move with Circle's fees, so read the current one from [`GET /v1/quote`](/docs/api/quotes/get-quote).
+
+## Extra fields
+
+- `minimum`: The smallest amount this route takes right now.
+
+## Example
+
+```json
+{
+  "type": "https://docs.xebra.exchange/errors/amount_below_minimum",
+  "title": "Amount below the minimum",
+  "status": 422,
+  "detail": "…",
+  "code": "amount_below_minimum",
+  "minimum": "…"
+}
+```
+
+Every error has this shape. See [Errors](/docs/errors) for how to handle them.

@@ -1,0 +1,89 @@
+---
+title: API
+description: Base URL, authentication, errors, limits and versioning for the Xebra API.
+---
+
+The Xebra API is JSON over HTTPS. It prices transfers, builds unsigned transactions and reports how
+a transfer is getting on. It never signs, never sends and never holds funds.
+
+```text
+https://api.xebra.exchange/v1
+```
+
+| Endpoint | Does |
+|---|---|
+| [`GET /v1/routes`](/docs/api/routes/list-routes) | Which chains reach which, right now |
+| [`GET /v1/quote`](/docs/api/quotes/get-quote) | What a transfer costs and what arrives |
+| [`POST /v1/transfers`](/docs/api/transfers/create-transfer) | The unsigned transactions for a transfer |
+| [`GET /v1/transfers/{chain}/{tx}`](/docs/api/transfers/get-transfer) | Where a transfer is |
+| [`POST /v1/claims`](/docs/api/claims/create-claim) | The unsigned mint for a delivery that did not complete |
+| [`GET /v1/health`](/docs/api/system/get-health) | Liveness |
+
+The full description is OpenAPI 3.1, at
+[`https://api.xebra.exchange/v1/openapi.json`](https://api.xebra.exchange/v1/openapi.json) and in
+the SDK as `@xebra/sdk/openapi.json`. The reference pages on this site are generated from it.
+
+<Callout type="warn" title="Requests go to mainnet">
+  Every route is on mainnet, with real USDC. Building a transfer never sends it: nothing moves
+  until a wallet signs the steps and someone submits them.
+</Callout>
+
+## Amounts
+
+Amounts are decimal strings of USDC with at most six places: `"25"`, `"12.5"`, `"0.000001"`.
+They are never JSON numbers, so nothing is lost to floating point. Fees and other amounts in
+answers use the same form.
+
+## Chains
+
+Chains are named by lowercase ids: `stellar`, `solana`, `sui`, and the EVM chains such as `base`,
+`arbitrum` and `arc`. [`GET /v1/routes`](/docs/api/routes/list-routes) lists the pairs that are
+live, and the [routes page](/docs/concepts/routes) shows them.
+
+## Authentication
+
+None today. Every endpoint answers without a key.
+
+The SDK already accepts an `apiKey` and sends it as `Authorization: Bearer <key>`, so code written
+now keeps working when keys arrive. Keys will raise your limits and let you receive webhooks. A
+request without a key will keep working, at lower limits.
+
+## Errors
+
+Every failure is an [RFC 9457](https://www.rfc-editor.org/rfc/rfc9457) problem with a stable
+`code` and a `detail` written for a person. See [Errors](/docs/errors) for the shape and every code.
+
+## Limits
+
+There are no published per-client limits yet. Please be gentle:
+
+- Cache `GET /v1/routes`. It is served with `s-maxage=30`, so asking more often gains nothing.
+- Poll a transfer's status every few seconds, not in a tight loop. The SDK's `waitForDelivery`
+  asks every 5 seconds.
+- A `503 upstream_unavailable` carries `Retry-After: 10`. Wait that long before asking again.
+
+When limits arrive, a client that goes over them gets `429` with
+[`rate_limited`](/docs/errors/rate_limited) and a `Retry-After` header.
+
+## Quotes expire
+
+A quote carries `expiresAt`, a minute after it was made: fees move. Build within that minute, and
+pass the total you showed the user as `maxTotalFee`. If fees rose above it, the build is refused
+with [`fee_above_limit`](/docs/errors/fee_above_limit) instead of charging more than the user agreed to.
+
+## CORS
+
+Every endpoint answers any origin (`Access-Control-Allow-Origin: *`), so a browser app can call the
+API directly. There is no secret to leak: nothing in a request can move funds.
+
+## Versioning
+
+The version is in the path. Within `/v1`:
+
+- New endpoints, new optional request fields and new response fields can appear at any time.
+  Clients must ignore fields they do not know.
+- New chain ids and new error codes can appear. Treat an unknown `code` by its HTTP status.
+- Nothing is removed or renamed, and no field changes type.
+
+A change that breaks any of these ships as `/v2`, with `/v1` kept running alongside it. Changes are
+listed in the [changelog](/docs/changelog).

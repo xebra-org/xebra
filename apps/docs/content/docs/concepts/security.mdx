@@ -1,0 +1,99 @@
+---
+title: Security
+description: What Xebra's contracts can and cannot do with USDC, how they are governed, their addresses and audit status, and how to report a problem.
+---
+
+## Never custodial
+
+The API and the SDK build **unsigned** transactions. Your user's wallet signs them. No endpoint
+takes a private key, and none returns a transaction Xebra has signed on the user's behalf. Xebra
+holds no keys that can move a user's USDC.
+
+What each path does with the funds while a transfer is made:
+
+- **Out of Stellar**, the user is the caller of Circle's burn, and their USDC goes from their wallet
+  to Circle inside the one transaction they sign. Xebra's contract takes only its own fee in that
+  same transaction, and never holds the principal.
+- **Out of Arc through Xebra's contract**, Circle's EVM contract burns from whoever calls it, so the
+  principal passes through Xebra's contract for the length of that one transaction. The contract
+  fails the transaction unless it burned exactly what it should and holds nothing beyond its own
+  fees. (As of 2026-11-12 the API builds transfers out of EVM chains directly against Circle's
+  contract instead; see [Fees](/docs/concepts/fees).)
+- **Out of other EVM chains and directly from Arc**, the user's wallet calls Circle's contract. No
+  Xebra contract is involved. The only guards are the API's and SDK's own checks on the token,
+  domain, recipient and fee, against a chain table pinned in the code.
+- **Sui to Stellar** involves no Xebra contract. Xebra's relayer account pays the Stellar fee to
+  finish the mint; the recipient comes from the burn itself, so the relayer cannot change it.
+
+Every transfer can be finished by anyone once Circle has attested it, so no transfer depends on
+Xebra being online. See [Recovery](/docs/concepts/recovery).
+
+## Limits and governance
+
+The same rules hold on Xebra's contract on Stellar and its contract on Arc:
+
+- **Per-transfer limits.** Each transfer through a Xebra contract is capped (100 USDC as of
+  2026-11-12) while the contracts have had no external audit.
+- **Fee ceilings in code.** Xebra's percentage fee can never exceed 1%. Circle's delivery fee can
+  never exceed 2 USDC, a per-destination cap set under the timelock, or a tenth of the transfer.
+- **Instant pause.** A pauser can stop new transfers at once. Only the admin can unpause.
+- **Instant tightening.** The admin or the pauser can switch a destination off or lower a cap at
+  once. Neither can raise anything this way.
+- **48-hour timelock on everything that loosens.** Raising a fee or a limit, adding a destination,
+  or changing a key is proposed on chain and takes effect only after 48 hours. The pauser can cancel
+  any pending change during that time.
+- **No upgrades.** The contracts have no upgrade function. The USDC and Circle contracts they call
+  are fixed at deployment.
+- **The user signs the limits.** Every transfer request carries the most Xebra may charge on it.
+  A fee change landing in the same moment still cannot overcharge a request already signed.
+
+## Contracts
+
+Xebra's contracts, as recorded in the repository's `deployments/mainnet.json`:
+
+| Contract | Chain | Address |
+|---|---|---|
+| Xebra fee contract v2 (live) | Stellar | [`CCPVTWII2TW6VVSVA4JQ2KFHICGBG4QVAHPIGUPSIW3E4VNPUI4Y2WQR`](https://stellar.expert/explorer/public/contract/CCPVTWII2TW6VVSVA4JQ2KFHICGBG4QVAHPIGUPSIW3E4VNPUI4Y2WQR) |
+| Xebra fee contract | Arc | [`0x11b30470DAE40B2Fc27b7AA90dc58e6B4fE9f4c3`](https://explorer.arc.io/address/0x11b30470DAE40B2Fc27b7AA90dc58e6B4fE9f4c3) |
+| Xebra fee contract v1 (retired, no longer used) | Stellar | [`CCNWLGFMILJU476RZHDA2PSUH2WH3LIPERHS6BYPCRVDDYYNNUIKZMTJ`](https://stellar.expert/explorer/public/contract/CCNWLGFMILJU476RZHDA2PSUH2WH3LIPERHS6BYPCRVDDYYNNUIKZMTJ) |
+
+Their roles on Stellar (v2):
+
+| Role | Account |
+|---|---|
+| Admin | [`GBTVJ6JACFRBNI6BETAY4CWYWYNJHX43TGNEAVC3YQCSPPPY4R7H5TBN`](https://stellar.expert/explorer/public/account/GBTVJ6JACFRBNI6BETAY4CWYWYNJHX43TGNEAVC3YQCSPPPY4R7H5TBN) |
+| Pauser | [`GBZWUXOTGHAAWMFNG262QPRIJJ77XI44VHZ4GAO4XYGPL43TDKAQVF42`](https://stellar.expert/explorer/public/account/GBZWUXOTGHAAWMFNG262QPRIJJ77XI44VHZ4GAO4XYGPL43TDKAQVF42) |
+| Fee recipient | [`GCTKQAVT2YZBOJTZI2BZQG3O7NCZLS5D5UBCV7NHTR4Y2XG5OBC3BDQ5`](https://stellar.expert/explorer/public/account/GCTKQAVT2YZBOJTZI2BZQG3O7NCZLS5D5UBCV7NHTR4Y2XG5OBC3BDQ5) |
+
+And on Arc:
+
+| Role | Address |
+|---|---|
+| Admin | [`0xcc34f27c65dC4b8dDDA5D76a38750aB06aC7eAd9`](https://explorer.arc.io/address/0xcc34f27c65dC4b8dDDA5D76a38750aB06aC7eAd9) |
+| Pauser | [`0xc9504Cb8b56db0C1398B2aabCaABFc817189DF33`](https://explorer.arc.io/address/0xc9504Cb8b56db0C1398B2aabCaABFc817189DF33) |
+| Fee recipient | [`0x32e95718A4D9B60F2e4Fb1d371189ac5DD28211A`](https://explorer.arc.io/address/0x32e95718A4D9B60F2e4Fb1d371189ac5DD28211A) |
+
+Circle's contracts that transfers call:
+
+| Contract | Chain | Address |
+|---|---|---|
+| `TokenMessenger` | Stellar | [`CAE2G5Z77UP7GYPYGFOWFGW7C7J6I4YP2AFGSADRKQY62SYUFLPNFTXL`](https://stellar.expert/explorer/public/contract/CAE2G5Z77UP7GYPYGFOWFGW7C7J6I4YP2AFGSADRKQY62SYUFLPNFTXL) |
+| USDC | Stellar | [`CCW67TSZV3SSS2HXMBQ5JFGCKJNXKZM7UQUWUZPUTHXSTZLEO7SJMI75`](https://stellar.expert/explorer/public/contract/CCW67TSZV3SSS2HXMBQ5JFGCKJNXKZM7UQUWUZPUTHXSTZLEO7SJMI75) |
+| `CctpForwarder` | Stellar | [`CBZL2IH7F6BIDAA3WBNXYKIXSATJGMSW7K5P5MJ6STX5RXN47TZJDF5T`](https://stellar.expert/explorer/public/contract/CBZL2IH7F6BIDAA3WBNXYKIXSATJGMSW7K5P5MJ6STX5RXN47TZJDF5T) |
+| `TokenMessengerV2` | Every EVM chain listed | `0x28b5a0e9C621a5BadaA536219b3a228C8168cf5d` |
+| `MessageTransmitterV2` | Every EVM chain listed | `0x81D40F21F12A8F0E3252Bccb954D722d4c464B64` |
+
+The USDC address on each EVM chain is in `EVM_CHAINS` in `@xebra/sdk/core`. See [Core](/docs/sdk/core).
+
+## Audits
+
+The contracts have **not had an external audit** (as of 2026-11-12). They are tested with unit,
+property and fork tests, and with real transfers on testnet and mainnet. Per-transfer limits stay low
+until an audit is done. The source is public:
+[github.com/xebra-org/xebra](https://github.com/xebra-org/xebra).
+
+## Reporting a problem
+
+Do not open a public issue for anything that could put funds at risk. Use GitHub's private
+vulnerability reporting on [the repository](https://github.com/xebra-org/xebra/security), as
+described in its `SECURITY.md`.

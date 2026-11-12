@@ -1,0 +1,17 @@
+{
+  "title": "Xebra Docs",
+  "pages": [
+    "---Start---",
+    "index",
+    "quickstart",
+    "---Learn---",
+    "concepts",
+    "guides",
+    "---Reference---",
+    "sdk",
+    "api",
+    "errors",
+    "mcp",
+    "changelog"
+  ]
+}

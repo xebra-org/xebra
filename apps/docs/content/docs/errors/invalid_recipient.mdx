@@ -1,0 +1,28 @@
+---
+title: invalid_recipient
+description: "422 Invalid recipient."
+---
+
+HTTP **422**. `type`: `https://docs.xebra.exchange/errors/invalid_recipient`
+
+## What it means
+
+The recipient cannot receive USDC on the destination: the address is malformed for that chain, or, on Stellar, the account does not exist yet or has no USDC trustline.
+
+## What to do
+
+Read `detail`, which says which. A Stellar recipient needs an existing account and a USDC trustline before anything is sent to it.
+
+## Example
+
+```json
+{
+  "type": "https://docs.xebra.exchange/errors/invalid_recipient",
+  "title": "Invalid recipient",
+  "status": 422,
+  "detail": "…",
+  "code": "invalid_recipient"
+}
+```
+
+Every error has this shape. See [Errors](/docs/errors) for how to handle them.

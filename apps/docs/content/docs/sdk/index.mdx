@@ -1,0 +1,73 @@
+---
+title: SDK
+description: Install @xebra/sdk and pick the entry point you need, the API client, the pure core, or the transaction builders.
+---
+
+`@xebra/sdk` is the TypeScript SDK for Xebra. It prices transfers, builds unsigned transactions and
+follows them to delivery. It never needs or accepts a private key: your user's wallet signs.
+
+```sh
+npm install @xebra/sdk
+```
+
+It is ESM only and needs Node 20 or later, or any runtime with a global `fetch` (browsers, Deno,
+Bun, edge workers). It is licensed Apache-2.0.
+
+## Entry points
+
+| Import | What it is | Touches the network |
+|---|---|---|
+| `@xebra/sdk` | The API client, the wire schemas and their types, error codes | Yes, the Xebra API |
+| `@xebra/sdk/core` | Pure helpers: chains, amounts, fee arithmetic, address checks, deep links | No |
+| `@xebra/sdk/build` | Build the unsigned transactions yourself, against your own RPC | Yes, your RPC |
+| `@xebra/sdk/openapi` | The OpenAPI 3.1 document, as an object | No |
+
+The same document is also shipped as a file, `@xebra/sdk/openapi.json`.
+
+## Which one to use
+
+**Most integrations need only the client.** It calls `https://api.xebra.exchange/v1`, which reads
+the chains, prices the transfer against Circle's live fees and returns the transactions in signing
+order. See [Client](/docs/sdk/client).
+
+```ts twoslash
+import { createXebraClient } from "@xebra/sdk";
+
+const xebra = createXebraClient();
+const { routes } = await xebra.routes();
+```
+
+**Use `/core`** to check input before you call anything: is this a valid recipient on Base, is this a
+valid amount, what is Base's chain id. It runs the same in a browser, a server and a test. See
+[Core](/docs/sdk/core).
+
+**Use `/build`** when you do not want to depend on the Xebra API to build transactions, for example
+to build against your own Soroban or EVM node. You then read balances, allowances and Circle's fees
+yourself. See [Build](/docs/sdk/build).
+
+## Amounts
+
+Every amount the client sends or receives is a decimal string of USDC with at most six places:
+`"25"`, `"12.5"`, `"0.000001"`. Never a JSON number, which would lose precision. `/core` has helpers
+to convert between these strings and integer base units; see [Amounts](/docs/sdk/core#amounts).
+
+## In a browser
+
+The client (`@xebra/sdk`) runs anywhere `fetch` does. The Stellar helpers in `/core` and the
+builders in `/build` use `@stellar/stellar-sdk`, which needs a global `Buffer`. Node has one. In a
+browser bundle, provide it as you would for `@stellar/stellar-sdk`, for example:
+
+```ts
+import { Buffer } from "buffer";
+globalThis.Buffer = Buffer;
+```
+
+## Types
+
+Every request and response has a type, inferred from the same zod schemas that validate requests
+on the server and generate the OpenAPI document. So the SDK's types, the API's checks and the
+[API reference](/docs/api) cannot disagree.
+
+```ts twoslash
+import type { Quote, TransferBuild, TransferStatus, ChainId } from "@xebra/sdk";
+```

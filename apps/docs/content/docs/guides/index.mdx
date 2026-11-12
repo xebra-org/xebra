@@ -1,0 +1,34 @@
+---
+title: Guides
+description: Step-by-step walkthroughs for sending, tracking and finishing transfers.
+---
+
+Each guide follows one transfer from the first API call to USDC arriving. They assume you have read the
+[quickstart](/docs/quickstart). Which routes are open right now is on [Routes](/docs/concepts/routes).
+
+<Cards>
+  <Card title="Send from Stellar" href="/docs/guides/send-from-stellar">
+    One signature in a Stellar wallet. Circle delivers on the destination.
+  </Card>
+  <Card title="Send from an EVM chain" href="/docs/guides/send-from-evm">
+    An approval when needed, then the burn, signed through any EIP-1193 wallet.
+  </Card>
+  <Card title="Sui to Stellar" href="/docs/guides/sui-to-stellar">
+    A burn on Sui, then a mint on Stellar that you finish yourself.
+  </Card>
+  <Card title="Track a transfer" href="/docs/guides/track-a-transfer">
+    Follow a burn to delivery with one call, or poll until it settles.
+  </Card>
+  <Card title="Claim a stuck transfer" href="/docs/guides/claim-a-stuck-transfer">
+    Finish a delivery that did not complete on its own.
+  </Card>
+  <Card title="Wallet integration" href="/docs/guides/wallet-integration">
+    How to hand each kind of unsigned transaction to Freighter, LOBSTR, EVM and Sui wallets.
+  </Card>
+  <Card title="Webhooks" href="/docs/guides/webhooks">
+    Coming. Until then, poll.
+  </Card>
+  <Card title="Integrator fees" href="/docs/guides/integrator-fees">
+    Coming. Earn a share of the transfers you send.
+  </Card>
+</Cards>

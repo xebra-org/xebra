@@ -1,0 +1,87 @@
+@import "tailwindcss";
+@import "fumadocs-ui/css/neutral.css";
+@import "fumadocs-ui/css/preset.css";
+@import "fumadocs-openapi/css/preset.css";
+@import "fumadocs-twoslash/twoslash.css";
+
+/*
+ * Xebra's palette on Fumadocs: obsidian and bone, as on xebra.exchange (apps/web/app/globals.css).
+ * Signal green and alarm coral mean state only (success, error); nothing decorative uses them.
+ * Hairlines are bone at low opacity, never a grey of their own.
+ */
+@theme {
+  --font-sans: var(--font-geist), ui-sans-serif, system-ui, sans-serif;
+  --font-mono: var(--font-geist-mono), ui-monospace, monospace;
+  --ease-out-quint: cubic-bezier(0.22, 1, 0.36, 1);
+
+  --color-fd-background: hsl(40 22% 96%);
+  --color-fd-foreground: hsl(228 16% 6%);
+  --color-fd-muted: hsl(40 16% 92%);
+  --color-fd-muted-foreground: hsl(228 8% 36%);
+  --color-fd-popover: hsl(40 24% 98%);
+  --color-fd-popover-foreground: hsl(228 16% 6%);
+  --color-fd-card: hsl(40 24% 98%);
+  --color-fd-card-foreground: hsl(228 16% 6%);
+  --color-fd-border: hsl(228 16% 4% / 0.09);
+  --color-fd-primary: hsl(228 16% 6%);
+  --color-fd-primary-foreground: hsl(40 22% 96%);
+  --color-fd-secondary: hsl(40 16% 92%);
+  --color-fd-secondary-foreground: hsl(228 16% 6%);
+  --color-fd-accent: hsl(228 16% 4% / 0.05);
+  --color-fd-accent-foreground: hsl(228 16% 6%);
+  --color-fd-ring: hsl(228 16% 4% / 0.25);
+}
+
+.dark {
+  --color-fd-background: hsl(228 16% 4%);
+  --color-fd-foreground: hsl(40 22% 96%);
+  --color-fd-muted: hsl(228 14% 9%);
+  --color-fd-muted-foreground: hsl(40 8% 64%);
+  --color-fd-popover: hsl(228 14% 7%);
+  --color-fd-popover-foreground: hsl(40 22% 96%);
+  --color-fd-card: hsl(228 14% 7%);
+  --color-fd-card-foreground: hsl(40 22% 96%);
+  --color-fd-border: hsl(40 22% 96% / 0.08);
+  --color-fd-primary: hsl(40 22% 96%);
+  --color-fd-primary-foreground: hsl(228 16% 4%);
+  --color-fd-secondary: hsl(228 14% 9%);
+  --color-fd-secondary-foreground: hsl(40 22% 96%);
+  --color-fd-accent: hsl(40 22% 96% / 0.06);
+  --color-fd-accent-foreground: hsl(40 22% 96%);
+  --color-fd-ring: hsl(40 22% 96% / 0.3);
+}
+
+.dark #nd-sidebar {
+  --color-fd-muted: hsl(228 14% 9%);
+  --color-fd-secondary: hsl(228 14% 10%);
+  --color-fd-muted-foreground: hsl(40 8% 64%);
+}
+
+@theme static {
+  --color-fd-success: hsl(158 52% 60%);
+  --color-fd-error: hsl(10 68% 68%);
+  --color-fd-info: hsl(40 10% 62%);
+}
+
+html {
+  scrollbar-gutter: stable;
+  font-feature-settings: "ss01", "cv11";
+}
+
+html > body[data-scroll-locked] {
+  margin-right: 0px !important;
+  --removed-body-scroll-bar-size: 0px !important;
+}
+
+/* Reading rhythm: long technical pages at a comfortable measure and line height. */
+.prose {
+  line-height: 1.7;
+}
+
+::selection {
+  background: hsl(228 16% 4% / 0.12);
+}
+
+.dark ::selection {
+  background: hsl(40 22% 96% / 0.18);
+}

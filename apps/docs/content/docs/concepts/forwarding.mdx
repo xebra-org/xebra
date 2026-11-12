@@ -1,0 +1,71 @@
+---
+title: Forwarding
+description: Who submits the mint on the destination chain, who pays for it, and what happens when they do not.
+---
+
+A CCTP transfer is only finished when someone submits the mint on the destination chain and pays
+that chain's gas. Xebra holds no funded keys for this on the routes out of Stellar and out of EVM
+chains. Circle's Forwarding Service does it instead.
+
+## Out of Stellar and EVM chains: Circle's Forwarding Service
+
+Every burn Xebra builds out of Stellar or an EVM chain carries Circle's forwarding hook: the fixed
+32 bytes `cctp-forward`, right-padded. When Circle sees that hook on an attested message, its
+Forwarding Service submits the mint on the destination, pays the gas there, and takes its fee in USDC
+out of the minted amount.
+
+- The burn's `maxFee` is the most Circle may take. **Circle keeps the whole `maxFee`**, not a lower
+  figure it might have quoted, so `maxFee` is a price the recipient pays, not a ceiling. Xebra signs
+  Circle's own `high` forward-fee quote at 1.0x, the rule that has held on mainnet (recorded
+  2026-09-20 to 2026-09-24 in the project's mainnet tests).
+- Xebra bounds that fee before anyone signs: it must be above zero, at most a per-chain cap, and at
+  most a tenth of the amount. On Stellar the fee contract enforces the same bounds on chain; see
+  [Security](/docs/concepts/security).
+- The quote reports it as `fees.delivery`. See [Fees](/docs/concepts/fees).
+
+### New Solana recipients
+
+USDC on Solana sits in a token account owned by a wallet. If the recipient's wallet has no USDC
+account yet, Circle can open it during delivery, for a higher delivery fee that covers the account's
+rent. The recipient's wallet needs no SOL for this.
+
+That is why [`GET /v1/quote`](/docs/api/quotes/get-quote) takes an optional `recipient` for Solana:
+with it, the quote includes the cost of opening the account when one is needed. Without it, the
+quote assumes the account exists. [`POST /v1/transfers`](/docs/api/transfers/create-transfer)
+always looks the recipient up, because the transaction it builds depends on the answer.
+
+### When Circle does not deliver
+
+A forward can fail: the fee moved above what was signed, or the service is down. The burn is still
+attested, the funds are not lost, and the recipient is fixed in the message. The transfer's status
+becomes `needs_claim` or `failed`, and anyone can submit the mint by hand. See
+[Recovery](/docs/concepts/recovery).
+
+Before pricing, the API checks Circle's forward-fee quote for the route. If Circle reports the route
+as down, the API refuses to price or build a transfer (`upstream_unavailable`) rather than let
+someone burn USDC that nobody would deliver. If Circle can be read but looks unwell, the quote says
+so in `circleStatus: "degraded"`.
+
+## Into Stellar: Circle's CctpForwarder
+
+Circle's Forwarding Service does not mint on Stellar. Transfers into Stellar, which today come from
+Sui, use a different contract: Circle's `CctpForwarder` on Stellar
+(`CBZL2IH7F6BIDAA3WBNXYKIXSATJGMSW7K5P5MJ6STX5RXN47TZJDF5T`).
+
+- The Sui burn mints to the forwarder and names the real Stellar recipient in its hook data.
+- Once Circle has attested the burn, someone calls `mint_and_forward(message, attestation)` on the
+  forwarder. It mints the USDC and pays it to the recipient named in the hook.
+- Xebra runs a relayer account that makes that call and pays the Stellar fee (about 0.025 XLM per
+  transfer, as of 2026-11-08). If the relayer does not, anyone can, including the recipient, with
+  [`POST /v1/claims`](/docs/api/claims/create-claim).
+
+The recipient's Stellar account needs a USDC trustline before the mint can pay it.
+
+See [Sui to Stellar](/docs/guides/sui-to-stellar) for the whole flow.
+
+## Not reachable yet
+
+Some chains CCTP supports cannot be reached the way the routes above are, because Circle's Forwarding
+Service does not deliver to them. Sui as a destination is one (checked against Circle's API on
+2026-10-22). Xebra does not offer a route where nobody would deliver by default. The live list is
+always [`GET /v1/routes`](/docs/api/routes/list-routes); see [Routes](/docs/concepts/routes).

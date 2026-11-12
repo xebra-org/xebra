@@ -1,0 +1,36 @@
+---
+title: Changelog
+description: What changed in the Xebra API and SDK, newest first.
+---
+
+## 0.1.0 (2026-11-12)
+
+The first public release of the API and the SDK.
+
+**API**, at `https://api.xebra.exchange/v1`:
+
+- `GET /v1/routes`: every route Xebra sends on right now.
+- `GET /v1/quote`: what a transfer costs and what the recipient gets.
+- `POST /v1/transfers`: the unsigned transactions for a transfer, in signing order.
+- `GET /v1/transfers/{chain}/{tx}`: where a transfer is, by its burn.
+- `POST /v1/claims`: the unsigned mint for a delivery that did not complete on its own.
+- `GET /v1/health`: liveness.
+
+Errors are RFC 9457 problems with a stable `code`. The OpenAPI 3.1 document is published with the
+SDK.
+
+**SDK**, `@xebra/sdk` 0.1.0 on npm:
+
+- `@xebra/sdk`: the typed API client, wire schemas and error codes.
+- `@xebra/sdk/core`: chains, amounts, fee arithmetic, address checks and deep links.
+- `@xebra/sdk/build`: build unsigned transactions against your own RPC.
+- `@xebra/sdk/openapi`: the OpenAPI document.
+
+## Planned
+
+These are not released and have no dates yet:
+
+- **API keys and webhooks**: keys with higher rate limits, signed webhooks for transfer status, and
+  idempotency keys. See [Webhooks](/docs/guides/webhooks).
+- **Integrator fees**: a fee you set on the transfers you send, paid out on chain. See
+  [Integrator fees](/docs/guides/integrator-fees).

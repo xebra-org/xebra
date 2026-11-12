@@ -1,0 +1,62 @@
+---
+title: MCP server
+description: Connect an AI assistant to Xebra's read-only MCP server to list routes, price transfers and hand people a link to sign.
+---
+
+`https://xebra.exchange/mcp` is a remote [Model Context Protocol](https://modelcontextprotocol.io)
+server. An assistant connected to it can see which routes are live, price a transfer, check a
+transfer's status and give the person a link that opens the bridge already filled in.
+
+<Callout title="It cannot send funds">
+  No tool signs, holds a key or moves USDC. The person opens the link, checks the details and
+  approves in their own wallet.
+</Callout>
+
+It uses Streamable HTTP, is stateless, and needs no sign-in. Requests are `POST` only, with a body
+of at most 16 KB.
+
+## Connect
+
+Add `https://xebra.exchange/mcp` as a custom connector in Claude, or in ChatGPT's developer mode.
+No authentication is asked for.
+
+Some clients try OAuth discovery even when a server asks for none. If your client fails to connect,
+check whether it requires OAuth for remote servers.
+
+## Tools
+
+| Tool | Arguments | What it does |
+|---|---|---|
+| `list_routes` | none | Every source chain and the destinations it reaches right now, with the chain ids the other tools take |
+| `quote_transfer` | `from`, `to`, `amount` | The fee, what the recipient receives, and Circle's status |
+| `create_transfer_link` | `from`, `to`, `amount`, `recipient` (optional) | A `xebra.exchange` link that opens the bridge prefilled |
+| `get_transfer_status` | `tx`, `from` (optional, default `stellar`) | Circle's state for a burn; points a failed delivery at the claim page |
+
+All four are read-only. Amounts are decimal strings of USDC with at most six places, such as
+`"25.50"`. A recipient is checked against the destination chain's rules before it goes into a
+link.
+
+Prices come from the same code as the [API](/docs/api) and the xebra.exchange page, so what an
+assistant says matches what the page shows.
+
+## Try it
+
+```sh
+curl -s https://xebra.exchange/mcp \
+  -H 'content-type: application/json' \
+  -d '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"list_routes","arguments":{}}}'
+```
+
+```sh
+curl -s https://xebra.exchange/mcp \
+  -H 'content-type: application/json' \
+  -d '{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"quote_transfer","arguments":{"from":"stellar","to":"base","amount":"25"}}}'
+```
+
+## MCP or the API
+
+The MCP server is for assistants talking to a person who will sign on xebra.exchange. To build
+transactions for your own app's wallet, use the [API](/docs/api) or the [SDK](/docs/sdk): they
+return unsigned transactions; the MCP server returns links.
+
+Links are built the same way as [`buildDeepLink`](/docs/sdk/core#deep-links) in the SDK.

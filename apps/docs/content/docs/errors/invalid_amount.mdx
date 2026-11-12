@@ -1,0 +1,28 @@
+---
+title: invalid_amount
+description: "422 Invalid amount."
+---
+
+HTTP **422**. `type`: `https://docs.xebra.exchange/errors/invalid_amount`
+
+## What it means
+
+`amount` or `maxTotalFee` is not a valid USDC amount: not a decimal string, more than six decimal places, or zero.
+
+## What to do
+
+Send amounts as decimal strings such as `"25"` or `"12.5"`, never as JSON numbers.
+
+## Example
+
+```json
+{
+  "type": "https://docs.xebra.exchange/errors/invalid_amount",
+  "title": "Invalid amount",
+  "status": 422,
+  "detail": "…",
+  "code": "invalid_amount"
+}
+```
+
+Every error has this shape. See [Errors](/docs/errors) for how to handle them.

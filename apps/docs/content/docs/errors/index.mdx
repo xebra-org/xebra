@@ -1,0 +1,63 @@
+---
+title: Errors
+description: Every error code the API answers with, what it means and what to do.
+---
+
+Every failed request answers with an [RFC 9457](https://www.rfc-editor.org/rfc/rfc9457) problem,
+served as `application/problem+json`:
+
+```json
+{
+  "type": "https://docs.xebra.exchange/errors/amount_below_minimum",
+  "title": "Amount below the minimum",
+  "status": 422,
+  "detail": "Fees would take more than a tenth of this transfer. Send at least 2.4 USDC to Base.",
+  "code": "amount_below_minimum",
+  "minimum": "2.4"
+}
+```
+
+- `code` is stable. Branch on it, not on `title` or `detail`.
+- `detail` is a sentence written for a person. You can show it to your user as it is.
+- `type` is the page for that code, on this site.
+- Some codes add fields, such as `minimum`, `maximum`, `have`, `need`, `total` and `limit`.
+  Amounts are decimal strings of USDC, like everywhere else in the API.
+
+The SDK throws these as `XebraApiError`, with the extra fields on `err.extra`:
+
+```ts twoslash
+import { XebraApiError, createXebraClient } from "@xebra/sdk";
+
+const xebra = createXebraClient();
+try {
+  await xebra.quote({ from: "stellar", to: "base", amount: "0.5" });
+} catch (err) {
+  if (err instanceof XebraApiError && err.code === "amount_below_minimum") {
+    console.log(`Send at least ${String(err.extra.minimum)} USDC.`);
+  }
+}
+```
+
+The SDK adds three codes of its own, with `status` 0, for failures that never reached the API:
+`network_error`, `timeout` and `invalid_response`.
+
+## All codes
+
+| Code | Status | Title |
+|---|---|---|
+| [`invalid_request`](/docs/errors/invalid_request) | 400 | Invalid request |
+| [`unauthorized`](/docs/errors/unauthorized) | 401 | Unauthorized |
+| [`not_found`](/docs/errors/not_found) | 404 | Not found |
+| [`not_ready`](/docs/errors/not_ready) | 409 | Not ready |
+| [`already_delivered`](/docs/errors/already_delivered) | 409 | Already delivered |
+| [`invalid_amount`](/docs/errors/invalid_amount) | 422 | Invalid amount |
+| [`invalid_recipient`](/docs/errors/invalid_recipient) | 422 | Invalid recipient |
+| [`route_unavailable`](/docs/errors/route_unavailable) | 422 | Route unavailable |
+| [`amount_below_minimum`](/docs/errors/amount_below_minimum) | 422 | Amount below the minimum |
+| [`amount_above_maximum`](/docs/errors/amount_above_maximum) | 422 | Amount above the maximum |
+| [`insufficient_balance`](/docs/errors/insufficient_balance) | 422 | Insufficient balance |
+| [`fee_above_limit`](/docs/errors/fee_above_limit) | 422 | Fee above your limit |
+| [`transaction_rejected`](/docs/errors/transaction_rejected) | 422 | Transaction would be rejected |
+| [`rate_limited`](/docs/errors/rate_limited) | 429 | Rate limited |
+| [`internal_error`](/docs/errors/internal_error) | 500 | Internal error |
+| [`upstream_unavailable`](/docs/errors/upstream_unavailable) | 503 | Upstream unavailable |

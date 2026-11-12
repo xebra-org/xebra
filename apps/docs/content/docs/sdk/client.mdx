@@ -1,0 +1,356 @@
+---
+title: Client
+description: createXebraClient, its options and methods, errors, and waiting for delivery.
+---
+
+The client is a typed wrapper over the [HTTP API](/docs/api). Each method is one request, except
+`waitForDelivery`, which polls. Every response is checked against the SDK's schema before you get it.
+
+```ts twoslash
+import { createXebraClient } from "@xebra/sdk";
+
+const xebra = createXebraClient();
+```
+
+## Options
+
+```ts twoslash
+import { createXebraClient } from "@xebra/sdk";
+// ---cut---
+const xebra = createXebraClient({
+  baseUrl: "https://api.xebra.exchange",
+  timeoutMs: 15_000,
+});
+```
+
+<TypeTable
+  type={{
+    baseUrl: {
+      type: 'string',
+      description: 'Where the API answers.',
+      default: '"https://api.xebra.exchange"',
+    },
+    apiKey: {
+      type: 'string',
+      description:
+        'Sent as `Authorization: Bearer <apiKey>`. Optional. API keys are not issued yet; the API answers without one.',
+    },
+    fetch: {
+      type: 'typeof fetch',
+      description: 'A fetch to use instead of the global one, for tests or a custom agent.',
+      default: 'globalThis.fetch',
+    },
+    timeoutMs: {
+      type: 'number',
+      description: 'How long one request may take before it fails with code `timeout`.',
+      default: '15000',
+    },
+  }}
+/>
+
+## Methods
+
+| Method | Request | Returns |
+|---|---|---|
+| `routes()` | `GET /v1/routes` | `Routes` |
+| `quote(q)` | `GET /v1/quote` | `Quote` |
+| `createTransfer(r)` | `POST /v1/transfers` | `TransferBuild` |
+| `getTransfer(chain, tx, signal?)` | `GET /v1/transfers/{chain}/{tx}` | `TransferStatus` |
+| `waitForDelivery(chain, tx, opts?)` | polls `getTransfer` | `TransferStatus` |
+| `createClaim(r)` | `POST /v1/claims` | `ClaimBuild` |
+| `health()` | `GET /v1/health` | `Health` |
+
+### routes()
+
+Every route Xebra sends on right now, read from the contracts and the live configuration. If part
+of the list could not be read, `complete` is `false` and the list may be short; ask again shortly.
+
+```ts twoslash
+import { createXebraClient } from "@xebra/sdk";
+const xebra = createXebraClient();
+// ---cut---
+const { routes, complete } = await xebra.routes();
+const fromStellar = routes.filter((r) => r.from === "stellar").map((r) => r.to);
+```
+
+### quote(q)
+
+What a transfer costs and what the recipient gets. Read-only.
+
+```ts twoslash
+import { createXebraClient } from "@xebra/sdk";
+const xebra = createXebraClient();
+// ---cut---
+const quote = await xebra.quote({
+  from: "arc",
+  to: "solana",
+  amount: "100",
+  speed: "fast", // optional; "standard" when left out
+  recipient: "7xKX...", // pass it for Solana: opening a USDC account costs more
+});
+```
+
+For Solana, pass `recipient`. A wallet with no USDC account yet costs more to deliver to, and the
+quote includes that only if it knows the recipient.
+
+<TypeTable
+  type={{
+    from: { type: 'ChainId', description: 'The chain the transfer starts on.', required: true },
+    to: { type: 'ChainId', description: 'The chain it ends on.', required: true },
+    speed: {
+      type: '"standard" | "fast"',
+      description: 'Echoes the speed priced.',
+      required: true,
+    },
+    amount: { type: 'string', description: 'What the sender sends, in USDC.', required: true },
+    recipientGets: {
+      type: 'string',
+      description: 'What arrives: `amount` minus `fees.total`.',
+      required: true,
+    },
+    fees: {
+      type: '{ xebra, circle, delivery, total }',
+      description:
+        "What Xebra keeps, Circle's transfer fee (Fast only), what Circle is paid to deliver, and their sum. All strings of USDC.",
+      required: true,
+    },
+    minimum: {
+      type: 'string',
+      description: 'The smallest amount this route takes right now, with a margin for fees moving.',
+      required: true,
+    },
+    maximum: {
+      type: 'string | null',
+      description: 'The largest amount, or null when the route sets none.',
+      required: true,
+    },
+    circleStatus: {
+      type: '"ok" | "degraded" | null',
+      description: "Circle's own health, when it could be read.",
+      required: true,
+    },
+    expiresAt: {
+      type: 'string',
+      description: 'ISO 8601. Fees move; after this, ask again.',
+      required: true,
+    },
+  }}
+/>
+
+### createTransfer(r)
+
+The unsigned transactions for a transfer, in signing order, and the quote they were built at.
+
+```ts twoslash
+import { createXebraClient } from "@xebra/sdk";
+const xebra = createXebraClient();
+// ---cut---
+const { quote, steps } = await xebra.createTransfer({
+  from: "base",
+  to: "arc",
+  amount: "50",
+  sender: "0xSender...",
+  recipient: "0xRecipient...",
+  maxTotalFee: "0.10",
+});
+```
+
+`sender` is the address that signs and pays. `recipient` is who receives on the destination. Set
+`maxTotalFee` to the total you showed the user: if fees have risen above it, the request fails with
+[`fee_above_limit`](/docs/errors/fee_above_limit) instead of building a more expensive transfer.
+
+The API checks what it can before it builds: the recipient's format, the sender's USDC balance, and
+on Stellar a simulation of the contract call. A transfer that would fail is refused with a code,
+before anyone is asked to sign.
+
+Each step:
+
+<TypeTable
+  type={{
+    id: {
+      type: '"approve" | "burn" | "open_account" | "claim"',
+      description: 'What this signature does.',
+      required: true,
+    },
+    chain: { type: 'ChainId', description: 'The chain the transaction is for.', required: true },
+    description: {
+      type: 'string',
+      description: 'One sentence a person can read before signing.',
+      required: true,
+    },
+    tx: {
+      type: 'UnsignedTx',
+      description:
+        'The transaction, by `kind`: `stellar` (`xdr`, `networkPassphrase`), `evm` (`chainId`, `to`, `data`, `value: "0"`), `sui` (`json`), `solana` (`transaction`, base64, unsigned).',
+      required: true,
+    },
+    expiresAt: {
+      type: 'string | null',
+      description: 'When the transaction stops being valid (ISO 8601), or null when it does not expire.',
+      required: true,
+    },
+  }}
+/>
+
+Ask the wallet for each step in order, and wait for each to confirm before the next. An `approve`
+must be included on chain before the `burn` that spends it.
+
+```ts twoslash
+import type { TransferStep } from "@xebra/sdk/build";
+declare const steps: TransferStep[];
+declare function signAndSend(step: TransferStep): Promise<string>;
+// ---cut---
+let burnHash: string | undefined;
+for (const step of steps) {
+  const hash = await signAndSend(step); // your wallet code; wait for confirmation
+  if (step.id === "burn") burnHash = hash;
+}
+```
+
+### getTransfer(chain, tx)
+
+Where a transfer is, by the chain it started on and the burn's transaction hash (or Sui digest).
+For Stellar the hash is 64 hex characters without `0x`; for an EVM chain it is `0x` and 64 hex
+characters.
+
+```ts twoslash
+import { createXebraClient } from "@xebra/sdk";
+const xebra = createXebraClient();
+declare const burnHash: string;
+// ---cut---
+const status = await xebra.getTransfer("base", burnHash);
+```
+
+<TypeTable
+  type={{
+    state: {
+      type: '"pending" | "delivering" | "delivered" | "needs_claim" | "failed"',
+      description: 'See [Track a transfer](/docs/guides/track-a-transfer).',
+      required: true,
+    },
+    chain: { type: 'ChainId', description: 'The chain the burn was made on.', required: true },
+    tx: { type: 'string', description: "The burn's hash, as asked.", required: true },
+    deliveryTx: {
+      type: 'string | null',
+      description: 'The mint on the destination, once Circle has delivered it.',
+      required: true,
+    },
+    reason: {
+      type: 'string | null',
+      description: "Circle's own words when delivery did not complete, shortened.",
+      required: true,
+    },
+    claimUrl: {
+      type: 'string | null',
+      description: 'Where the recipient can finish a delivery that did not complete on its own.',
+      required: true,
+    },
+  }}
+/>
+
+### waitForDelivery(chain, tx, opts?)
+
+Polls `getTransfer` until the state is `delivered`, `needs_claim` or `failed`, and returns that
+status. A moment where Circle or the API cannot be reached (`upstream_unavailable`, `rate_limited`,
+`network_error`, `timeout`) is waited out, not thrown. Any other error is thrown at once.
+
+```ts twoslash
+import { createXebraClient } from "@xebra/sdk";
+const xebra = createXebraClient();
+declare const burnHash: string;
+// ---cut---
+const controller = new AbortController();
+
+const status = await xebra.waitForDelivery("stellar", burnHash, {
+  intervalMs: 5_000, // default 5 s
+  timeoutMs: 30 * 60_000, // default 30 min
+  signal: controller.signal, // stop early, for example when the user leaves the page
+});
+```
+
+If the deadline passes first, it throws `XebraApiError` with code `timeout`. That does not mean the
+transfer failed: it may still settle. Ask again later.
+
+Aborting the signal rejects with the signal's reason, not with an `XebraApiError`.
+
+### createClaim(r)
+
+The unsigned mint for a transfer whose delivery did not complete on its own (state `needs_claim`
+or `failed`). `payer` signs and pays the destination's network fee. See
+[Claim a stuck transfer](/docs/guides/claim-a-stuck-transfer).
+
+```ts twoslash
+import { createXebraClient } from "@xebra/sdk";
+const xebra = createXebraClient();
+declare const burnHash: string;
+// ---cut---
+const { steps } = await xebra.createClaim({
+  chain: "stellar", // the chain the burn was made on
+  tx: burnHash,
+  payer: "0xPayer...", // on the destination chain
+});
+```
+
+For a claim on Solana where the recipient's USDC account must be opened, also pass
+`recipientOwner`, the wallet that owns it. The answer then may start with an `open_account` step.
+
+### health()
+
+`{ status: "ok", version }` when the API is up. `version` is the API's SDK version.
+
+## Errors
+
+Every failure is thrown as `XebraApiError`. Its `code` is stable and safe to branch on; its
+`detail` is a sentence written for a person.
+
+```ts twoslash
+import { XebraApiError, createXebraClient } from "@xebra/sdk";
+const xebra = createXebraClient();
+// ---cut---
+try {
+  await xebra.quote({ from: "stellar", to: "base", amount: "500" });
+} catch (err) {
+  if (err instanceof XebraApiError && err.code === "amount_above_maximum") {
+    console.log(`At most ${err.extra.maximum} USDC per transfer.`);
+  } else if (err instanceof XebraApiError) {
+    console.log(err.status, err.code, err.detail);
+  } else {
+    throw err;
+  }
+}
+```
+
+<TypeTable
+  type={{
+    status: {
+      type: 'number',
+      description: 'The HTTP status, or 0 when no answer came back.',
+      required: true,
+    },
+    code: {
+      type: 'ApiErrorCode | "network_error" | "timeout" | "invalid_response"',
+      description: 'Stable. The API codes are listed in [the API overview](/docs/api).',
+      required: true,
+    },
+    detail: { type: 'string', description: 'A sentence for a person.', required: true },
+    extra: {
+      type: 'Record<string, unknown>',
+      description: "The problem's other fields, such as `minimum`, `maximum`, `have` and `need`.",
+      required: true,
+    },
+  }}
+/>
+
+Three codes come from the client itself, not the API:
+
+- `network_error`: the request did not reach the API.
+- `timeout`: no answer within `timeoutMs`, or `waitForDelivery` ran out of time.
+- `invalid_response`: the API answered with something that is not JSON or does not match the
+  SDK's schema.
+
+The list of every code, with its HTTP status, is exported as `ERROR_STATUS` and `ERROR_CODES`.
+
+## Cancelling
+
+`getTransfer` and `waitForDelivery` take an `AbortSignal`. The client's own timeout still applies to
+each request.

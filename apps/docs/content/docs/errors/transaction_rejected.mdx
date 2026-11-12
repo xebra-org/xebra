@@ -1,0 +1,28 @@
+---
+title: transaction_rejected
+description: "422 Transaction would be rejected."
+---
+
+HTTP **422**. `type`: `https://docs.xebra.exchange/errors/transaction_rejected`
+
+## What it means
+
+The chain would refuse this transaction if it were sent: the simulation failed, or, for a Fast transfer's claim, Circle's signature has expired.
+
+## What to do
+
+Read `detail`, which carries the chain's reason in plain words. Nothing was sent.
+
+## Example
+
+```json
+{
+  "type": "https://docs.xebra.exchange/errors/transaction_rejected",
+  "title": "Transaction would be rejected",
+  "status": 422,
+  "detail": "…",
+  "code": "transaction_rejected"
+}
+```
+
+Every error has this shape. See [Errors](/docs/errors) for how to handle them.

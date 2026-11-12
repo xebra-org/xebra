@@ -1,0 +1,94 @@
+---
+title: Recovery
+description: What happens when a transfer is burned but not delivered, and how anyone can finish it.
+---
+
+Once a burn is attested, the USDC cannot be lost. The recipient and amount are fixed in a message
+Circle has signed, the message is public, and the mint can be submitted by anyone. Recovery is
+just submitting that mint by hand when the usual deliverer did not.
+
+## Transfer states
+
+[`GET /v1/transfers/{chain}/{tx}`](/docs/api/transfers/get-transfer) reports where a transfer is,
+by the burn's transaction hash (or Sui digest):
+
+| `state` | Meaning | What to do |
+|---|---|---|
+| `pending` | Circle has not attested the burn yet, or has not seen it yet. | Wait. |
+| `delivering` | Attested; Circle's Forwarding Service is submitting the mint. | Wait. |
+| `delivered` | Minted on the destination. `deliveryTx` is the mint, when Circle reports it. | Nothing. |
+| `needs_claim` | Attested, but nobody is going to deliver it on their own. | Claim it. |
+| `failed` | Circle tried to deliver and gave up. `reason` has Circle's words. | Claim it. |
+
+`delivered`, `needs_claim` and `failed` are settled: they will not change unless someone acts.
+The SDK's [`waitForDelivery`](/docs/sdk/client) polls until one of them. A moment when Circle
+cannot be read is answered with `upstream_unavailable`, never as a failed transfer.
+
+For `needs_claim` and `failed`, `claimUrl` links to the claim page on xebra.exchange, where the
+recipient can finish the transfer with their own wallet. Sui transfers have no claim page link;
+claim them through the API.
+
+## Why a delivery fails
+
+- **The delivery fee moved.** Circle's fee rose above what the burn allowed, so its Forwarding
+  Service declined it (Circle reports `INSUFFICIENT_FEE`). Nothing was charged.
+- **Circle's service was down or slow.** The burn is attested and waits.
+- **A Sui to Stellar transfer the relayer has not finished.** Into Stellar, the mint is a call
+  anyone makes; see [Forwarding](/docs/concepts/forwarding).
+
+None of these lose the principal.
+
+## Claiming
+
+[`POST /v1/claims`](/docs/api/claims/create-claim) builds the mint as unsigned transactions for a
+`payer` to sign. The payer pays the destination's network fee and nothing else: the USDC still goes
+to the recipient the burn names. The payer does not have to be the recipient.
+
+```ts twoslash
+import { createXebraClient } from "@xebra/sdk";
+
+const xebra = createXebraClient();
+
+const { steps } = await xebra.createClaim({
+  chain: "stellar", // where the burn was made
+  tx: "9f2c...",    // the burn's transaction hash
+  payer: "0x...",   // signs and pays gas on the destination
+});
+// Have the payer's wallet sign and submit each step in order.
+```
+
+What the payer signs depends on the destination:
+
+- **An EVM chain.** One transaction, `receiveMessage` on Circle's `MessageTransmitter`. The payer
+  pays that chain's gas.
+- **Solana.** One mint transaction, preceded by an `open_account` step when the recipient's USDC
+  account does not exist yet. Opening it costs about 0.002 SOL of rent that cannot be reclaimed.
+  If the account must be opened, the API needs `recipientOwner`, the wallet that will own it, and
+  says so in an `invalid_request` error with `needs: "recipientOwner"`.
+- **Stellar** (from Sui). One transaction calling `mint_and_forward` on Circle's `CctpForwarder`.
+  The payer must be an existing Stellar account with XLM for the fee (about 0.025 XLM as of
+  2026-11-08).
+
+The API checks the mint before returning it, so nobody pays for a mint that would fail:
+
+- [`not_ready`](/docs/errors/not_ready): Circle has not attested the burn yet. Try again in a few
+  minutes.
+- [`already_delivered`](/docs/errors/already_delivered): the mint already happened, often because
+  Circle delivered it while you were looking. There is nothing to claim.
+- [`transaction_rejected`](/docs/errors/transaction_rejected): the destination would reject the
+  mint, with the reason in `detail`.
+
+If two people submit the same mint, the second is rejected by Circle's contract as already used. It
+costs that person the network fee and nothing else.
+
+## Fast transfers
+
+A Standard attestation never expires. A **Fast** attestation can: if a Fast transfer is claimed
+too late, the API answers `transaction_rejected` and says Circle's signature has expired. The claim
+page on xebra.exchange can have it signed again.
+
+## Related
+
+- [Track a transfer](/docs/guides/track-a-transfer)
+- [Claim a stuck transfer](/docs/guides/claim-a-stuck-transfer)
+- [Forwarding](/docs/concepts/forwarding)

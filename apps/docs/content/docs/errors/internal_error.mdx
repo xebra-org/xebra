@@ -1,0 +1,28 @@
+---
+title: internal_error
+description: "500 Internal error."
+---
+
+HTTP **500**. `type`: `https://docs.xebra.exchange/errors/internal_error`
+
+## What it means
+
+Something went wrong on Xebra's side. Nothing was sent and nothing was signed.
+
+## What to do
+
+Try again. If it repeats, [open an issue](https://github.com/xebra-org/xebra/issues) with the request and the time.
+
+## Example
+
+```json
+{
+  "type": "https://docs.xebra.exchange/errors/internal_error",
+  "title": "Internal error",
+  "status": 500,
+  "detail": "…",
+  "code": "internal_error"
+}
+```
+
+Every error has this shape. See [Errors](/docs/errors) for how to handle them.

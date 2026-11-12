@@ -1,0 +1,57 @@
+---
+title: Routes
+description: Which chains a transfer can start on, where it can land, and at what speeds, read live from the API.
+---
+
+A **route** is a pair of chains, `from` and `to`, with the speeds Xebra offers on it. The list
+below is read from [`GET /v1/routes`](/docs/api/routes/list-routes) and refreshed every five
+minutes. It is the same list the API checks every quote and transfer against.
+
+<RoutesTable />
+
+## Where the list comes from
+
+Routes are not a configuration file. Each source has its own rule:
+
+- **From Stellar**, the destinations are the ones Xebra's fee contract on Stellar has committed, read
+  from the contract. A new destination takes a 48-hour public wait on the contract before it can be
+  used, and appears here once that wait is over. Stellar offers Standard only.
+- **From EVM chains**, the routes run through Arc: Arc sends to the EVM chains and Solana that
+  Xebra has switched on, and other EVM chains can send into Arc where that direction is switched on.
+  Fast appears where Circle offers Fast Transfer for burns on the source chain.
+- **From Sui**, the one destination is Stellar, Standard only.
+
+Destinations are where the USDC is minted: Stellar, Solana and the EVM chains. Solana is a
+destination only. Sui is a source only, because Circle's Forwarding Service does not deliver to it
+(see [Forwarding](/docs/concepts/forwarding)).
+
+## Chain names
+
+The API names chains in lower case: `stellar`, `solana`, `sui`, and the EVM chains `arc`, `base`,
+`arbitrum`, `optimism`, `avalanche`, `polygon` and others. The full set of names the API accepts is
+the `ChainId` type in `@xebra/sdk` and the `ChainId` schema in the
+[API reference](/docs/api). A name that is valid is not necessarily a live route: ask
+`/v1/routes`.
+
+```ts twoslash
+import { createXebraClient } from "@xebra/sdk";
+
+const xebra = createXebraClient();
+const { routes, complete } = await xebra.routes();
+
+const fromStellar = routes.filter((r) => r.from === "stellar").map((r) => r.to);
+const fastRoutes = routes.filter((r) => r.speeds.includes("fast"));
+```
+
+## `complete`
+
+The answer carries `complete: true` when every part of the list was read. If Xebra's contract on
+Stellar could not be read just then, `complete` is `false` and the list may be missing Stellar
+destinations. Ask again shortly rather than telling a user a route does not exist.
+
+## A route that goes away
+
+A route can be switched off at any time, for example if Circle's Forwarding Service misbehaves on
+it. Quotes and transfers on a route that is not live are refused with
+[`route_unavailable`](/docs/errors/route_unavailable). Transfers already burned are not affected:
+they can still be delivered or claimed. See [Recovery](/docs/concepts/recovery).

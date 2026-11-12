@@ -1,0 +1,93 @@
+---
+title: CCTP
+description: How Circle's Cross-Chain Transfer Protocol moves native USDC between chains by burning it on one and minting it on the other.
+---
+
+Xebra does not move USDC itself. It prices transfers, builds the transactions, and takes a fee on
+some routes. The movement is Circle's Cross-Chain Transfer Protocol (CCTP), version 2.
+
+## Burn, attest, mint
+
+Every transfer has three steps.
+
+<Steps>
+<Step>
+
+### Burn
+
+The sender's wallet calls Circle's `TokenMessenger` on the chain the transfer starts on. Circle burns
+the USDC and emits a message naming the destination chain, the recipient and the amount.
+
+</Step>
+<Step>
+
+### Attest
+
+Circle waits until the source chain has finalised the burn, then signs an attestation: a statement
+that this USDC was burned for this recipient on this destination. The message and its attestation
+are public. Anyone can read them from Circle's attestation service (Iris).
+
+</Step>
+<Step>
+
+### Mint
+
+Someone submits the message and attestation to Circle's `MessageTransmitter` on the destination. It
+checks Circle's signature and mints the same amount of native USDC to the recipient, less any fee
+the burn allowed. On most routes Circle's own Forwarding Service does this step; see
+[Forwarding](/docs/concepts/forwarding).
+
+</Step>
+</Steps>
+
+The USDC that arrives is minted by Circle on the destination chain. It is the same native USDC as
+any other USDC there, not a wrapped or bridged token. There is no liquidity pool and no one holds
+the funds in between.
+
+## Domains
+
+CCTP names chains by a numeric **domain**, not by chain id. A few that matter here: Solana is 5,
+Sui is 8, Arc is 26 and Stellar is 27. The API and SDK use chain names (`"stellar"`, `"base"`) and
+translate to domains for you. `@xebra/sdk/core` exports the full table as `EVM_CHAINS` and
+`STELLAR_CCTP_DOMAIN`.
+
+## Standard and Fast
+
+CCTP V2 offers two finality levels, which the API calls **speeds**:
+
+- **Standard** (`finalityThreshold` 2000). Circle attests once the source chain has finalised the
+  burn. Circle charges no transfer fee for this. Its attestation never expires.
+- **Fast** (`finalityThreshold` 1000). Circle attests sooner, before full finality, and charges a
+  small fee proportional to the amount. Only some source chains offer it. A Fast attestation can
+  expire before it is used; see [Recovery](/docs/concepts/recovery).
+
+Stellar and Sui offer Standard only. Which speeds a route has is listed by
+[`GET /v1/routes`](/docs/api/routes/list-routes), and [`GET /v1/quote`](/docs/api/quotes/get-quote)
+prices one speed at a time.
+
+## How long it takes
+
+Most of the time is the source chain reaching finality and Circle attesting. Circle's own figures
+for a Standard burn range from under a minute on chains with fast finality to about 15 to 30
+minutes on others (as recorded in the SDK's chain table, `EVM_CHAINS[...].standardEta`, on
+2026-11-12). Delivery after attestation usually adds seconds to a few minutes.
+[`waitForDelivery`](/docs/sdk/client) polls until the transfer settles.
+
+## Who can mint
+
+A CCTP message can name a `destinationCaller`: the only address allowed to submit the mint.
+
+- Burns out of Stellar and out of EVM chains leave it empty. Once Circle has attested the burn,
+  anyone can submit the mint, so a transfer never depends on Xebra being online.
+- Burns from Sui to Stellar name Circle's `CctpForwarder` on Stellar, which Circle requires for that
+  route. The forwarder's `mint_and_forward` function is itself public, so anyone can still finish
+  the transfer.
+
+Either way the recipient and amount are fixed inside the attested message. Whoever submits the mint
+pays the destination's network fee; they cannot change who receives the USDC.
+
+## Related
+
+- [Forwarding](/docs/concepts/forwarding): who submits the mint.
+- [Fees](/docs/concepts/fees): what each party is paid.
+- [Recovery](/docs/concepts/recovery): finishing a transfer by hand.

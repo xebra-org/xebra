@@ -1,0 +1,28 @@
+---
+title: upstream_unavailable
+description: "503 Upstream unavailable."
+---
+
+HTTP **503**. `type`: `https://docs.xebra.exchange/errors/upstream_unavailable`
+
+## What it means
+
+A chain's RPC or Circle's API could not be read just now, or Circle reports the route as down. This is never a verdict on a transfer: a status that could not be read does not mean the transfer failed.
+
+## What to do
+
+Wait for the `Retry-After` header (10 seconds) and ask again. If `detail` says Circle is not carrying transfers on the route, do not start one until it is back.
+
+## Example
+
+```json
+{
+  "type": "https://docs.xebra.exchange/errors/upstream_unavailable",
+  "title": "Upstream unavailable",
+  "status": 503,
+  "detail": "…",
+  "code": "upstream_unavailable"
+}
+```
+
+Every error has this shape. See [Errors](/docs/errors) for how to handle them.

@@ -1,0 +1,143 @@
+---
+title: Core
+description: Pure helpers in @xebra/sdk/core for chains, amounts, addresses, fees and deep links, with no network access.
+---
+
+`@xebra/sdk/core` is the part of Xebra that never touches the network or a wallet. The API, the
+xebra.exchange page and the MCP server all use it, so a check you run here is the same check the
+API runs. Everything in it is also exported from `@xebra/sdk`.
+
+```ts twoslash
+import { CHAIN_IDS, EVM_CHAINS, checkAddressOn, parseUsdcAmount } from "@xebra/sdk/core";
+```
+
+## Chains
+
+A chain is named by a lower-case id: `stellar`, `solana`, `sui`, or one of the EVM chains in
+`EVM_CHAINS`. `CHAIN_IDS` lists them all; `isChainId` checks a string exactly (no trimming, no case
+folding).
+
+```ts twoslash
+import { CHAIN_IDS, EVM_CHAINS, isChainId, isEvmChainId } from "@xebra/sdk/core";
+
+isChainId("base"); // true
+isChainId("Base"); // false: lower-case it first
+
+const base = EVM_CHAINS.base;
+base.chainId; // the EVM chain id
+base.cctpDomainId; // Circle's CCTP domain
+base.usdcAddress; // the USDC that CCTP burns and mints there
+```
+
+That a chain is in `CHAIN_IDS` does not mean a route to or from it is live. Ask
+[`routes()`](/docs/sdk/client#routes) or see [Routes](/docs/concepts/routes).
+
+Lookups the other way:
+
+```ts twoslash
+import { evmChainForChainId, evmChainForDomain } from "@xebra/sdk/core";
+
+evmChainForChainId(8453)?.id; // "base"
+evmChainForDomain(6)?.id; // the chain on CCTP domain 6, or undefined
+```
+
+Each `EvmChain` row also has Circle's contract addresses (`tokenMessengerAddress`,
+`messageTransmitterAddress`), a public `rpcUrl` and `explorerUrl` for adding the chain to a wallet,
+`nativeCurrency`, and whether Circle offers Fast Transfer from it (`fast`).
+
+## Amounts
+
+USDC has 6 decimals on EVM chains, Solana, Sui and in CCTP messages. Stellar's USDC has 7. The
+helpers come in three pairs whose names make the unit visible, because mixing the two is wrong by a
+factor of ten in a way no type catches.
+
+| Helper | Unit | For |
+|---|---|---|
+| `parseUsdcAmount` / `formatUsdcAmount` | 6-decimal base units | The API's wire format: `"1250.5"` |
+| `parseUsdc6` / `formatUsdc6` | 6-decimal base units | What a person typed, and display: `"1,250.50"` |
+| `parseUsdc` / `formatUsdc` | Stellar stroops, 7 decimals | Soroban and the Stellar asset contract |
+
+```ts twoslash
+import { formatUsdcAmount, formatUsdc6, parseUsdcAmount, parseUsdc6 } from "@xebra/sdk/core";
+
+parseUsdcAmount("12.5"); // 12500000n
+parseUsdcAmount("0"); // null: amounts must be more than zero
+parseUsdcAmount("1.1234567"); // null: more than 6 places
+formatUsdcAmount(12_500_000n); // "12.5"
+
+parseUsdc6("1250.5"); // 1250500000n; throws on bad input
+formatUsdc6(1_250_500_000n); // "1,250.50"
+```
+
+`parseUsdcAmount` returns `null` for anything that is not a canonical positive amount;
+`parseUsdc6` and `parseUsdc` throw an `Error` with a sentence for a person.
+
+## Addresses
+
+A CCTP burn is irreversible, and the mint goes to whatever address the burn names. Check the
+recipient before you build.
+
+```ts twoslash
+import { EVM_CHAINS, checkAddressOn, checkSolanaAddress } from "@xebra/sdk/core";
+
+const onBase = checkAddressOn(EVM_CHAINS.base, "0x1234...");
+if (!onBase.ok) console.log(onBase.error); // e.g. "A Base address is 0x followed by 40 hex characters."
+
+const onSolana = checkSolanaAddress("7xKX...");
+```
+
+Both return `{ ok, bytes?, error? }`. They never throw. An empty input gives `{ ok: false }` with no
+`error`, so a form can stay quiet until the user types.
+
+`checkAddressOn` refuses, beyond a malformed address:
+
+- a mixed-case address whose EIP-55 checksum fails (a typo),
+- a Solana address pasted where an EVM one belongs,
+- addresses that can never hold USDC for a person: the zero address, the precompile range, burn
+  addresses, the USDC token itself, and Circle's messenger, transmitter and minter on that chain.
+
+It cannot tell that an address is a contract that refuses tokens, or that USDC's blocklist holds
+it. Either makes the mint fail after the burn; [recovery](/docs/concepts/recovery) covers that case.
+
+`checkSolanaAddress` also refuses an EVM address padded to 32 bytes. For a Stellar recipient (Sui
+to Stellar), `isStellarRecipient` accepts a `G...` account or a `C...` contract.
+
+## Fees
+
+The API prices every transfer for you. These helpers are what it uses, for when you price
+yourself from Circle's live fee quote.
+
+- `speedFeeFor(amount, minimumFeePpb)`: Circle's Fast Transfer fee for an amount, rounded up to a
+  whole unit.
+- `planEvmFee({ amount, tier, destination })`: for a direct EVM route, the `maxFee` to sign, the
+  delivery and speed fees, and what the recipient gets, or a refusal (`kind: "minimum"`,
+  `"maximum"`, `"cap"`, `"amount"`) with a sentence.
+- `minimumEvmAmount(tier)`: the smallest amount whose fees are at most a tenth of it.
+- `chooseMaxFee(...)`, `forwardBoundHolds(...)`, `minimumForwardedAmount(...)`: the same for
+  transfers from Stellar, mirroring the wrapper contract's own checks.
+
+See [Fees](/docs/concepts/fees) for what each fee is and why fees are capped at a tenth of the
+amount.
+
+## Deep links
+
+A link that opens the bridge on xebra.exchange already filled in. It only prefills the form: it
+cannot sign, submit or connect a wallet, and the person checks the details before approving.
+
+```ts twoslash
+import { buildDeepLink, parseDeepLink } from "@xebra/sdk/core";
+
+const url = buildDeepLink("https://xebra.exchange", {
+  from: "stellar",
+  to: "base",
+  amount: "25",
+  recipient: "0x1234...",
+});
+// https://xebra.exchange/?from=stellar&to=base&amount=25&recipient=0x1234...#bridge
+
+const link = parseDeepLink("?from=stellar&to=base&amount=25");
+```
+
+`parseDeepLink` never throws. It drops anything it cannot trust: an unknown chain, an amount that
+is not a plain positive decimal with at most six places, a recipient that is not one short token.
+Deep links cover transfers from Stellar and EVM chains.

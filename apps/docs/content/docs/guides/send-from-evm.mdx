@@ -1,0 +1,98 @@
+---
+title: Send from an EVM chain
+description: Move USDC from an EVM chain with an approval when needed and one burn, signed in any EIP-1193 wallet.
+---
+
+From an EVM chain the user's wallet calls Circle's CCTP contracts directly: an approval if the current
+allowance is short, then the burn. Circle's Forwarding Service mints on the destination.
+
+Which EVM chains can start a transfer, and where they reach, changes as routes open. Read it from
+[`GET /v1/routes`](/docs/api/routes/list-routes) or the table on [Routes](/docs/concepts/routes), never
+from a list in your own code. A route that is not live answers [`route_unavailable`](/docs/errors/route_unavailable).
+
+## What you need
+
+- The sender's address on the source chain, holding enough USDC and enough of the chain's gas token.
+- The recipient's address on the destination.
+- An EIP-1193 wallet (MetaMask, Rabby, Phantom and others). See [Wallet integration](/docs/guides/wallet-integration).
+
+## Speed
+
+EVM routes offer `standard`, and `fast` where Circle offers Fast Transfer for burns on that chain. The
+route's `speeds` array says which. Fast is attested sooner and Circle charges for it; the quote shows
+that charge as `fees.circle`. Pass the same `speed` to `quote` and `createTransfer`.
+
+## The steps
+
+`createTransfer` returns one or two steps, each with `tx.kind: "evm"`:
+
+| `id` | When | What it does |
+|---|---|---|
+| `approve` | Only when the sender's allowance to Circle is below the amount | Approves exactly the amount, no more |
+| `burn` | Always | Burns the USDC on the source chain, naming the destination and recipient |
+
+Each `tx` is `{ chainId, to, data, value: "0" }`. Send them in order, and wait for the approval's
+receipt before asking for the burn: the burn fails while the allowance is short.
+
+## In code
+
+```ts twoslash
+import { createXebraClient } from "@xebra/sdk";
+
+// Your wallet: send the transaction on `chainId`, wait for its receipt, return the hash.
+declare function sendEvm(tx: { chainId: number; to: string; data: string }): Promise<`0x${string}`>;
+
+const xebra = createXebraClient();
+
+const quote = await xebra.quote({ from: "arc", to: "base", amount: "25" });
+
+const { steps } = await xebra.createTransfer({
+  from: "arc",
+  to: "base",
+  amount: "25",
+  sender: "0xSender...",
+  recipient: "0xRecipient...",
+  maxTotalFee: quote.fees.total,
+});
+
+let burnHash: `0x${string}` | undefined;
+for (const step of steps) {
+  if (step.tx.kind !== "evm") throw new Error(`unexpected ${step.tx.kind} step`);
+  if (step.expiresAt && Date.now() > Date.parse(step.expiresAt)) {
+    throw new Error("The burn's price has expired; build the transfer again.");
+  }
+  const hash = await sendEvm(step.tx); // waits for the receipt before the next step
+  if (step.id === "burn") burnHash = hash;
+}
+
+if (burnHash) {
+  const status = await xebra.waitForDelivery("arc", burnHash);
+  console.log(status.state);
+}
+```
+
+## The burn's price expires
+
+Circle's fee is fixed into the burn when it is built, so the `burn` step carries the quote's
+`expiresAt`. If an approval came first and took longer than that, call `createTransfer` again before
+asking for the burn. The approval stands; the new answer has only the burn, priced again.
+
+The `approve` step has `expiresAt: null`: an approval does not go stale.
+
+## Errors you may see
+
+- [`insufficient_balance`](/docs/errors/insufficient_balance): the sender holds less USDC than the amount.
+  On a chain that pays gas in USDC (Arc), the API also keeps a small reserve for gas and says how much
+  can be sent.
+- [`fee_above_limit`](/docs/errors/fee_above_limit): fees rose above `maxTotalFee`. Quote again and
+  show the new total.
+- [`route_unavailable`](/docs/errors/route_unavailable): the route is not live right now, or the speed
+  is not offered on it. Building EVM transfers through the API can also be paused while Xebra's EVM
+  fee contract is switched on; the error says so.
+- [`amount_below_minimum`](/docs/errors/amount_below_minimum): fees would take too much of a small
+  transfer. The problem's `minimum` field says what is accepted.
+
+## Track
+
+The burn's identifier is its transaction hash, `0x` and 64 hex characters, with the source chain as
+`chain`. See [Track a transfer](/docs/guides/track-a-transfer).

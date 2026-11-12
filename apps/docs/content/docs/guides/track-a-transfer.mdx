@@ -1,0 +1,104 @@
+---
+title: Track a transfer
+description: Follow a burn to delivery with getTransfer, or wait for it to settle with waitForDelivery.
+---
+
+A transfer is identified by the chain it started on and its burn: the transaction that the user signed
+on the source chain. Xebra reads its progress from Circle.
+
+| Source | `chain` | `tx` |
+|---|---|---|
+| Stellar | `stellar` | The transaction hash: 64 hex characters, without `0x` |
+| An EVM chain | Its id, such as `arc` | The transaction hash: `0x` and 64 hex characters |
+| Sui | `sui` | The transaction digest (base58) |
+
+Over HTTP this is [`GET /v1/transfers/{chain}/{tx}`](/docs/api/transfers/get-transfer).
+
+## States
+
+| `state` | Meaning | What to do |
+|---|---|---|
+| `pending` | Circle has not attested the burn yet, or has not seen it yet | Wait |
+| `delivering` | Attested; Circle's Forwarding Service is minting on the destination | Wait |
+| `delivered` | The USDC is on the destination. `deliveryTx` is the mint, when Circle reports it | Done |
+| `needs_claim` | Attested, but the delivery did not complete on its own | [Claim it](/docs/guides/claim-a-stuck-transfer) |
+| `failed` | Circle reports the delivery failed. `reason` has Circle's words | [Claim it](/docs/guides/claim-a-stuck-transfer) |
+
+`pending` and `delivering` change on their own. `delivered`, `needs_claim` and `failed` do not change
+until someone acts.
+
+When a transfer from Stellar or an EVM chain needs a claim, `claimUrl` links to the claim page on
+xebra.exchange, where the recipient (or anyone) can finish it with their own wallet. For Sui transfers
+`claimUrl` is null; finish them through the API.
+
+## Ask once
+
+```ts twoslash
+import { createXebraClient, XebraApiError } from "@xebra/sdk";
+
+const xebra = createXebraClient();
+declare const burnHash: string;
+
+try {
+  const status = await xebra.getTransfer("stellar", burnHash);
+  switch (status.state) {
+    case "pending":
+    case "delivering":
+      break; // ask again later
+    case "delivered":
+      console.log("Minted in", status.deliveryTx);
+      break;
+    case "needs_claim":
+    case "failed":
+      console.log(status.reason, status.claimUrl);
+      break;
+  }
+} catch (err) {
+  if (err instanceof XebraApiError && err.code === "upstream_unavailable") {
+    // Circle could not be read just now. This says nothing about the transfer; ask again.
+  } else {
+    throw err;
+  }
+}
+```
+
+## Wait until it settles
+
+`waitForDelivery` polls until the state is `delivered`, `needs_claim` or `failed`, and returns that
+status. By default it asks every 5 seconds for up to 30 minutes. Moments where Circle or the API cannot
+be reached (`upstream_unavailable`, `rate_limited`, a network error or a timeout) are waited out, not
+thrown. If the time runs out it throws an `XebraApiError` with `code: "timeout"`; the transfer may
+still settle, so ask again later.
+
+```ts twoslash
+import { createXebraClient } from "@xebra/sdk";
+
+const xebra = createXebraClient();
+declare const burnHash: `0x${string}`;
+
+const controller = new AbortController(); // call controller.abort() to stop waiting
+const settled = await xebra.waitForDelivery("arc", burnHash, {
+  intervalMs: 10_000,
+  timeoutMs: 60 * 60_000,
+  signal: controller.signal,
+});
+console.log(settled.state);
+```
+
+## Unavailable is not failed
+
+When Circle cannot be read, the API answers [`upstream_unavailable`](/docs/errors/upstream_unavailable)
+(HTTP 503, with `Retry-After`). That is never a verdict on the transfer: a burn that landed will be
+attested. Show "checking" and ask again. Report a transfer as failed only when the state is `failed`.
+
+Other answers:
+
+- [`invalid_request`](/docs/errors/invalid_request): `tx` is not the right shape for that chain, or the
+  chain cannot start a transfer.
+- [`route_unavailable`](/docs/errors/route_unavailable): you asked about a Sui transfer while Sui to
+  Stellar is switched off.
+
+<Callout title="Webhooks are coming">
+  Until [webhooks](/docs/guides/webhooks) ship, polling is the way to follow a transfer. Poll no faster
+  than every few seconds.
+</Callout>

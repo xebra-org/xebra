@@ -1,0 +1,28 @@
+---
+title: not_found
+description: "404 Not found."
+---
+
+HTTP **404**. `type`: `https://docs.xebra.exchange/errors/not_found`
+
+## What it means
+
+Nothing answers at this path. On `api.xebra.exchange`, everything lives under `/v1`.
+
+## What to do
+
+Check the path against the [API reference](/docs/api).
+
+## Example
+
+```json
+{
+  "type": "https://docs.xebra.exchange/errors/not_found",
+  "title": "Not found",
+  "status": 404,
+  "detail": "…",
+  "code": "not_found"
+}
+```
+
+Every error has this shape. See [Errors](/docs/errors) for how to handle them.

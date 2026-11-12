@@ -1,0 +1,28 @@
+---
+title: route_unavailable
+description: "422 Route unavailable."
+---
+
+HTTP **422**. `type`: `https://docs.xebra.exchange/errors/route_unavailable`
+
+## What it means
+
+Xebra does not send between these two chains right now, or not at this speed. Some routes are switched off for a time, for example while a contract is being changed.
+
+## What to do
+
+Check [`GET /v1/routes`](/docs/api/routes/list-routes) for what is live, and the speeds each route offers.
+
+## Example
+
+```json
+{
+  "type": "https://docs.xebra.exchange/errors/route_unavailable",
+  "title": "Route unavailable",
+  "status": 422,
+  "detail": "…",
+  "code": "route_unavailable"
+}
+```
+
+Every error has this shape. See [Errors](/docs/errors) for how to handle them.

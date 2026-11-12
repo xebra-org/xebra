@@ -1,0 +1,102 @@
+---
+title: Claim a stuck transfer
+description: Finish a delivery that did not complete on its own, from the claim page or through the API.
+---
+
+Circle's Forwarding Service mints almost every transfer on its own. When it does not, the burn is still
+safe: Circle has attested it, and that attestation lets anyone submit the mint on the destination. The
+mint always pays the recipient the burn names. Whoever submits it only pays the destination's network
+fee.
+
+A transfer needs a claim when [tracking](/docs/guides/track-a-transfer) shows `needs_claim` or `failed`.
+For why this happens and who can act, see [Recovery](/docs/concepts/recovery).
+
+## Two ways to finish it
+
+1. **Send the user to `claimUrl`.** For transfers from Stellar and EVM chains, the status carries a link
+   to the claim page on xebra.exchange. The recipient connects a wallet on the destination and mints.
+   This is the simplest path and needs no code.
+2. **Build the mint through the API.** [`POST /v1/claims`](/docs/api/claims/create-claim) returns the
+   unsigned mint for a wallet you control. Use this to finish transfers in your own app, or for Sui
+   transfers, which have no claim link.
+
+## Through the API
+
+Call `createClaim` with:
+
+| Field | Value |
+|---|---|
+| `chain` | The chain the burn was made on (the source) |
+| `tx` | The burn's hash or Sui digest, as you track it |
+| `payer` | The address on the destination that signs and pays the fee |
+| `recipientOwner` | Solana only, when asked for: the wallet that owns the recipient's USDC account |
+
+What comes back depends on the destination:
+
+| Destination | Steps | `tx.kind` |
+|---|---|---|
+| An EVM chain | `claim`: Circle's `receiveMessage` on that chain | `evm` |
+| Solana | `open_account` when the recipient's USDC account does not exist yet, then `claim` | `solana` |
+| Stellar (from Sui) | `claim`: the mint through Circle's forwarder on Stellar | `stellar` |
+
+The claim is checked before it is returned, so nobody pays a fee for a mint that cannot work:
+
+- [`not_ready`](/docs/errors/not_ready): Circle has not attested the burn yet. Ask again in a few minutes.
+- [`already_delivered`](/docs/errors/already_delivered): the mint has already happened. Nothing to do.
+- [`transaction_rejected`](/docs/errors/transaction_rejected): the mint would revert. For a Fast transfer
+  this can mean Circle's signature has expired; the claim page on xebra.exchange can have it signed again.
+- [`invalid_request`](/docs/errors/invalid_request): the payer is not an address on the destination, or
+  this destination cannot be claimed through the API. On Solana, a problem whose `needs` field is
+  `"recipientOwner"` means you must pass `recipientOwner`.
+
+## In code
+
+```ts twoslash
+import { createXebraClient, XebraApiError } from "@xebra/sdk";
+
+const xebra = createXebraClient();
+declare const burnHash: string;
+// Your Solana wallet and RPC: sign, send, wait for confirmation, return the signature.
+declare function sendSolana(base64Tx: string): Promise<string>;
+
+const claimInput = { chain: "stellar", tx: burnHash, payer: "PayerSolanaWallet..." } as const;
+
+try {
+  let { steps } = await xebra.createClaim(claimInput);
+  const open = steps.find((s) => s.id === "open_account");
+  if (open?.tx.kind === "solana") {
+    await sendSolana(open.tx.transaction); // confirmed before going on
+    ({ steps } = await xebra.createClaim(claimInput)); // a fresh mint, now that the account exists
+  }
+  const claim = steps.find((s) => s.id === "claim");
+  if (claim?.tx.kind !== "solana") throw new Error("expected a Solana claim");
+  await sendSolana(claim.tx.transaction);
+} catch (err) {
+  if (err instanceof XebraApiError && err.code === "already_delivered") {
+    // Nothing to do: the USDC has arrived.
+  } else if (err instanceof XebraApiError && err.code === "not_ready") {
+    // Circle has not attested the burn yet. Ask again in a few minutes.
+  } else if (err instanceof XebraApiError && err.extra.needs === "recipientOwner") {
+    // Solana: pass recipientOwner, the wallet that owns the recipient's USDC account.
+  } else {
+    throw err;
+  }
+}
+```
+
+## Solana: two transactions
+
+When the recipient has no USDC account on Solana, the claim has two steps. `open_account` creates the
+account; it costs the payer a small amount of SOL as rent, which is not returned. Confirm it before the
+next step.
+
+Each Solana `tx.transaction` is a legacy transaction, serialized without signatures, in base64, with the
+payer as fee payer and a recent blockhash already set. A recent blockhash is valid only briefly, and a
+wallet's simulation of the mint fails while the account it mints into does not exist. So when there is
+an `open_account` step: sign and confirm it, then call `createClaim` again. The second answer has only
+the `claim` step, built fresh.
+
+## EVM: one transaction
+
+On an EVM destination the claim is one transaction to Circle's MessageTransmitter, `value: "0"`. Switch
+the wallet to `tx.chainId` and send it. The payer pays gas on the destination chain.

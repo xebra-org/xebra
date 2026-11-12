@@ -1,0 +1,22 @@
+{
+  "title": "Errors",
+  "pages": [
+    "index",
+    "invalid_request",
+    "unauthorized",
+    "not_found",
+    "not_ready",
+    "already_delivered",
+    "invalid_amount",
+    "invalid_recipient",
+    "route_unavailable",
+    "amount_below_minimum",
+    "amount_above_maximum",
+    "insufficient_balance",
+    "fee_above_limit",
+    "transaction_rejected",
+    "rate_limited",
+    "internal_error",
+    "upstream_unavailable"
+  ]
+}

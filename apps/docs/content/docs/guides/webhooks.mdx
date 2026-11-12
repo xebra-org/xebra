@@ -1,0 +1,40 @@
+---
+title: Webhooks
+description: Signed notifications when a transfer is attested, delivered, needs a claim or fails. Not available yet.
+---
+
+<Callout title="Coming" type="info">
+  Webhooks are not available yet. Until they are, follow transfers by polling, as described in
+  [Track a transfer](/docs/guides/track-a-transfer).
+</Callout>
+
+## What is planned
+
+- **API keys.** Webhooks will need one. Keys will be sent as `Authorization: Bearer <key>`, which the SDK
+  already supports through the `apiKey` option of `createXebraClient`.
+- **Events** for each transfer you watch: `transfer.attested`, `transfer.delivered`,
+  `transfer.needs_claim` and `transfer.failed`. Each carries the same `TransferStatus` that
+  [`GET /v1/transfers/{chain}/{tx}`](/docs/api/transfers/get-transfer) returns.
+- **Signatures** in the [Standard Webhooks](https://www.standardwebhooks.com) format (`webhook-id`,
+  `webhook-timestamp`, `webhook-signature`), with a helper in `@xebra/sdk` to verify them.
+- **At-least-once delivery** with retries. Receivers should expect the same event more than once and
+  ignore repeats by `webhook-id`.
+
+This page will be replaced with the full guide when webhooks ship; the [changelog](/docs/changelog)
+will say when.
+
+## Until then
+
+```ts twoslash
+import { createXebraClient } from "@xebra/sdk";
+
+const xebra = createXebraClient();
+declare const burnHash: string;
+
+// Returns once the transfer is delivered, needs a claim, or failed.
+const status = await xebra.waitForDelivery("stellar", burnHash);
+console.log(status.state);
+```
+
+On a server, store the `(chain, tx)` pairs you are following and poll them with `getTransfer` on a
+schedule, every few seconds while they are `pending` or `delivering`.

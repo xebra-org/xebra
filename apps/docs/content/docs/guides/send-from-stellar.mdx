@@ -1,0 +1,126 @@
+---
+title: Send from Stellar
+description: Move USDC from a Stellar account to another chain with one wallet signature.
+---
+
+A transfer out of Stellar is one transaction. The user's wallet signs it, it calls Xebra's wrapper
+contract on Stellar, the wrapper burns the USDC through Circle's CCTP, and Circle's Forwarding Service
+mints it on the destination. Nobody has to come back and finish it.
+
+Stellar transfers use Standard speed only. Which chains Stellar sends to right now comes from the
+wrapper contract itself: see [Routes](/docs/concepts/routes) or call
+[`GET /v1/routes`](/docs/api/routes/list-routes).
+
+## What you need
+
+- The sender's Stellar account (`G...`). It must exist, hold enough USDC, and hold a little XLM for the
+  network fee.
+- The recipient's address on the destination: an `0x` address on an EVM chain, or a wallet address on
+  Solana.
+- A Stellar wallet that can sign a transaction envelope. See [Wallet integration](/docs/guides/wallet-integration).
+
+## The flow
+
+<Steps>
+<Step>
+
+### Quote
+
+Ask what the transfer costs and what arrives. Show `recipientGets` and `fees.total` to the user.
+
+For Solana, pass the `recipient` too. A wallet that has no USDC account yet costs more to deliver to,
+and the quote includes that only when it knows the recipient.
+
+</Step>
+<Step>
+
+### Build
+
+Call `createTransfer` with the sender and recipient. Pass the total you showed as `maxTotalFee`: if
+fees have risen since, the API refuses with [`fee_above_limit`](/docs/errors/fee_above_limit) instead of
+building a more expensive transfer.
+
+Before it builds, the API checks what can be checked without a signature: the sender's account and
+USDC balance ([`insufficient_balance`](/docs/errors/insufficient_balance)), the recipient's address
+([`invalid_recipient`](/docs/errors/invalid_recipient)), and a simulation of the transaction against the
+contract ([`transaction_rejected`](/docs/errors/transaction_rejected)).
+
+</Step>
+<Step>
+
+### Sign and submit
+
+The answer has exactly one step, `id: "burn"`, with `tx.kind: "stellar"`. `tx.xdr` is a prepared
+Soroban transaction (simulated, with its authorization and resources attached) whose source is the
+sender. Have the wallet sign it with `tx.networkPassphrase`, then submit the signed envelope to a
+Soroban RPC node.
+
+</Step>
+<Step>
+
+### Track
+
+The burn's identifier is the Stellar transaction hash: 64 hex characters, without `0x`. Pass it to
+`getTransfer` or `waitForDelivery` with `chain: "stellar"`. See [Track a transfer](/docs/guides/track-a-transfer).
+
+</Step>
+</Steps>
+
+## In code
+
+```ts twoslash
+import { createXebraClient } from "@xebra/sdk";
+
+// Your wallet: sign the envelope, return the signed XDR.
+declare function signStellar(xdr: string, networkPassphrase: string): Promise<string>;
+// Your Soroban RPC: submit, wait for the ledger, return the hash (64 hex characters).
+declare function submitStellar(signedXdr: string, networkPassphrase: string): Promise<string>;
+
+const xebra = createXebraClient();
+
+const quote = await xebra.quote({ from: "stellar", to: "base", amount: "25" });
+
+const { steps } = await xebra.createTransfer({
+  from: "stellar",
+  to: "base",
+  amount: "25",
+  sender: "GABC...", // the Stellar account that signs and pays
+  recipient: "0x1234...", // who receives on Base
+  maxTotalFee: quote.fees.total, // refuse if fees rose since the quote
+});
+
+const burn = steps[0];
+if (!burn || burn.tx.kind !== "stellar") throw new Error("expected one Stellar step");
+
+const signed = await signStellar(burn.tx.xdr, burn.tx.networkPassphrase);
+const hash = await submitStellar(signed, burn.tx.networkPassphrase);
+
+const status = await xebra.waitForDelivery("stellar", hash);
+console.log(status.state, status.deliveryTx);
+```
+
+## Submitting to Soroban RPC
+
+`sendTransaction` on a Soroban RPC node returns a hash whatever happens, so read its `status`:
+
+| Status | Meaning |
+|---|---|
+| `PENDING` | Accepted. Poll `getTransaction` with the hash until it is `SUCCESS` or `FAILED`. |
+| `DUPLICATE` | Already submitted. Poll the same hash. |
+| `TRY_AGAIN_LATER` | The node did not queue it. Nothing moved. Submit again in a few seconds. |
+| `ERROR` | Rejected. Nothing moved. `errorResult` says why (for example `txTooLate`, `txInsufficientBalance`). |
+
+## Expiry and the price
+
+The step's `expiresAt` is the end of the transaction's time bounds. After it, Stellar rejects the
+transaction (`txTooLate`) and nothing moves: build the transfer again.
+
+The fee is pinned when the transfer is built. The transaction carries the most the wrapper may take,
+and the contract refuses rather than charge more than the quote showed. A quote itself is good until
+its own `expiresAt`; after that, quote again.
+
+<Callout title="Delivery is Circle's">
+  Once the burn lands, Circle attests it and its Forwarding Service mints on the destination. If that
+  delivery does not complete, the transfer shows `needs_claim` or `failed`, and anyone can finish it.
+  See [Claim a stuck transfer](/docs/guides/claim-a-stuck-transfer) and [Forwarding](/docs/concepts/forwarding).
+</Callout>

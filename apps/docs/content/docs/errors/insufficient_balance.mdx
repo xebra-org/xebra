@@ -1,0 +1,35 @@
+---
+title: insufficient_balance
+description: "422 Insufficient balance."
+---
+
+HTTP **422**. `type`: `https://docs.xebra.exchange/errors/insufficient_balance`
+
+## What it means
+
+The sender does not hold enough USDC for this transfer. On chains that pay gas in USDC (Arc), part of the balance is kept back for gas.
+
+## What to do
+
+Fund the sender, or send less.
+
+## Extra fields
+
+- `have`: What the sender holds.
+- `need`: What this transfer needs.
+
+## Example
+
+```json
+{
+  "type": "https://docs.xebra.exchange/errors/insufficient_balance",
+  "title": "Insufficient balance",
+  "status": 422,
+  "detail": "…",
+  "code": "insufficient_balance",
+  "have": "…",
+  "need": "…"
+}
+```
+
+Every error has this shape. See [Errors](/docs/errors) for how to handle them.

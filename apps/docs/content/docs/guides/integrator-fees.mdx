@@ -1,0 +1,25 @@
+---
+title: Integrator fees
+description: Add your own fee to the transfers your app sends through Xebra. Not available yet.
+---
+
+<Callout title="Coming" type="info">
+  Integrator fees are not available yet. Today every quote's `fees` has three parts: `xebra`, `circle`
+  and `delivery`. See [Fees](/docs/concepts/fees).
+</Callout>
+
+## What is planned
+
+A wallet or app that sends transfers through Xebra will be able to add its own fee on top:
+
+- **Set by you, capped on chain.** You choose your fee in basis points, up to a ceiling the contracts
+  enforce.
+- **Part of what the user signs.** The integrator and its fee are in the transaction itself, and the
+  most the user agrees to pay covers every fee. A quote will always show your fee, so the user sees the
+  full price before signing.
+- **Paid on chain.** Your fees accrue to your address inside Xebra's contracts, and you withdraw them
+  when you choose. Nothing is pushed to you during a user's transfer.
+- **Disclosed in every quote**, alongside Xebra's and Circle's fees.
+
+This needs new versions of Xebra's contracts on Stellar and EVM chains, which will be audited before
+they carry money. This page and the [changelog](/docs/changelog) will be updated when it ships.

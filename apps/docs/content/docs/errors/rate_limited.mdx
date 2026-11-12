@@ -1,0 +1,30 @@
+---
+title: rate_limited
+description: "429 Rate limited."
+---
+
+HTTP **429**. `type`: `https://docs.xebra.exchange/errors/rate_limited`
+
+## What it means
+
+Too many requests in a short time.
+
+## What to do
+
+Wait for the number of seconds in the `Retry-After` header, then ask again. The SDK's `waitForDelivery` waits this out on its own.
+
+<Callout>Per-key limits arrive with API keys. See the [changelog](/docs/changelog).</Callout>
+
+## Example
+
+```json
+{
+  "type": "https://docs.xebra.exchange/errors/rate_limited",
+  "title": "Rate limited",
+  "status": 429,
+  "detail": "…",
+  "code": "rate_limited"
+}
+```
+
+Every error has this shape. See [Errors](/docs/errors) for how to handle them.

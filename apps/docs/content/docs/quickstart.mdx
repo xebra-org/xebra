@@ -1,0 +1,163 @@
+---
+title: Quickstart
+description: Price a transfer, build it for your user's wallet, and follow it to delivery, in about five minutes.
+---
+
+This page takes one transfer from start to finish: 25 USDC from Stellar to Base. You price it, build
+the unsigned transaction, have the user's wallet sign it, and follow the burn until the USDC
+arrives. Xebra never sees a private key; your user's wallet signs every transaction.
+
+<Callout title="Mainnet only">
+  The API answers for mainnet. A quote or a build is free and moves nothing. Only a transaction your
+  user signs and submits moves real USDC.
+</Callout>
+
+<Steps>
+<Step>
+
+### Install the SDK
+
+```sh
+npm install @xebra/sdk
+```
+
+The SDK needs Node 20 or later, or any runtime with `fetch`. No API key is needed.
+
+</Step>
+<Step>
+
+### Price the transfer
+
+```ts twoslash
+import { createXebraClient } from "@xebra/sdk";
+
+const xebra = createXebraClient();
+
+const quote = await xebra.quote({ from: "stellar", to: "base", amount: "25" });
+console.log(`${quote.recipientGets} USDC arrives; fees ${quote.fees.total} USDC`);
+```
+
+Amounts are decimal strings of USDC with at most six places (`"25"`, `"12.5"`), never numbers.
+Fees come out of the amount: the recipient gets `amount` minus `fees.total`. A quote is good until
+`expiresAt`, then ask again. See [Fees](/docs/concepts/fees) for what each part pays for.
+
+</Step>
+<Step>
+
+### Build the transfer
+
+```ts twoslash
+import { createXebraClient } from "@xebra/sdk";
+const xebra = createXebraClient();
+const quote = await xebra.quote({ from: "stellar", to: "base", amount: "25" });
+// ---cut---
+const { steps } = await xebra.createTransfer({
+  from: "stellar",
+  to: "base",
+  amount: "25",
+  sender: "GABC...", // the Stellar account that signs and pays
+  recipient: "0x1234...", // who receives on Base
+  maxTotalFee: quote.fees.total, // refuse if fees rose since the quote
+});
+
+for (const step of steps) {
+  console.log(step.id, step.description);
+}
+```
+
+`steps` is the list of transactions to sign, in order. From Stellar it is one step, `burn`, whose
+`tx` is a Stellar transaction (`tx.kind === "stellar"`, base64 XDR plus the network passphrase).
+From an EVM chain there can be an `approve` step before the `burn`. Nothing has been signed or sent.
+
+</Step>
+<Step>
+
+### Sign and submit
+
+Hand each step's `tx` to the user's wallet, in order, and submit it. With Freighter on Stellar:
+
+```ts
+import { signTransaction } from "@stellar/freighter-api";
+import { TransactionBuilder, rpc } from "@stellar/stellar-sdk";
+
+const step = steps[0];
+if (step.tx.kind !== "stellar") throw new Error("expected a Stellar transaction");
+
+const { signedTxXdr } = await signTransaction(step.tx.xdr, {
+  networkPassphrase: step.tx.networkPassphrase,
+});
+const server = new rpc.Server("https://your-soroban-rpc.example");
+const sent = await server.sendTransaction(
+  TransactionBuilder.fromXDR(signedTxXdr, step.tx.networkPassphrase),
+);
+const burnHash = sent.hash; // 64 hex characters
+```
+
+Submit before the step's `expiresAt`. After that, build the transfer again.
+[Wallet integration](/docs/guides/wallet-integration) covers LOBSTR, EVM wallets and Sui wallets.
+
+</Step>
+<Step>
+
+### Follow the burn
+
+```ts twoslash
+import { createXebraClient } from "@xebra/sdk";
+const xebra = createXebraClient();
+declare const burnHash: string;
+// ---cut---
+const status = await xebra.waitForDelivery("stellar", burnHash);
+
+if (status.state === "delivered") {
+  console.log("Delivered in", status.deliveryTx);
+} else {
+  // needs_claim or failed: the recipient can finish it at status.claimUrl
+  console.log(status.state, status.reason, status.claimUrl);
+}
+```
+
+`waitForDelivery` asks every 5 seconds, for up to 30 minutes, until the transfer is delivered, needs
+a claim, or failed. To check once, call `xebra.getTransfer("stellar", burnHash)`.
+[Track a transfer](/docs/guides/track-a-transfer) explains each state.
+
+</Step>
+</Steps>
+
+## The same with curl
+
+The SDK is a thin client over the HTTP API at `https://api.xebra.exchange/v1`. Anything you can do
+with it you can do with plain HTTP.
+
+```sh title="Price"
+curl "https://api.xebra.exchange/v1/quote?from=stellar&to=base&amount=25"
+```
+
+```sh title="Build"
+curl -X POST https://api.xebra.exchange/v1/transfers \
+  -H "Content-Type: application/json" \
+  -d '{
+    "from": "stellar",
+    "to": "base",
+    "amount": "25",
+    "sender": "GABC...",
+    "recipient": "0x1234...",
+    "maxTotalFee": "0.35"
+  }'
+```
+
+Set `maxTotalFee` to the `fees.total` from the quote you showed the user.
+
+```sh title="Follow"
+curl https://api.xebra.exchange/v1/transfers/stellar/<burn-hash>
+```
+
+Errors come back as JSON problems with a stable `code`; see [the API overview](/docs/api).
+
+## Next
+
+<Cards>
+  <Card title="Routes" href="/docs/concepts/routes" description="Which chains reach which, right now." />
+  <Card title="Send from an EVM chain" href="/docs/guides/send-from-evm" description="Approve, burn, and follow it." />
+  <Card title="SDK client" href="/docs/sdk/client" description="Every method and option." />
+  <Card title="API reference" href="/docs/api" description="Every endpoint, with a playground." />
+</Cards>

@@ -1,0 +1,51 @@
+---
+title: Xebra
+description: Move native USDC between chains over Circle CCTP, from your own app.
+---
+
+Xebra moves native USDC between Stellar, Sui, Solana and EVM chains over Circle's Cross-Chain
+Transfer Protocol (CCTP). USDC is burned on one chain and minted on the other. Nothing is wrapped,
+and no pool sits in the middle.
+
+You can build it into a wallet, an exchange or any app that holds USDC:
+
+- **Quote** a transfer: what it costs and what the recipient gets.
+- **Build** it: the API returns unsigned transactions, in the order the wallet signs them.
+- **Track** it: from the burn to the mint on the destination.
+- **Claim** it, in the rare case a delivery does not complete on its own.
+
+Xebra never holds keys or funds. The API builds transactions; your user's wallet signs and sends
+them. No endpoint takes a private key.
+
+<Cards>
+  <Card title="Quickstart" href="/docs/quickstart">
+    A first quote and a first unsigned transfer, in five minutes.
+  </Card>
+  <Card title="API reference" href="/docs/api">
+    Six endpoints over HTTPS, described in OpenAPI 3.1, with a playground.
+  </Card>
+  <Card title="SDK" href="/docs/sdk">
+    `@xebra/sdk` for TypeScript: a typed client, and builders for your own RPC.
+  </Card>
+</Cards>
+
+## How a transfer goes
+
+```text
+quote ──► build ──► user signs and sends ──► burn on source ──► Circle attests ──► mint on destination
+```
+
+1. Ask for a quote with `GET /v1/quote`, and show the user the fees and what arrives.
+2. Build with `POST /v1/transfers`. You get one or more steps, each an unsigned transaction.
+3. The user's wallet signs each step in order, and you send it to its chain.
+4. Circle attests the burn. Circle's Forwarding Service, or Xebra's forwarder on Stellar, mints on the
+   destination. See [who delivers](/docs/concepts/forwarding).
+5. Follow it with `GET /v1/transfers/{chain}/{tx}` until it is `delivered`.
+
+## Where to go next
+
+- New to CCTP? Read [how CCTP works](/docs/concepts/cctp) and [fees](/docs/concepts/fees).
+- Sending from a particular chain? Start with the [guides](/docs/guides).
+- Using Claude or another AI assistant? Connect the [MCP server](/docs/mcp).
+- Every page on this site is also available as Markdown: add `.md` to its URL, or read
+  [`/llms.txt`](/llms.txt).

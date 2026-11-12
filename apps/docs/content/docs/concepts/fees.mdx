@@ -1,0 +1,110 @@
+---
+title: Fees
+description: What a transfer costs, who is paid, and how the figures in a quote are made.
+---
+
+Every quote splits the cost into three parts, all in USDC and all taken out of the amount sent.
+The recipient gets `amount` minus `fees.total`, and nothing else is charged in USDC.
+
+| Field | Who is paid | When it is non-zero |
+|---|---|---|
+| `fees.xebra` | Xebra | Transfers through a Xebra fee contract (out of Stellar today) |
+| `fees.circle` | Circle, for Fast Transfer | Fast transfers only |
+| `fees.delivery` | Circle's Forwarding Service, for minting on the destination | Every route Circle forwards |
+| `fees.total` | | The sum of the three |
+
+The sender also pays the source chain's own network fee (XLM, ETH, SUI and so on) for the
+transactions they sign. That is outside the quote.
+
+<Callout title="Ask, don't compute">
+Fees move with gas prices and with Circle's quotes. Call [`GET /v1/quote`](/docs/api/quotes/get-quote)
+for the figure, and pass its `fees.total` as `maxTotalFee` when you build the transfer, so the API
+refuses (`fee_above_limit`) if the price rose in between. A quote is good until its `expiresAt`, one
+minute after it was made.
+</Callout>
+
+## Out of Stellar
+
+Transfers out of Stellar go through Xebra's fee contract on Stellar. Its rule, as set on the
+contract on 2026-09-24 and unchanged as of 2026-11-12:
+
+- Xebra's base fee is **0.10% of the amount, at least 0.30 USDC**.
+- Circle's delivery fee is paid **out of** that base fee, not added to it.
+- If Circle's delivery fee is larger than the base fee, the sender pays Circle's fee and Xebra keeps
+  nothing on that transfer.
+
+In the quote's terms:
+
+```text
+total    = max(0.10% × amount, 0.30, delivery)
+xebra    = total − delivery
+received = amount − total
+```
+
+For example, with a delivery fee of 0.0215 USDC (a figure Circle quoted for Arc on 2026-09-21):
+10 USDC costs 0.30 in total, of which Xebra keeps 0.2785, and 9.70 arrives. 1,000 USDC would cost
+1.00 in total, but see the limits below.
+
+Stellar USDC has seven decimal places and CCTP has six. A transfer never burns a fraction of the
+seventh place: anything below one six-decimal unit stays in the sender's wallet, and Xebra's share
+is shown rounded up to six places.
+
+### Limits
+
+The contract takes **1 to 100 USDC per transfer** (as of 2026-11-12). Those limits stay low while
+the contracts have had no external audit. The quote reports the live limits as `minimum` and
+`maximum`; an amount outside them is refused with `amount_below_minimum` or `amount_above_maximum`.
+
+The effective minimum can be higher than the contract's: Circle's delivery fee may be at most a
+tenth of the amount (see below), so a route with a larger delivery fee needs a larger transfer. A new
+Solana recipient, whose USDC account Circle opens, costs the most. `minimum` in the quote already
+includes this, with a small margin for the fee moving.
+
+## Out of EVM chains
+
+Transfers out of an EVM chain, as the API builds them today, call Circle's `TokenMessengerV2`
+directly. There is **no Xebra fee** (`fees.xebra` is `"0"`). The sender pays:
+
+- `fees.delivery`: Circle's delivery fee for the destination.
+- `fees.circle`: Circle's Fast Transfer fee, a small fraction of the amount, on Fast transfers only.
+
+Xebra has a fee contract on Arc that applies the same rule as Stellar's. While it is switched on
+for the site, the API does not build transfers out of EVM chains, and
+[`POST /v1/transfers`](/docs/api/transfers/create-transfer) answers `route_unavailable` for them,
+so that a transaction from the API never carries a different fee from the one the site shows.
+
+## Out of Sui
+
+Sui to Stellar has no fee from Xebra or from Circle as of 2026-11-12: every fee field is `"0"` and
+the recipient gets the whole amount. The Stellar fee for the mint is paid by Xebra's relayer, or by
+whoever claims it.
+
+## Circle's delivery fee
+
+Circle's Forwarding Service charges for minting on the destination and paying the gas there. It
+differs by destination by about two orders of magnitude (cents on Arc, more on Solana, more again on
+Ethereum-like chains) and moves with gas prices.
+
+Because Circle keeps the whole fee the burn allows (see [Forwarding](/docs/concepts/forwarding)),
+Xebra bounds it before anyone signs:
+
+1. At most a **cap per destination chain**. On Stellar, the contract holds the cap for each
+   destination, and a contract-wide ceiling of 2 USDC that no admin can raise.
+2. At most **a tenth of the amount**. A transfer where fees would take more is refused with
+   `amount_below_minimum`, and the error's `minimum` says how much would work.
+
+## Ceilings no one can change
+
+These are written into the contracts and cannot be changed by an admin:
+
+- Xebra's percentage fee can never exceed 1%.
+- Circle's delivery fee can never exceed 2 USDC per transfer through a Xebra contract.
+
+Anything else that would raise a fee or loosen a limit waits 48 hours in public before it takes
+effect. See [Security](/docs/concepts/security).
+
+## Related
+
+- [`GET /v1/quote`](/docs/api/quotes/get-quote)
+- [Forwarding](/docs/concepts/forwarding)
+- [Routes](/docs/concepts/routes)

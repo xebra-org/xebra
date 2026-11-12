@@ -1,0 +1,30 @@
+---
+title: invalid_request
+description: "400 Invalid request."
+---
+
+HTTP **400**. `type`: `https://docs.xebra.exchange/errors/invalid_request`
+
+## What it means
+
+The request was malformed: a missing or unknown field, a chain name the API does not know, an address in the wrong format for its chain, or a body that is not JSON (or is over 16 KB).
+
+## What to do
+
+Read `detail`. It names the field and what was wrong with it, for up to five problems at once. Fix the request; asking again unchanged gives the same answer.
+
+<Callout>`POST` bodies are strict: a field the schema does not name is refused, so a typo such as `recipent` fails here instead of being ignored.</Callout>
+
+## Example
+
+```json
+{
+  "type": "https://docs.xebra.exchange/errors/invalid_request",
+  "title": "Invalid request",
+  "status": 400,
+  "detail": "…",
+  "code": "invalid_request"
+}
+```
+
+Every error has this shape. See [Errors](/docs/errors) for how to handle them.

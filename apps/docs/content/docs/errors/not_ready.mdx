@@ -1,0 +1,28 @@
+---
+title: not_ready
+description: "409 Not ready."
+---
+
+HTTP **409**. `type`: `https://docs.xebra.exchange/errors/not_ready`
+
+## What it means
+
+A claim was asked for before Circle has attested the burn, so there is nothing to mint yet.
+
+## What to do
+
+Wait and ask again. Follow the transfer with [`GET /v1/transfers/{chain}/{tx}`](/docs/api/transfers/get-transfer) until its state is `needs_claim`.
+
+## Example
+
+```json
+{
+  "type": "https://docs.xebra.exchange/errors/not_ready",
+  "title": "Not ready",
+  "status": 409,
+  "detail": "…",
+  "code": "not_ready"
+}
+```
+
+Every error has this shape. See [Errors](/docs/errors) for how to handle them.
