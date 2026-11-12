@@ -44,10 +44,16 @@ async function call<T>(path: string, init: RequestInit = {}, timeoutMs = 30_000)
     // fall through with the raw text
   }
   if (!res.ok) {
-    const message =
+    const said =
       body && typeof body === "object" && "message" in body && typeof body.message === "string"
         ? body.message
-        : `1Click answered ${res.status}`;
+        : null;
+    // 1Click answers some bad inputs, a recipient account that does not exist among them, with a
+    // bare "Internal server error". Say what usually causes it instead of repeating that.
+    const message =
+      res.status >= 500
+        ? "NEAR Intents could not quote this. Check that the recipient account exists on its chain, then try again."
+        : (said ?? `1Click answered ${res.status}`);
     throw new OneClickError(message, res.status);
   }
   return body as T;
