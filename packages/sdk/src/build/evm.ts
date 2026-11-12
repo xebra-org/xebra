@@ -1,14 +1,19 @@
-import {
-  type BurnRecipient,
-  type Finality,
-  encodeApprove,
-  encodeDepositForBurnWithHook,
-  encodeWrapperBridge,
-} from "@xebra/cctp-evm";
+import { encodeApprove, encodeDepositForBurnWithHook, encodeWrapperBridge } from "@xebra/cctp-evm";
 import type { EvmChain } from "../core/chains/evm.js";
 import type { TransferStep } from "./types.js";
 
 type Hex = `0x${string}`;
+
+/**
+ * `@xebra/cctp-evm`'s `BurnRecipient` and `Finality`, restated here: the declaration bundler does
+ * not inline type-only imports from that private package, so the published `.d.ts` would point at
+ * a file npm users never get. The encoders below take these values, so a drift fails to compile.
+ */
+export type BurnRecipient =
+  | string
+  | { kind: "solana"; tokenAccount: Hex; createAccountFor?: Hex | undefined };
+/** Circle's two speeds, as the finality a burn asks for: 1000 Fast, 2000 Standard. */
+export type Finality = 1000 | 2000;
 
 /** A burn from an EVM chain, straight to Circle or through Xebra's wrapper (`via`). */
 export interface EvmBurnInput {
