@@ -1,4 +1,16 @@
-# Xebra
+<p align="center">
+  <img src="apps/web/public/icon.svg" alt="Xebra" width="96" height="96">
+</p>
+
+<h1 align="center">Xebra</h1>
+
+<p align="center">
+  <a href="https://xebra.exchange">App</a> ·
+  <a href="https://docs.xebra.exchange">Docs</a> ·
+  <a href="https://docs.xebra.exchange/docs/api">API</a> ·
+  <a href="https://www.npmjs.com/package/@xebra/sdk">SDK</a> ·
+  <a href="https://x.com/xebra_exchange">X</a>
+</p>
 
 <img src="film/xebra-film.webp" alt="The Xebra film: a user signs once on Stellar, Circle attests the burn, the relay pays the SOL, and USDC lands on Solana." width="100%">
 
