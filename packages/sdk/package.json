@@ -20,6 +20,10 @@
       "types": "./dist/build/index.d.ts",
       "import": "./dist/build/index.js"
     },
+    "./intents": {
+      "types": "./dist/intents/index.d.ts",
+      "import": "./dist/intents/index.js"
+    },
     "./openapi": {
       "types": "./dist/api/openapi.d.ts",
       "import": "./dist/api/openapi.js"
@@ -27,7 +31,12 @@
     "./openapi.json": "./openapi.json",
     "./package.json": "./package.json"
   },
-  "files": ["dist", "openapi.json", "README.md", "LICENSE"],
+  "files": [
+    "dist",
+    "openapi.json",
+    "README.md",
+    "LICENSE"
+  ],
   "engines": {
     "node": ">=20"
   },
@@ -66,7 +75,14 @@
   "bugs": {
     "url": "https://github.com/xebra-org/xebra/issues"
   },
-  "keywords": ["usdc", "cctp", "circle", "stellar", "bridge", "sdk"],
+  "keywords": [
+    "usdc",
+    "cctp",
+    "circle",
+    "stellar",
+    "bridge",
+    "sdk"
+  ],
   "publishConfig": {
     "access": "public",
     "provenance": true

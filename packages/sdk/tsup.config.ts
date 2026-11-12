@@ -10,6 +10,7 @@ export default defineConfig({
     index: "src/index.ts",
     "core/index": "src/core/index.ts",
     "build/index": "src/build/index.ts",
+    "intents/index": "src/intents/index.ts",
     "api/openapi": "src/api/openapi.ts",
   },
   format: ["esm"],
