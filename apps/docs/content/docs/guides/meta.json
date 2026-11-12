@@ -8,6 +8,7 @@
     "track-a-transfer",
     "claim-a-stuck-transfer",
     "wallet-integration",
+    "near-intents",
     "webhooks",
     "integrator-fees"
   ]

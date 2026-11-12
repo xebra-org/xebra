@@ -35,6 +35,44 @@ the same transaction, or the whole transaction reverts and the user keeps every 
 wrapper does hold it, within one transaction, because Circle's EVM messenger burns from the caller;
 see [`SECURITY.md`](./SECURITY.md).)
 
+## NEAR HACKATHON: Stellar USDC into NEAR Intents
+
+Built for [NEAR HACKATHON](https://nearhackathon.com) (tracks: Unstoppable DeFi, Open Innovation).
+
+**The problem.** NEAR Intents can swap into almost anything, but its solvers do not quote USDC that
+starts on Stellar: on 2026-11-12, 1Click answered `Quoting for this pair is not available` for Stellar
+USDC into USDC on Base, NEAR and Solana, at every amount tried. NEAR Intents moves money on and off
+NEAR through bridges; nothing in it moves USDC from one chain to another.
+
+**What we built.** Xebra carries the USDC part of the swap over Circle's CCTP (burn on Stellar, Circle
+mints native USDC on Base) straight into the deposit address 1Click issues, and NEAR Intents takes it
+from there. One signature on Stellar, about two minutes, and 25 USDC on Stellar became 24.697 USDC on
+NEAR in a live quote. Nothing changes on the NEAR Intents side.
+
+- [`@xebra/sdk/intents`](packages/sdk/src/intents/index.ts): `isRouteAvailable(from, to)` so NEAR
+  Intents asks Xebra first and keeps its usual path when the answer is no (new CCTP routes are picked
+  up with no code change); `usdcChainOf(token)` to recognise Circle's USDC by contract address;
+  `buildDeposit(...)` to send USDC straight to a 1Click deposit address; `intentsAccountFor(G...)`,
+  the NEAR Intents account a Stellar key already owns (SEP-53), for refunds.
+- [`/near-intents`](apps/web/app/near-intents): a page that prices the swap both ways side by side from
+  live quotes, asks for one Stellar signature, and follows both legs to delivery.
+- [Integration guide](apps/docs/content/docs/guides/near-intents.mdx) for NEAR Intents teams, live at
+  [docs.xebra.exchange/docs/guides/near-intents](https://docs.xebra.exchange/docs/guides/near-intents).
+
+**Try it.**
+
+1. Open [xebra.exchange/near-intents](https://xebra.exchange/near-intents). Enter `10`, pick **USDC on
+   NEAR**, enter any existing NEAR account as recipient. You see "Straight into NEAR Intents: Not
+   available" next to "Through Xebra: 9.699 USDC", with Xebra's fee, Circle's fee and the time.
+2. Connect a Stellar wallet holding USDC and press **Send through Xebra**. Sign once. The page shows
+   the Stellar burn, Circle's mint on Base, then NEAR Intents' delivery, each with its explorer link.
+3. Locally: `pnpm install`, then `pnpm --filter @xebra/sdk test` runs the module's tests (no network).
+
+**What was built in the hackathon window.** Xebra itself (the CCTP bridge, contracts, API and SDK) was
+built before the hackathon and is live on mainnet. Only the NEAR Intents integration is entered:
+[`near-hackathon-baseline...near-hackathon-submission`](https://github.com/xebra-org/xebra/compare/near-hackathon-baseline...near-hackathon-submission).
+It uses NEAR Intents' public 1Click API and token list, Circle's CCTP, and our own `@xebra/sdk`.
+
 ## Status
 
 | | |

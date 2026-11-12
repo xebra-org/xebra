@@ -1,0 +1,190 @@
+---
+title: NEAR Intents
+description: Move USDC between chains for NEAR Intents with Circle's CCTP. Ask Xebra first, keep your usual path when it says no.
+---
+
+This guide is for teams building on [NEAR Intents](https://docs.near-intents.org): the 1Click API,
+solvers and wallets. It shows how to hand the USDC part of a cross-chain swap to Xebra, and how to
+fall back to your existing path when Xebra does not cover a route.
+
+## Why
+
+NEAR Intents settles trades between balances in its Verifier contract and moves money on and off NEAR
+through bridges (Omni, POA, HOT). It does not move USDC from one chain to another: when a user's USDC
+is on one chain and the liquidity is on another, a solver has to carry it across, or there is no
+quote at all.
+
+Two things follow from that, both visible from the public API:
+
+- **Some chains get no quotes.** On 12 November 2026, 1Click answered `Quoting for this pair is not
+  available` for Stellar USDC into USDC on Base, NEAR and Solana, at every amount we tried. Stellar
+  USDC enters NEAR Intents through the HOT bridge, and no solver quotes it.
+- **USDC is split by bridge.** The same USDC on Base is a different asset in NEAR Intents depending on
+  which bridge brought it in, and solvers convert between them by withdrawing and depositing again
+  ([Move HOT liquidity to Omni tokens](https://docs.near-intents.org/integration/market-makers/hot-to-omni)).
+
+Circle's CCTP moves USDC between chains one for one: it burns on the source chain and Circle mints
+native USDC on the destination. There is no pool, so there is no slippage and nothing to rebalance.
+Xebra runs CCTP between Stellar, Sui, Solana and the EVM chains, and is adding every chain CCTP
+supports.
+
+## How it fits
+
+```text
+User's USDC on Stellar
+  -> Xebra: burn on Stellar, Circle mints on Base          (one signature, on Stellar)
+  -> straight into the 1Click deposit address on Base
+  -> NEAR Intents swaps it and delivers anything, anywhere  (unchanged)
+```
+
+NEAR Intents changes nothing on its side. The deposit address is the one 1Click already issues; Xebra
+is only how the USDC gets there. If NEAR Intents cannot fill the swap, its refund goes where the quote
+says.
+
+## Install
+
+```bash
+npm install @xebra/sdk
+```
+
+`@xebra/sdk/intents` holds everything on this page. It runs in Node and browsers.
+
+## Ask before you route
+
+`isRouteAvailable(from, to)` answers from Xebra's live route list, cached for 30 seconds. Chains can
+be named the way NEAR Intents names them (`sol`, `arb`, `base`, `stellar`) or the way Xebra does. When
+Xebra switches on a new route, the answer changes with no code change on your side.
+
+```ts twoslash
+import { createXebraClient } from "@xebra/sdk";
+import { createIntentsRouter } from "@xebra/sdk/intents";
+
+const router = createIntentsRouter({ client: createXebraClient() });
+
+// Your existing path, unchanged.
+declare function usualPath(from: string, to: string): Promise<void>;
+declare function viaXebra(from: string, to: string): Promise<void>;
+
+async function moveUsdc(from: string, to: string) {
+  // Unknown chains answer false; an unreachable Xebra rejects. Both mean: keep your usual path.
+  const ok = await router.isRouteAvailable(from, to).catch(() => false);
+  return ok ? viaXebra(from, to) : usualPath(from, to);
+}
+```
+
+`pickHub(from)` returns the first of Base, Arbitrum and Solana that Xebra reaches from `from` right
+now, or `null`. Use it when the user's own chain has no quotes and you need a chain that does.
+
+## Recognise USDC
+
+Only Circle's own USDC can move over CCTP. `usdcChainOf(token)` takes an entry from 1Click's
+`/v0/tokens` and returns the chain on which it is Circle's USDC, or `null`. It compares the contract
+address, never the symbol, so a token that only calls itself USDC is refused.
+
+```ts twoslash
+import { type IntentsToken, usdcChainOf } from "@xebra/sdk/intents";
+
+const tokens = (await fetch("https://1click.chaindefuser.com/v0/tokens").then((r) =>
+  r.json(),
+)) as IntentsToken[];
+
+const stellarUsdc = tokens.find((t) => usdcChainOf(t) === "stellar");
+const baseUsdc = tokens.find((t) => usdcChainOf(t) === "base");
+```
+
+## Build the deposit
+
+Get a real (non-dry) 1Click quote whose `originAsset` is USDC on the hub chain, then have Xebra send
+the user's USDC straight to its `depositAddress`. `buildDeposit` refuses a route Xebra does not offer
+before building anything, so you can fall back before showing the user a signature.
+
+```ts twoslash
+import { createXebraClient } from "@xebra/sdk";
+import { createIntentsRouter, intentsAccountFor } from "@xebra/sdk/intents";
+
+declare const sender: string; // the user's Stellar account, G...
+declare const recipient: string; // where NEAR Intents delivers
+declare const destinationAsset: string; // a 1Click asset id
+declare const baseUsdcAssetId: string; // from usdcChainOf, above
+
+const xebra = createXebraClient();
+const router = createIntentsRouter({ client: xebra });
+
+// 1. What Xebra delivers on Base for 25 USDC from Stellar, after its fee and Circle's.
+const leg = await xebra.quote({ from: "stellar", to: "base", amount: "25" });
+
+// 2. A real 1Click quote for that amount, from USDC on Base. It issues the deposit address.
+const res = await fetch("https://1click.chaindefuser.com/v0/quote", {
+  method: "POST",
+  headers: { "content-type": "application/json" },
+  body: JSON.stringify({
+    dry: false,
+    swapType: "FLEX_INPUT",
+    slippageTolerance: 100,
+    originAsset: baseUsdcAssetId,
+    depositType: "ORIGIN_CHAIN",
+    destinationAsset,
+    amount: String(Math.round(Number(leg.recipientGets) * 1e6)),
+    recipient,
+    recipientType: "DESTINATION_CHAIN",
+    // The user has no wallet on Base. Their Stellar key already owns a NEAR Intents account.
+    refundTo: intentsAccountFor(sender),
+    refundType: "INTENTS",
+    deadline: new Date(Date.now() + 3_600_000).toISOString(),
+  }),
+});
+const { quote } = (await res.json()) as { quote: { depositAddress: string } };
+
+// 3. The Stellar transaction that sends the USDC there. The user's wallet signs it.
+const { steps } = await router.buildDeposit({
+  from: "stellar",
+  depositChain: "base",
+  depositAddress: quote.depositAddress,
+  sender,
+  amount: "25",
+  maxTotalFee: leg.fees.total, // refuse if Xebra's or Circle's fee rose since the quote
+});
+```
+
+`steps` is one Stellar transaction; see [Wallet integration](/docs/guides/wallet-integration) for
+signing it. Then follow the two legs: Xebra's with `xebra.getTransfer("stellar", hash)` and NEAR
+Intents' with `GET /v0/status?depositAddress=...`.
+
+`FLEX_INPUT` lets the deposit land at whatever Xebra delivers. It is exact in practice, since Circle
+charges the delivery fee the quote shows.
+
+## A Stellar wallet already has a NEAR Intents account
+
+NEAR Intents verifies signatures made with Stellar's signed-message standard (SEP-53) and names the
+signer's account after its ed25519 public key in hex. `intentsAccountFor("G...")` returns that
+account. Refunds sent there belong to the user, who withdraws them by signing with the same Stellar
+wallet. Nothing has to be created first.
+
+## Costs and timing
+
+Prices on 12 November 2026, 25 USDC from Stellar, from live quotes:
+
+| Leg | Cost | Time |
+|---|---|---|
+| Xebra, Stellar to Base | 0.30 USDC: Xebra's 0.10% (at least 0.30), Circle's delivery fee paid out of it | about a minute |
+| NEAR Intents, USDC on Base to USDC on NEAR | about 0.003 USDC | about 35 s |
+| **Total** | **24.697 USDC arrives on NEAR** | **about 2 minutes** |
+| Straight into NEAR Intents from Stellar | No quote | |
+
+Xebra's fee and limits come from its contracts and can change through a 48-hour timelock; read them
+live with `xebra.quote`, never from this table.
+
+## Trust model
+
+- **Xebra never holds funds.** The user signs one Stellar transaction that pays Xebra's fee and burns
+  the rest with Circle in the same transaction; either all of it happens or none of it does. See
+  [Security](/docs/concepts/security).
+- **Circle mints the USDC** on the destination chain. Xebra adds no wrapped token and no pool.
+- **The deposit address is NEAR Intents'.** From the moment the USDC lands there, NEAR Intents'
+  usual rules apply, including its refunds.
+
+## Try it
+
+[xebra.exchange/near-intents](https://xebra.exchange/near-intents) does all of the above with a
+Stellar wallet: it prices both paths side by side, asks for one signature, and follows both legs.
+Its source is in [`apps/web/lib/near-intents`](https://github.com/xebra-org/xebra/tree/main/apps/web/lib/near-intents).
