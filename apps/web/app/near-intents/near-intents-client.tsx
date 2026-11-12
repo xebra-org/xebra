@@ -491,7 +491,12 @@ function Tracker({ tracked, onReset }: { tracked: Tracked; onReset: () => void }
 
   const xebraState = status?.xebra?.state ?? "pending";
   const intentsState = status?.intents?.status ?? "PENDING_DEPOSIT";
-  const xebraDone = XEBRA_DONE.has(xebraState);
+  // Xebra's own status can lag the chain by a few polls; a mint transaction, or NEAR Intents
+  // having seen the deposit at all, already proves the USDC arrived on the hub chain.
+  const xebraDone =
+    XEBRA_DONE.has(xebraState) ||
+    Boolean(status?.xebra?.deliveryTx) ||
+    ["PROCESSING", "SUCCESS", "REFUNDED"].includes(status?.intents?.status ?? "");
   const finished = INTENTS_DONE.has(intentsState);
   const out = status?.intents?.swapDetails?.destinationChainTxHashes?.[0];
   const hub = HUB_NAME[tracked.hub] ?? tracked.hub;
