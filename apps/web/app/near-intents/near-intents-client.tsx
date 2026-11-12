@@ -1,6 +1,5 @@
 "use client";
 
-import { TransactionBuilder, rpc } from "@stellar/stellar-sdk";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Badge } from "../../components/ui/badge";
 import { Button } from "../../components/ui/button";
@@ -12,7 +11,6 @@ import { ArrowRight, ArrowUpRight, Check } from "../../components/ui/icons";
 import { Notice } from "../../components/ui/notice";
 import { Skeleton } from "../../components/ui/skeleton";
 import { useWallets } from "../../components/wallet/wallet-provider";
-import { submitSigned } from "../../lib/cctp-bridge";
 import { env } from "../../lib/env";
 import { reportError } from "../../lib/format-error";
 
@@ -225,11 +223,12 @@ export function NearIntentsClient() {
       console.info("[xebra] near-intents: signed, submitting to Stellar");
 
       setStep("submitting");
-      const server = new rpc.Server(env.sorobanRpcUrl);
+      // Submitted by our server, which retries a failed connection; the browser's own link to
+      // Stellar's RPC is the part that dropped signed transfers with "Network Error".
       const { txHash } = await withTimeout(
-        submitSigned(server, TransactionBuilder.fromXDR(signedTxXdr, passphrase), "transfer"),
-        45_000,
-        "Stellar's network did not answer within 45 seconds. Check your wallet's activity before trying again: if the transaction shows there, it went through.",
+        post<{ txHash: string }>("/api/near-intents/submit", { xdr: signedTxXdr }),
+        90_000,
+        "Stellar's network did not answer in time. Check your wallet's activity before trying again: if the transaction shows there, it went through.",
       );
       if (!live()) return;
       console.info("[xebra] near-intents: submitted", txHash);
