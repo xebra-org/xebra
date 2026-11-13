@@ -80,3 +80,10 @@ terraform.rc
 # and stay off the public repo until they are fixed.
 film/
 reports/audit-*.md
+
+# Private working notes: partner outreach, strategy and raw research. Kept local, not published.
+reports/outreach/
+reports/reach-*
+reports/evidence-*/
+research_notes/
+docs/moat-strategy.md
