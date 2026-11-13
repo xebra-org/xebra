@@ -160,15 +160,30 @@ signer's account after its ed25519 public key in hex. `intentsAccountFor("G...")
 account. Refunds sent there belong to the user, who withdraws them by signing with the same Stellar
 wallet. Nothing has to be created first.
 
+## Proven on mainnet
+
+The first swap through this path ran on 12 November 2026: USDC on Stellar into USDC on NEAR, delivered
+to `that-guy.near`. Every step is on chain.
+
+| Step | When (UTC) | Transaction |
+|---|---|---|
+| Burned on Stellar: Xebra's contract took its fee and Circle burned the rest | 23:24:27 | [`95efc874...842b`](https://stellar.expert/explorer/public/tx/95efc874f62ed85b928c4886cdc943a0083594881e02c2916026b7bb4ced842b) |
+| Minted on Base by Circle, into the 1Click deposit address `0x4137...c9e5` | 23:24:38 | [`0x8d16acc8...940a`](https://basescan.org/tx/0x8d16acc88b2b07634a907a1f685fad0b7b4052094896d01d0651f2144dc8940a) |
+| Delivered on NEAR by a NEAR Intents solver (1Click status `SUCCESS`) | 23:25:03 | [`Hv1xrVs5...VAg7`](https://nearblocks.io/txns/Hv1xrVs5PLQvLPBm2CwR3kzbPirW1hK4Xd9KuoVzVAg7) |
+
+**36 seconds from the burn on Stellar to USDC in the NEAR wallet**: 11 for Circle to mint on Base, 25 for
+NEAR Intents to take the deposit and deliver. It also settled the one thing the code could not: NEAR
+Intents credits a deposit that arrives as a Circle mint, not only as an ordinary transfer.
+
 ## Costs and timing
 
 Prices on 12 November 2026, 25 USDC from Stellar, from live quotes:
 
 | Leg | Cost | Time |
 |---|---|---|
-| Xebra, Stellar to Base | 0.30 USDC: Xebra's 0.10% (at least 0.30), Circle's delivery fee paid out of it | about a minute |
-| NEAR Intents, USDC on Base to USDC on NEAR | about 0.003 USDC | about 35 s |
-| **Total** | **24.697 USDC arrives on NEAR** | **about 2 minutes** |
+| Xebra, Stellar to Base | 0.30 USDC: Xebra's 0.10% (at least 0.30), Circle's delivery fee paid out of it | 11 s on the first run |
+| NEAR Intents, USDC on Base to USDC on NEAR | about 0.003 USDC | 25 s on the first run (quoted about 35 s) |
+| **Total** | **24.697 USDC arrives on NEAR** | **36 s on the first run** |
 | Straight into NEAR Intents from Stellar | No quote | |
 
 Xebra's fee and limits come from its contracts and can change through a 48-hour timelock; read them

@@ -57,6 +57,11 @@ export default async function Page(props: PageProps<"/docs/[[...slug]]">) {
   );
 }
 
+// Every docs page is built ahead of time. An unknown slug answers 404 from the build instead of being
+// rendered on demand, which on Vercel failed with a 500 (the on-demand render could not load the
+// content the build had).
+export const dynamicParams = false;
+
 export async function generateStaticParams() {
   return source.generateParams();
 }

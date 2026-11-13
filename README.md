@@ -46,8 +46,8 @@ NEAR through bridges; nothing in it moves USDC from one chain to another.
 
 **What we built.** Xebra carries the USDC part of the swap over Circle's CCTP (burn on Stellar, Circle
 mints native USDC on Base) straight into the deposit address 1Click issues, and NEAR Intents takes it
-from there. One signature on Stellar, about two minutes, and 25 USDC on Stellar became 24.697 USDC on
-NEAR in a live quote. Nothing changes on the NEAR Intents side.
+from there. One signature on Stellar, 36 seconds on the first mainnet run, and 25 USDC on Stellar became
+24.697 USDC on NEAR in a live quote. Nothing changes on the NEAR Intents side.
 
 - [`@xebra/sdk/intents`](packages/sdk/src/intents/index.ts): `isRouteAvailable(from, to)` so NEAR
   Intents asks Xebra first and keeps its usual path when the answer is no (new CCTP routes are picked
@@ -58,6 +58,12 @@ NEAR in a live quote. Nothing changes on the NEAR Intents side.
   live quotes, asks for one Stellar signature, and follows both legs to delivery.
 - [Integration guide](apps/docs/content/docs/guides/near-intents.mdx) for NEAR Intents teams, live at
   [docs.xebra.exchange/docs/guides/near-intents](https://docs.xebra.exchange/docs/guides/near-intents).
+
+**Proven on mainnet.** The first swap, 2026-11-12, USDC on Stellar to USDC on `that-guy.near`, took 36
+seconds from burn to wallet:
+[burned on Stellar](https://stellar.expert/explorer/public/tx/95efc874f62ed85b928c4886cdc943a0083594881e02c2916026b7bb4ced842b) 23:24:27 UTC,
+[minted on Base](https://basescan.org/tx/0x8d16acc88b2b07634a907a1f685fad0b7b4052094896d01d0651f2144dc8940a) into the 1Click deposit address 23:24:38,
+[delivered on NEAR](https://nearblocks.io/txns/Hv1xrVs5PLQvLPBm2CwR3kzbPirW1hK4Xd9KuoVzVAg7) 23:25:03.
 
 **Try it.**
 
