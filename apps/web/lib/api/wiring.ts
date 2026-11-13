@@ -3,12 +3,16 @@ import { rpc } from "@stellar/stellar-sdk";
 import type { CircleHealth } from "@xebra/cctp-client";
 import { buildSuiBurn } from "@xebra/sdk/build";
 import { type FeeParams, stellarDestinations, wrapperFor } from "@xebra/sdk/core";
+import { GET as aptosStatus } from "../../app/api/aptos/status/route";
 import { GET as attestation } from "../../app/api/attestation/route";
 import { GET as circleHealth } from "../../app/api/circle-health/route";
 import { GET as delivery } from "../../app/api/delivery/route";
 import { GET as evmWrapper } from "../../app/api/evm-wrapper/route";
 import { GET as recipient } from "../../app/api/recipient/route";
 import { GET as suiStatus } from "../../app/api/sui-stellar/status/route";
+import { buildAptosTransfer } from "../aptos/build";
+import { APTOS_CCTP_DOMAIN, aptosDestinations, aptosMaxUsdcBase } from "../aptos/config";
+import { liveAptosBuildDeps } from "../aptos/live";
 import { getWrapperDomains, getWrapperFeeParams } from "../cctp-bridge";
 import { buildMintTransaction, prepareClaim } from "../claim";
 import { env } from "../env";
@@ -74,6 +78,7 @@ async function readJson(res: Response): Promise<Record<string, unknown> | null> 
 export const liveDeps: Deps = {
   siteUrl: SITE_URL,
   suiStellar: { enabled: suiStellarEnabled(), maxUnits: maxUsdcBase() },
+  aptos: { destinations: aptosDestinations(), maxUnits: aptosMaxUsdcBase() },
   evmRoutes: env.evmRoutes,
   stellarRoutes,
   evmWrapperAddress: (chain) => wrapperFor(chain, env.arcUseWrapper),
@@ -125,6 +130,11 @@ export const liveDeps: Deps = {
       await suiStatus(
         new Request(`${ORIGIN}/api/sui-stellar/status?digest=${encodeURIComponent(digest)}`),
       ),
+    );
+  },
+  async aptosStatus(tx) {
+    return readJsonAnyStatus(
+      await aptosStatus(new Request(`${ORIGIN}/api/aptos/status?tx=${encodeURIComponent(tx)}`)),
     );
   },
   build: {
@@ -182,6 +192,8 @@ export const liveDeps: Deps = {
       };
     },
     suiClaim: (digest, payer) => planClaim(digest, payer),
+    aptosBuild: (request) => buildAptosTransfer(request, liveAptosBuildDeps()),
+    aptosClaim: (tx, payer) => planClaim(tx, payer, APTOS_CCTP_DOMAIN),
   },
 };
 

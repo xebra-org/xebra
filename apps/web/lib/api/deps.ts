@@ -7,6 +7,8 @@ import type {
   EvmChain,
   FeeParams,
 } from "@xebra/sdk/core";
+import type { AptosBuildAnswer } from "../aptos/build";
+import type { AptosDestination } from "../aptos/config";
 import type { WrapperSettings } from "../evm-wrapper";
 
 /**
@@ -42,6 +44,13 @@ export interface Deps {
   suiStellar: { enabled: boolean; maxUnits: bigint | null };
   /** A Sui burn's progress, as `/api/sui-stellar/status` answers it. Null if unreadable. */
   suiStatus?(digest: string): Promise<Record<string, unknown> | null>;
+  /**
+   * Aptos as a source: where it may send (`APTOS_SENDS_TO`) and the per-transfer cap. Absent or
+   * empty means Aptos is off.
+   */
+  aptos?: { destinations: readonly AptosDestination[]; maxUnits: bigint | null };
+  /** An Aptos burn to Stellar's progress, as `/api/aptos/status` answers it. Null if unreadable. */
+  aptosStatus?(tx: string): Promise<Record<string, unknown> | null>;
   /** What building a transaction reads. Absent where nothing is built (the MCP tools). */
   build?: BuildDeps;
 }
@@ -93,6 +102,22 @@ export interface BuildDeps {
     | { state: "needs-owner"; reason: string }
     | { state: "delivered" }
   >;
+  /**
+   * The Aptos burn, built and checked as `/api/aptos/build` builds it (the fee priced again; the
+   * burn simulated on mainnet). Absent where Aptos is off.
+   */
+  aptosBuild?(request: {
+    sender: string;
+    amount: string;
+    to: string;
+    recipient: string;
+    maxFee?: string;
+  }): Promise<AptosBuildAnswer>;
+  /** The Stellar mint of an Aptos burn to Stellar, with `payer` paying the fee. */
+  aptosClaim?(
+    tx: string,
+    payer: string,
+  ): Promise<{ ok: true; xdr: string } | { ok: false; reason: string; delivered?: boolean }>;
   /** The Stellar mint of a Sui burn, with `payer` paying the fee. */
   suiClaim(
     digest: string,
