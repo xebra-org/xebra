@@ -1,0 +1,843 @@
+{
+  "id": "54c60509-abe5-4fb7-b003-68397baba3a1",
+  "prevId": "649f3ffe-992d-46d0-b501-46329614f919",
+  "version": "7",
+  "dialect": "postgresql",
+  "tables": {
+    "public.assets": {
+      "name": "assets",
+      "schema": "",
+      "columns": {
+        "chain_id": {
+          "name": "chain_id",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "asset_kind": {
+          "name": "asset_kind",
+          "type": "asset_kind",
+          "typeSchema": "public",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "asset_id": {
+          "name": "asset_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "symbol": {
+          "name": "symbol",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "decimals": {
+          "name": "decimals",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "is_native_usdc": {
+          "name": "is_native_usdc",
+          "type": "boolean",
+          "primaryKey": false,
+          "notNull": true,
+          "default": false
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {
+        "assets_chain_id_chains_id_fk": {
+          "name": "assets_chain_id_chains_id_fk",
+          "tableFrom": "assets",
+          "tableTo": "chains",
+          "columnsFrom": ["chain_id"],
+          "columnsTo": ["id"],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {
+        "assets_chain_id_asset_id_pk": {
+          "name": "assets_chain_id_asset_id_pk",
+          "columns": ["chain_id", "asset_id"]
+        }
+      },
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.cctp_transfers": {
+      "name": "cctp_transfers",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "source_chain_id": {
+          "name": "source_chain_id",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "dest_chain_id": {
+          "name": "dest_chain_id",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "initiator_address": {
+          "name": "initiator_address",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "burn_tx_ref": {
+          "name": "burn_tx_ref",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "message_hash": {
+          "name": "message_hash",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "amount": {
+          "name": "amount",
+          "type": "numeric(38, 0)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "attestation_status": {
+          "name": "attestation_status",
+          "type": "attestation_status",
+          "typeSchema": "public",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'pending'"
+        },
+        "mint_tx_ref": {
+          "name": "mint_tx_ref",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {
+        "cctp_transfers_source_chain_id_chains_id_fk": {
+          "name": "cctp_transfers_source_chain_id_chains_id_fk",
+          "tableFrom": "cctp_transfers",
+          "tableTo": "chains",
+          "columnsFrom": ["source_chain_id"],
+          "columnsTo": ["id"],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "cctp_transfers_dest_chain_id_chains_id_fk": {
+          "name": "cctp_transfers_dest_chain_id_chains_id_fk",
+          "tableFrom": "cctp_transfers",
+          "tableTo": "chains",
+          "columnsFrom": ["dest_chain_id"],
+          "columnsTo": ["id"],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.chains": {
+      "name": "chains",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "integer",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "name": {
+          "name": "name",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "kind": {
+          "name": "kind",
+          "type": "chain_kind",
+          "typeSchema": "public",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "rpc_config_ref": {
+          "name": "rpc_config_ref",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.claims": {
+      "name": "claims",
+      "schema": "",
+      "columns": {
+        "intent_hash": {
+          "name": "intent_hash",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "solver_address": {
+          "name": "solver_address",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "dest_tx_ref": {
+          "name": "dest_tx_ref",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "delivered_amount": {
+          "name": "delivered_amount",
+          "type": "numeric(38, 0)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "bond_amount": {
+          "name": "bond_amount",
+          "type": "numeric(38, 0)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "claimed_at": {
+          "name": "claimed_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "challenge_status": {
+          "name": "challenge_status",
+          "type": "challenge_status",
+          "typeSchema": "public",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'none'"
+        },
+        "challenger_address": {
+          "name": "challenger_address",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "challenged_at": {
+          "name": "challenged_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "resolved_at": {
+          "name": "resolved_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {
+        "claims_intent_hash_intents_intent_hash_fk": {
+          "name": "claims_intent_hash_intents_intent_hash_fk",
+          "tableFrom": "claims",
+          "tableTo": "intents",
+          "columnsFrom": ["intent_hash"],
+          "columnsTo": ["intent_hash"],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.corridors": {
+      "name": "corridors",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "source_chain_id": {
+          "name": "source_chain_id",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "dest_chain_id": {
+          "name": "dest_chain_id",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "escrow_contract_address": {
+          "name": "escrow_contract_address",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "challenge_window_seconds": {
+          "name": "challenge_window_seconds",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "bond_bps": {
+          "name": "bond_bps",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 1000
+        },
+        "active": {
+          "name": "active",
+          "type": "boolean",
+          "primaryKey": false,
+          "notNull": true,
+          "default": true
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {
+        "corridors_source_chain_id_chains_id_fk": {
+          "name": "corridors_source_chain_id_chains_id_fk",
+          "tableFrom": "corridors",
+          "tableTo": "chains",
+          "columnsFrom": ["source_chain_id"],
+          "columnsTo": ["id"],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "corridors_dest_chain_id_chains_id_fk": {
+          "name": "corridors_dest_chain_id_chains_id_fk",
+          "tableFrom": "corridors",
+          "tableTo": "chains",
+          "columnsFrom": ["dest_chain_id"],
+          "columnsTo": ["id"],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.escrow_events": {
+      "name": "escrow_events",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "intent_hash": {
+          "name": "intent_hash",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "chain_id": {
+          "name": "chain_id",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "event_type": {
+          "name": "event_type",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "tx_ref": {
+          "name": "tx_ref",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "block_or_ledger_number": {
+          "name": "block_or_ledger_number",
+          "type": "bigint",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "observed_at": {
+          "name": "observed_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {
+        "escrow_events_intent_hash_idx": {
+          "name": "escrow_events_intent_hash_idx",
+          "columns": [
+            {
+              "expression": "intent_hash",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "escrow_events_chain_id_chains_id_fk": {
+          "name": "escrow_events_chain_id_chains_id_fk",
+          "tableFrom": "escrow_events",
+          "tableTo": "chains",
+          "columnsFrom": ["chain_id"],
+          "columnsTo": ["id"],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.intents": {
+      "name": "intents",
+      "schema": "",
+      "columns": {
+        "intent_hash": {
+          "name": "intent_hash",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "corridor_id": {
+          "name": "corridor_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "user": {
+          "name": "user",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "source_asset_id": {
+          "name": "source_asset_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "source_amount": {
+          "name": "source_amount",
+          "type": "numeric(38, 0)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "dest_asset_id": {
+          "name": "dest_asset_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "min_dest_amount": {
+          "name": "min_dest_amount",
+          "type": "numeric(38, 0)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "dest_address": {
+          "name": "dest_address",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "expiry": {
+          "name": "expiry",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "nonce": {
+          "name": "nonce",
+          "type": "numeric(38, 0)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "status": {
+          "name": "status",
+          "type": "intent_status",
+          "typeSchema": "public",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'open'"
+        },
+        "raw_intent": {
+          "name": "raw_intent",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {
+        "intents_corridor_id_corridors_id_fk": {
+          "name": "intents_corridor_id_corridors_id_fk",
+          "tableFrom": "intents",
+          "tableTo": "corridors",
+          "columnsFrom": ["corridor_id"],
+          "columnsTo": ["id"],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.relay_jobs": {
+      "name": "relay_jobs",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "source_domain_id": {
+          "name": "source_domain_id",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "source_tx_hash": {
+          "name": "source_tx_hash",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "cctp_transfer_id": {
+          "name": "cctp_transfer_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "status": {
+          "name": "status",
+          "type": "relay_job_status",
+          "typeSchema": "public",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'queued'"
+        },
+        "message": {
+          "name": "message",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "attestation": {
+          "name": "attestation",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "dest_tx_signature": {
+          "name": "dest_tx_signature",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "attempts": {
+          "name": "attempts",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 0
+        },
+        "last_error": {
+          "name": "last_error",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "sol_gas_spent_lamports": {
+          "name": "sol_gas_spent_lamports",
+          "type": "numeric(38, 0)",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "next_attempt_at": {
+          "name": "next_attempt_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "leased_until": {
+          "name": "leased_until",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {
+        "relay_jobs_source_tx_idx": {
+          "name": "relay_jobs_source_tx_idx",
+          "columns": [
+            {
+              "expression": "source_domain_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "source_tx_hash",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "relay_jobs_due_idx": {
+          "name": "relay_jobs_due_idx",
+          "columns": [
+            {
+              "expression": "status",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "next_attempt_at",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "relay_jobs_cctp_transfer_id_cctp_transfers_id_fk": {
+          "name": "relay_jobs_cctp_transfer_id_cctp_transfers_id_fk",
+          "tableFrom": "relay_jobs",
+          "tableTo": "cctp_transfers",
+          "columnsFrom": ["cctp_transfer_id"],
+          "columnsTo": ["id"],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.solver_inventory_snapshots": {
+      "name": "solver_inventory_snapshots",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "chain_id": {
+          "name": "chain_id",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "asset_id": {
+          "name": "asset_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "balance": {
+          "name": "balance",
+          "type": "numeric(38, 0)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "observed_at": {
+          "name": "observed_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {
+        "solver_inventory_snapshots_chain_id_chains_id_fk": {
+          "name": "solver_inventory_snapshots_chain_id_chains_id_fk",
+          "tableFrom": "solver_inventory_snapshots",
+          "tableTo": "chains",
+          "columnsFrom": ["chain_id"],
+          "columnsTo": ["id"],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.watcher_cursors": {
+      "name": "watcher_cursors",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "cursor": {
+          "name": "cursor",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    }
+  },
+  "enums": {
+    "public.asset_kind": {
+      "name": "asset_kind",
+      "schema": "public",
+      "values": [
+        "native",
+        "evm_erc20",
+        "stellar_classic_asset",
+        "stellar_soroban_token",
+        "spl_token"
+      ]
+    },
+    "public.attestation_status": {
+      "name": "attestation_status",
+      "schema": "public",
+      "values": ["pending", "attested", "failed"]
+    },
+    "public.chain_kind": {
+      "name": "chain_kind",
+      "schema": "public",
+      "values": ["evm", "stellar", "solana"]
+    },
+    "public.challenge_status": {
+      "name": "challenge_status",
+      "schema": "public",
+      "values": ["none", "challenged", "resolved_valid", "resolved_invalid"]
+    },
+    "public.intent_status": {
+      "name": "intent_status",
+      "schema": "public",
+      "values": ["open", "claimed", "challenged", "finalized", "refunded"]
+    },
+    "public.relay_job_status": {
+      "name": "relay_job_status",
+      "schema": "public",
+      "values": ["queued", "waiting_attestation", "submitted", "confirmed", "failed"]
+    }
+  },
+  "schemas": {},
+  "sequences": {},
+  "roles": {},
+  "policies": {},
+  "views": {},
+  "_meta": {
+    "columns": {},
+    "schemas": {},
+    "tables": {}
+  }
+}
