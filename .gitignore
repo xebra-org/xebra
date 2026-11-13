@@ -72,3 +72,11 @@ terraform.rc
 # Throwaway local keys (e.g. the one-off Solana relayer used to finish a CCTP mint).
 # Never committed. Real operational keys belong in AWS Secrets Manager / KMS.
 .secrets/
+
+# local media and private reports
+#
+# film/ holds launch videos, GIFs and source clips (some not ours to publish). The two files
+# already tracked there (xebra-film.mp4, .webp) stay tracked. Audit reports list open findings
+# and stay off the public repo until they are fixed.
+film/
+reports/audit-*.md
