@@ -161,3 +161,47 @@ describe("a burn to Solana", () => {
     );
   });
 });
+
+describe("a burn to Stellar", () => {
+  // Circle's CctpForwarder on Stellar, as 32 bytes, and our hook naming a G... recipient.
+  const FORWARDER = `0x${"7c".repeat(32)}` as const;
+  const G = "GBZXN7PIRZGNMHGA7MUUUF4GWPY5AYPV6LY4UV2GL6VJGIQRXFDNMADI";
+  const body = Buffer.from(G, "utf8");
+  const header = Buffer.alloc(32);
+  header.writeUInt32BE(body.length, 28);
+  const HOOK = `0x${Buffer.concat([header, body]).toString("hex")}` as const;
+  const toStellar = { kind: "stellar", forwarder: FORWARDER, hookData: HOOK } as const;
+
+  it("mints to the forwarder, names it as the only caller, and carries the hook", () => {
+    const data = burn({ destinationDomain: 27, recipient: toStellar, maxFee: 0n });
+    const { args } = decodeFunctionData({ abi: tokenMessengerAbi, data });
+    expect(args[2]).toBe(FORWARDER);
+    expect(args[4]).toBe(FORWARDER);
+    expect(args[7]).toBe(HOOK);
+  });
+
+  it("refuses an EVM address or a Solana account as a Stellar recipient: the USDC would be stuck", () => {
+    expect(() => burn({ destinationDomain: 27, recipient: RECIPIENT })).toThrow(/Stellar/);
+    expect(() =>
+      burn({
+        destinationDomain: 27,
+        recipient: { kind: "solana", tokenAccount: FORWARDER },
+      }),
+    ).toThrow();
+  });
+
+  it("refuses a Stellar recipient anywhere but Stellar, and a hook whose length is wrong", () => {
+    expect(() => burn({ destinationDomain: 6, recipient: toStellar })).toThrow(/Stellar/);
+    const bad = `${HOOK.slice(0, -2)}` as `0x${string}`;
+    expect(() =>
+      burn({ destinationDomain: 27, recipient: { ...toStellar, hookData: bad }, maxFee: 0n }),
+    ).toThrow(/hook/);
+    expect(() =>
+      burn({
+        destinationDomain: 27,
+        recipient: { ...toStellar, forwarder: `0x${"00".repeat(32)}` },
+        maxFee: 0n,
+      }),
+    ).toThrow(/forwarder/);
+  });
+});

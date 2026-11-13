@@ -11,7 +11,9 @@ type Hex = `0x${string}`;
  */
 export type BurnRecipient =
   | string
-  | { kind: "solana"; tokenAccount: Hex; createAccountFor?: Hex | undefined };
+  | { kind: "solana"; tokenAccount: Hex; createAccountFor?: Hex | undefined }
+  /** Stellar: build it with `stellarBurnRecipient("G...")`, never by hand. */
+  | { kind: "stellar"; forwarder: Hex; hookData: Hex };
 /** Circle's two speeds, as the finality a burn asks for: 1000 Fast, 2000 Standard. */
 export type Finality = 1000 | 2000;
 

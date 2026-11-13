@@ -40,6 +40,23 @@ export function burnDestinationCaller(): string {
   return forwarderAsSuiAddress();
 }
 
+/**
+ * The recipient an EVM burn to Stellar names: Circle's `CctpForwarder` as the mint recipient and
+ * the only caller, and the hook naming the Stellar account it pays. Pass it as `recipient` to the
+ * EVM burn builders. Throws on anything but a G... account or C... contract.
+ */
+export function stellarBurnRecipient(recipient: string): {
+  kind: "stellar";
+  forwarder: `0x${string}`;
+  hookData: `0x${string}`;
+} {
+  return {
+    kind: "stellar",
+    forwarder: forwarderAsSuiAddress() as `0x${string}`,
+    hookData: `0x${Buffer.from(stellarForwardHook(recipient)).toString("hex")}`,
+  };
+}
+
 export function isStellarRecipient(value: string): boolean {
   return StrKey.isValidEd25519PublicKey(value) || StrKey.isValidContract(value);
 }

@@ -78,7 +78,7 @@ describe("which routes a build offers", () => {
 });
 
 describe("the EVM mesh", () => {
-  const mesh = (evmMesh: EnabledRoutes["evmMesh"]): EnabledRoutes => ({
+  const mesh = (evmMesh: NonNullable<EnabledRoutes["evmMesh"]>): EnabledRoutes => ({
     ...NO_ROUTES,
     evmMesh,
   });

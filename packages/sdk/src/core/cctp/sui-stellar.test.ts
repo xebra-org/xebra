@@ -1,10 +1,12 @@
 import { StrKey } from "@stellar/stellar-base";
+import { encodeDepositForBurnWithHook } from "@xebra/cctp-evm";
 import { describe, expect, it } from "vitest";
 import {
   STELLAR_CCTP_FORWARDER,
   burnDestinationCaller,
   forwarderAsSuiAddress,
   parseMessage,
+  stellarBurnRecipient,
   stellarForwardHook,
   verifyMessage,
 } from "./sui-stellar.js";
@@ -164,5 +166,30 @@ describe("verifyMessage", () => {
     expect(() =>
       verifyMessage(tampered(148 + 228 + 32, 0x58), { tokenMessenger: TOKEN_MESSENGER }),
     ).toThrow(/Stellar address/);
+  });
+});
+
+describe("stellarBurnRecipient", () => {
+  it("builds an EVM burn the relayer will complete: forwarder as recipient and caller, our hook", () => {
+    const r = stellarBurnRecipient(RECIPIENT);
+    expect(r.forwarder).toBe(`0x${forwarderBytes().toString("hex")}`);
+    expect(Buffer.from(r.hookData.slice(2), "hex")).toEqual(
+      Buffer.from(stellarForwardHook(RECIPIENT)),
+    );
+    // The encoder accepts it for Stellar and nowhere else.
+    expect(() =>
+      encodeDepositForBurnWithHook({
+        amount: 5_000_000n,
+        destinationDomain: 27,
+        recipient: r,
+        burnToken: "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
+        maxFee: 0n,
+        minFinalityThreshold: 2000,
+      }),
+    ).not.toThrow();
+  });
+
+  it("refuses anything that is not a Stellar account or contract", () => {
+    expect(() => stellarBurnRecipient("0x1111111111111111111111111111111111111111")).toThrow();
   });
 });

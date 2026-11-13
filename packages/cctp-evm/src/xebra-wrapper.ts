@@ -53,6 +53,10 @@ export function encodeWrapperBridge(args: WrapperBridgeArgs): Hex {
   if (args.minFinalityThreshold !== 1000 && args.minFinalityThreshold !== 2000) {
     throw new Error("minFinalityThreshold must be 1000 (Fast) or 2000 (Standard)");
   }
+  // The wrapper always asks Circle to forward, and Circle does not forward to Stellar.
+  if (typeof args.recipient !== "string" && args.recipient.kind === "stellar") {
+    throw new Error("Xebra's wrapper cannot send to Stellar; burn to Circle directly");
+  }
   // The same recipient rules as a direct burn; the wrapper builds the hook from the owner itself.
   const { mintRecipient } = recipientAndHook(args.recipient, args.destinationDomain);
   const owner = typeof args.recipient === "string" ? undefined : args.recipient.createAccountFor;

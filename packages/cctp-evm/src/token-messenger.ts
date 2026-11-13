@@ -36,6 +36,7 @@ export const ZERO_BYTES32: Hex = `0x${"00".repeat(32)}`;
 
 /** Solana's CCTP domain: the one destination here whose recipient is not an EVM address. */
 export const SOLANA_DOMAIN = 5;
+export const STELLAR_DOMAIN = 27;
 
 const BYTES32 = /^0x[0-9a-fA-F]{64}$/;
 
@@ -64,7 +65,13 @@ export function forwardHookWithAccount(owner: Hex): Hex {
  */
 export type BurnRecipient =
   | string
-  | { kind: "solana"; tokenAccount: Hex; createAccountFor?: Hex | undefined };
+  | { kind: "solana"; tokenAccount: Hex; createAccountFor?: Hex | undefined }
+  /**
+   * Stellar: Circle's `CctpForwarder` contract (32 bytes) receives the mint and pays the account
+   * named in `hookData`. Circle's Forwarding Service does not deliver to Stellar, so someone must
+   * call the forwarder's `mint_and_forward`; Xebra's relayer does, and anyone else may.
+   */
+  | { kind: "stellar"; forwarder: Hex; hookData: Hex };
 
 /** Circle's two speeds, as the finality a burn asks for. */
 export const FINALITY = { fast: 1000, standard: 2000 } as const;
@@ -99,7 +106,10 @@ export function encodeDepositForBurnWithHook(args: BurnWithHookArgs): Hex {
   if (args.minFinalityThreshold !== 1000 && args.minFinalityThreshold !== 2000) {
     throw new Error("minFinalityThreshold must be 1000 (Fast) or 2000 (Standard)");
   }
-  const { mintRecipient, hookData } = recipientAndHook(args.recipient, args.destinationDomain);
+  const { mintRecipient, hookData, destinationCaller } = recipientAndHook(
+    args.recipient,
+    args.destinationDomain,
+  );
   if (!isAddress(args.burnToken, { strict: false })) {
     throw new Error(`not an EVM address: ${args.burnToken}`);
   }
@@ -111,7 +121,7 @@ export function encodeDepositForBurnWithHook(args: BurnWithHookArgs): Hex {
       args.destinationDomain,
       mintRecipient,
       getAddress(args.burnToken),
-      ZERO_BYTES32,
+      destinationCaller,
       args.maxFee,
       args.minFinalityThreshold,
       hookData,
@@ -127,7 +137,29 @@ export function encodeDepositForBurnWithHook(args: BurnWithHookArgs): Hex {
 export function recipientAndHook(
   recipient: BurnRecipient,
   destinationDomain: number,
-): { mintRecipient: Hex; hookData: Hex } {
+): { mintRecipient: Hex; hookData: Hex; destinationCaller: Hex } {
+  // Stellar first: any other recipient there mints to an address the forwarder never pays, and
+  // Circle's docs say such funds are stuck for good.
+  if (typeof recipient !== "string" && recipient.kind === "stellar") {
+    if (destinationDomain !== STELLAR_DOMAIN) {
+      throw new Error("a Stellar recipient can only receive a burn to Stellar");
+    }
+    const forwarder = recipient.forwarder.toLowerCase() as Hex;
+    if (!BYTES32.test(forwarder) || forwarder === ZERO_BYTES32) {
+      throw new Error("the Stellar forwarder must be a non-zero 32-byte contract id");
+    }
+    checkStellarHook(recipient.hookData);
+    // The forwarder is also the only caller, as Circle requires: with a zero caller anyone could
+    // call receive_message directly, minting into the forwarder without paying the recipient.
+    return {
+      mintRecipient: forwarder,
+      hookData: recipient.hookData.toLowerCase() as Hex,
+      destinationCaller: forwarder,
+    };
+  }
+  if (destinationDomain === STELLAR_DOMAIN) {
+    throw new Error("a burn to Stellar must go to Circle's forwarder with a Stellar recipient");
+  }
   if (typeof recipient === "string") {
     // An EVM address left-padded is a perfectly valid-looking Solana account that nobody owns.
     if (destinationDomain === SOLANA_DOMAIN) {
@@ -135,7 +167,7 @@ export function recipientAndHook(
     }
     const mintRecipient = addressToBytes32(recipient);
     if (mintRecipient === ZERO_BYTES32) throw new Error("the recipient is the zero address");
-    return { mintRecipient, hookData: FORWARD_HOOK };
+    return { mintRecipient, hookData: FORWARD_HOOK, destinationCaller: ZERO_BYTES32 };
   }
   if (destinationDomain !== SOLANA_DOMAIN) {
     throw new Error("a Solana token account can only be the recipient of a burn to Solana");
@@ -145,10 +177,35 @@ export function recipientAndHook(
     throw new Error("the Solana token account must be a non-zero 32-byte key");
   }
   const owner = recipient.createAccountFor?.toLowerCase() as Hex | undefined;
-  if (owner === undefined) return { mintRecipient: tokenAccount, hookData: FORWARD_HOOK };
+  if (owner === undefined) {
+    return { mintRecipient: tokenAccount, hookData: FORWARD_HOOK, destinationCaller: ZERO_BYTES32 };
+  }
   // The wrapper's rule: the wallet can never be confused with the token account it owns.
   if (owner === tokenAccount) {
     throw new Error("the account owner and the token account must differ");
   }
-  return { mintRecipient: tokenAccount, hookData: forwardHookWithAccount(owner) };
+  return {
+    mintRecipient: tokenAccount,
+    hookData: forwardHookWithAccount(owner),
+    destinationCaller: ZERO_BYTES32,
+  };
+}
+
+/**
+ * The forwarder's hook: a 32-byte header whose last four bytes are the length of what follows,
+ * then a Stellar address as text (G... account or C... contract, 56 characters). The address itself
+ * is checked where it is encoded (`@xebra/sdk`); this checks the frame, so a truncated or padded
+ * hook never reaches a wallet.
+ */
+function checkStellarHook(hook: Hex): void {
+  if (!/^0x[0-9a-fA-F]*$/.test(hook) || hook.length % 2 !== 0) {
+    throw new Error("the Stellar hook is not hex");
+  }
+  const bytes = Buffer.from(hook.slice(2), "hex");
+  if (bytes.length !== 32 + 56)
+    throw new Error("the Stellar hook must carry one 56-character address");
+  if (bytes.readUInt32BE(28) !== 56) throw new Error("the Stellar hook's length field is wrong");
+  const text = bytes.subarray(32).toString("ascii");
+  if (!/^[GC][A-Z2-7]{55}$/.test(text))
+    throw new Error("the Stellar hook does not name an address");
 }
