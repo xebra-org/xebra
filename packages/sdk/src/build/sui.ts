@@ -1,6 +1,6 @@
 import type { SuiGrpcClient } from "@mysten/sui/grpc";
 import { Transaction, coinWithBalance } from "@mysten/sui/transactions";
-import { FORWARD_HOOK, addressToBytes32 } from "@xebra/cctp-evm";
+import { type BurnRecipient, recipientAndHook } from "@xebra/cctp-evm";
 import {
   STELLAR_DOMAIN,
   burnDestinationCaller,
@@ -35,7 +35,8 @@ const DENY_LIST_ID = "0x403";
  * and Circle quotes no transfer fee for Standard.
  */
 const STANDARD_FINALITY = 2000;
-const ZERO_ADDRESS = "0x0";
+/** Sui's own CCTP domain: a burn never goes back to it. */
+const SUI_DOMAIN = 8;
 
 export const SUI_ADDRESS = /^0x[0-9a-fA-F]{64}$/;
 
@@ -78,19 +79,47 @@ export function buildBurn(
 }
 
 /**
- * Sui to an EVM chain, delivered by Circle's Forwarding Service: the recipient is the
- * `mintRecipient`, the hook is Circle's `cctp-forward` request, and `maxFee` pays Circle for the
- * delivery (Circle keeps all of it). `destinationCaller` is zero, as Circle's forwarder requires,
- * which also keeps a failed delivery claimable by anyone.
+ * Who a forwarded Sui burn mints to: an EVM address, or on Solana the recipient's USDC token account
+ * (never the wallet) plus, when that account does not exist yet, the wallet Circle should open it
+ * for. The same shape, and the same checks, as a burn from an EVM chain (`@xebra/cctp-evm`).
+ */
+export type SuiForwardRecipient = Exclude<BurnRecipient, { kind: "stellar" }>;
+
+/**
+ * The three burn arguments that depend on the destination, for a burn Circle's Forwarding Service
+ * delivers: `mintRecipient`, `destinationCaller` (zero, as Circle's forwarder requires, which also
+ * keeps a failed delivery claimable by anyone) and the `cctp-forward` hook (the 65-byte form when
+ * Circle must open a Solana USDC account). Built by `recipientAndHook`, the encoder every EVM
+ * source uses, so a Sui burn to Solana can never name the wallet instead of its token account.
+ * Pure.
+ */
+export function forwardBurnArgs(
+  recipient: SuiForwardRecipient,
+  destinationDomain: number,
+): { mintRecipient: string; destinationCaller: string; hookData: Uint8Array } {
+  if (destinationDomain === STELLAR_DOMAIN || destinationDomain === SUI_DOMAIN) {
+    throw new Error("Circle's Forwarding Service does not deliver a Sui burn to that domain");
+  }
+  const { mintRecipient, destinationCaller, hookData } = recipientAndHook(
+    recipient,
+    destinationDomain,
+  );
+  return { mintRecipient, destinationCaller, hookData: hexToBytes(hookData) };
+}
+
+/**
+ * Sui to an EVM chain or Solana, delivered by Circle's Forwarding Service: the recipient is the
+ * `mintRecipient` (on Solana, its USDC token account), the hook is Circle's `cctp-forward` request,
+ * and `maxFee` pays Circle for the delivery (Circle keeps all of it).
  *
  * The caller has already validated the recipient for that chain and priced `maxFee`.
  */
-export function buildEvmBurn(
+export function buildForwardedBurn(
   client: SuiGrpcClient,
   p: {
     sender: string;
     amount: bigint;
-    evmRecipient: string;
+    recipient: SuiForwardRecipient;
     destinationDomain: number;
     maxFee: bigint;
   },
@@ -102,10 +131,28 @@ export function buildEvmBurn(
     sender: p.sender,
     amount: p.amount,
     destinationDomain: p.destinationDomain,
-    mintRecipient: addressToBytes32(p.evmRecipient),
-    destinationCaller: ZERO_ADDRESS,
+    ...forwardBurnArgs(p.recipient, p.destinationDomain),
     maxFee: p.maxFee,
-    hookData: hexToBytes(FORWARD_HOOK),
+  });
+}
+
+/** Sui to an EVM chain: `buildForwardedBurn` with an EVM address as the recipient. */
+export function buildEvmBurn(
+  client: SuiGrpcClient,
+  p: {
+    sender: string;
+    amount: bigint;
+    evmRecipient: string;
+    destinationDomain: number;
+    maxFee: bigint;
+  },
+): Promise<{ transaction: string }> {
+  return buildForwardedBurn(client, {
+    sender: p.sender,
+    amount: p.amount,
+    recipient: p.evmRecipient,
+    destinationDomain: p.destinationDomain,
+    maxFee: p.maxFee,
   });
 }
 
@@ -117,7 +164,7 @@ function hexToBytes(hex: string): Uint8Array {
   return out;
 }
 
-interface BurnArgs {
+export interface BurnArgs {
   sender: string;
   amount: bigint;
   destinationDomain: number;
@@ -139,6 +186,18 @@ async function burnTransaction(
   const have = BigInt(balance.balance);
   if (have < p.amount) throw new InsufficientUsdcError(have, p.amount);
 
+  const tx = burnMoveCalls(p);
+  // Resolved against the node so the wallet gets object versions and a gas budget, not a recipe.
+  return { transaction: await tx.toJSON({ client }) };
+}
+
+/**
+ * The burn's three Move calls, unresolved: no node is asked anything. Split out so a test can read
+ * the exact arguments a burn carries (`tx.getData()`), above all the `mintRecipient`.
+ *
+ * @internal
+ */
+export function burnMoveCalls(p: BurnArgs): Transaction {
   const tx = new Transaction();
   tx.setSender(p.sender);
   const coin = tx.add(
@@ -179,8 +238,7 @@ async function burnTransaction(
     typeArguments: [CFG.usdcType, `${CFG.handlerPackageId}::handler::Auth`],
   });
 
-  // Resolved against the node so the wallet gets object versions and a gas budget, not a recipe.
-  return { transaction: await tx.toJSON({ client }) };
+  return tx;
 }
 
 /** `buildBurn` as the step a wallet signs. */
@@ -193,6 +251,29 @@ export async function buildSuiBurn(
     id: "burn",
     chain: "sui",
     description: "Burn USDC on Sui; Circle attests it and it is minted to the Stellar recipient.",
+    tx: { kind: "sui", json: transaction },
+    expiresAt: null,
+  };
+}
+
+/** `buildForwardedBurn` as the step a wallet signs. */
+export async function buildSuiForwardStep(
+  client: SuiGrpcClient,
+  p: {
+    sender: string;
+    amount: bigint;
+    recipient: SuiForwardRecipient;
+    destinationDomain: number;
+    maxFee: bigint;
+    /** The destination's name, for the description. */
+    destinationName: string;
+  },
+): Promise<TransferStep> {
+  const { transaction } = await buildForwardedBurn(client, p);
+  return {
+    id: "burn",
+    chain: "sui",
+    description: `Burn USDC on Sui; Circle attests it and its Forwarding Service mints it on ${p.destinationName}.`,
     tx: { kind: "sui", json: transaction },
     expiresAt: null,
   };

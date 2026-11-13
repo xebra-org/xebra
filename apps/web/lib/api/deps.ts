@@ -1,10 +1,11 @@
 import type { CircleHealth } from "@xebra/cctp-client";
-import type { StellarBuildRpc, TransferStep } from "@xebra/sdk/build";
+import type { StellarBuildRpc, SuiForwardRecipient, TransferStep } from "@xebra/sdk/build";
 import type {
   Destination,
   DomainForwardConfig,
   EnabledRoutes,
   EvmChain,
+  EvmChainId,
   FeeParams,
 } from "@xebra/sdk/core";
 import type { WrapperSettings } from "../evm-wrapper";
@@ -38,8 +39,16 @@ export interface Deps {
   evmWrapperSettings?(chain: EvmChain): Promise<WrapperSettings | null>;
   /** Circle's account of a burn, as `/api/delivery` answers it. */
   delivery(tx: string, srcDomain: number): Promise<Record<string, unknown> | null>;
-  /** Sui to Stellar: switched on, and the per-transfer cap in 6-decimal units (null: none). */
-  suiStellar: { enabled: boolean; maxUnits: bigint | null };
+  /**
+   * Sui as a source: switched on, the per-transfer cap in 6-decimal units (null: none), and where
+   * else than Stellar it sends through Circle's Forwarding Service (`SUI_SENDS_TO_EVM`,
+   * `SUI_SENDS_TO_SOLANA`). Absent `sendsTo` means Stellar only.
+   */
+  suiStellar: {
+    enabled: boolean;
+    maxUnits: bigint | null;
+    sendsTo?: ReadonlyArray<EvmChainId | "solana">;
+  };
   /** A Sui burn's progress, as `/api/sui-stellar/status` answers it. Null if unreadable. */
   suiStatus?(digest: string): Promise<Record<string, unknown> | null>;
   /** What building a transaction reads. Absent where nothing is built (the MCP tools). */
@@ -71,6 +80,18 @@ export interface BuildDeps {
   evmWrapperOn: boolean;
   /** The Sui burn, built against the Sui node. Throws `InsufficientUsdcError` when short. */
   suiBurn(p: { sender: string; amount: bigint; stellarRecipient: string }): Promise<TransferStep>;
+  /**
+   * A Sui burn Circle's Forwarding Service delivers (to an EVM chain or Solana), built against the
+   * Sui node. Throws `InsufficientUsdcError` when short.
+   */
+  suiForwardBurn(p: {
+    sender: string;
+    amount: bigint;
+    recipient: SuiForwardRecipient;
+    destinationDomain: number;
+    maxFee: bigint;
+    destinationName: string;
+  }): Promise<TransferStep>;
   /** Circle's message and attestation for a burn, as `/api/attestation` answers it. */
   attestation(tx: string, srcDomain: number): Promise<Record<string, unknown> | null>;
   /** Whether the mint on an EVM chain is still open, and would succeed sent by `payer`. */

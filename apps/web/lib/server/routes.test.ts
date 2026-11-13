@@ -157,6 +157,29 @@ describe("Sui as a source", () => {
     expect(isOfferedRoute(8, 15, STELLAR)).toBe(false);
   });
 
+  it("sends to every chain in the EVM table with SUI_SENDS_TO_EVM=all, Arc included", () => {
+    vi.stubEnv("SUI_STELLAR_ENABLED", "true");
+    vi.stubEnv("SUI_SENDS_TO_EVM", "all");
+    vi.stubEnv("SUI_SENDS_TO_SOLANA", "");
+    for (const yes of [1, 2, 3, 6, 7, 10, 12, 13, 14, 15, 16, 18, 19, 21, 26]) {
+      expect(isOfferedRoute(8, yes, STELLAR), String(yes)).toBe(true);
+    }
+    // Solana has its own switch; Stellar, Aptos and Sui itself are never forwarded to.
+    for (const no of [5, 8, 9, 27]) {
+      expect(isOfferedRoute(8, no, STELLAR), String(no)).toBe(false);
+    }
+  });
+
+  it("sends to Solana only with SUI_SENDS_TO_SOLANA=true, and only while the page is on", () => {
+    vi.stubEnv("SUI_STELLAR_ENABLED", "true");
+    vi.stubEnv("SUI_SENDS_TO_SOLANA", undefined as unknown as string);
+    expect(isOfferedRoute(8, 5, STELLAR)).toBe(false);
+    vi.stubEnv("SUI_SENDS_TO_SOLANA", "true");
+    expect(isOfferedRoute(8, 5, STELLAR)).toBe(true);
+    vi.stubEnv("SUI_STELLAR_ENABLED", "");
+    expect(isOfferedRoute(8, 5, STELLAR)).toBe(false);
+  });
+
   it("keeps a digest's case, and refuses hex hashes", () => {
     expect(normaliseTxHash("sui", ` ${SUI_TX} `)).toBe(SUI_TX);
     for (const bad of [null, "", `0x${HEX}`, "0OIl".repeat(10), `${SUI_TX}!`]) {

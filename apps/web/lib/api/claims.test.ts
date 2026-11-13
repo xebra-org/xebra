@@ -254,3 +254,135 @@ describe("transferStatus: Sui", () => {
     expect(err.code).toBe("route_unavailable");
   });
 });
+
+describe("Sui to an EVM chain or Solana: status and claim", () => {
+  const on = { suiStellar: { enabled: true, maxUnits: null } };
+  const refused = async () => ({
+    state: "complete",
+    delivered: false,
+    refusal: "not a burn to Stellar",
+  });
+
+  it("reads a delivery Circle could not make as claimable at /claim, with Sui as the source", async () => {
+    const s = svc(
+      {},
+      {
+        ...on,
+        suiStatus: refused,
+        delivery: async () => ({
+          status: "known",
+          state: "claimable",
+          forwardTxHash: null,
+          reason: null,
+          destinationDomain: 5,
+        }),
+      },
+    );
+    const status = await s.transferStatus({ chain: "sui", tx: DIGEST });
+    expect(status.state).toBe("needs_claim");
+    expect(status.claimUrl).toBe(`https://xebra.exchange/claim?tx=${DIGEST}&src=8`);
+  });
+
+  it("reads a failed forward as failed, with Circle's reason and the claim link", async () => {
+    const s = svc(
+      {},
+      {
+        ...on,
+        suiStatus: refused,
+        delivery: async () => ({
+          status: "known",
+          state: "failed",
+          forwardTxHash: null,
+          reason: "INSUFFICIENT_FEE",
+          destinationDomain: 6,
+        }),
+      },
+    );
+    const status = await s.transferStatus({ chain: "sui", tx: DIGEST });
+    expect(status.state).toBe("failed");
+    expect(status.reason).toBe("INSUFFICIENT_FEE");
+    expect(status.claimUrl).toContain("src=8");
+  });
+
+  it("does not send a Stellar-bound burn to /claim", async () => {
+    const s = svc(
+      {},
+      {
+        ...on,
+        suiStatus: async () => ({ state: "complete", delivered: false, refusal: "bad hook" }),
+        delivery: async () => ({
+          status: "known",
+          state: "claimable",
+          forwardTxHash: null,
+          destinationDomain: 27,
+        }),
+      },
+    );
+    const status = await s.transferStatus({ chain: "sui", tx: DIGEST });
+    expect(status.state).toBe("failed");
+    expect(status.claimUrl).toBeNull();
+  });
+
+  it("claims a Sui burn to Solana with a Solana payer, reading Circle's record for domain 8", async () => {
+    const asked: Array<[string, number]> = [];
+    const solanaClaim = vi.fn(async () => ({
+      state: "ready" as const,
+      setup: null,
+      mint: "bWludA==",
+    }));
+    const { steps } = await svc({
+      solanaClaim,
+      attestation: async (tx, src) => {
+        asked.push([tx, src]);
+        return {
+          status: "complete",
+          message: "0x01",
+          attestation: "0x02",
+          destinationDomain: 5,
+          sourceDomainId: 8,
+          usdcMint: "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+        };
+      },
+    }).buildClaim({ chain: "sui", tx: DIGEST, payer: SOLANA_WALLET });
+    // The digest keeps its case: base58 is not hex.
+    expect(asked).toEqual([[DIGEST, 8]]);
+    expect(solanaClaim).toHaveBeenCalledWith(expect.objectContaining({ sourceDomainId: 8 }));
+    expect(steps.map((s) => s.chain)).toEqual(["solana"]);
+  });
+
+  it("claims a Sui burn to an EVM chain with an EVM payer", async () => {
+    const { steps } = await svc({
+      attestation: async () => ({
+        status: "complete",
+        message: "0x01",
+        attestation: "0x02",
+        destinationDomain: 6,
+        sourceDomainId: 8,
+      }),
+    }).buildClaim({ chain: "sui", tx: DIGEST, payer: EVM_SENDER });
+    expect(steps[0]).toMatchObject({ id: "claim", chain: "base" });
+  });
+
+  it("tells a non-Stellar payer that a Sui burn to Stellar needs a Stellar account", async () => {
+    const err = await refusal(
+      svc({
+        attestation: async () => ({
+          status: "complete",
+          message: "0x01",
+          attestation: "0x02",
+          destinationDomain: 27,
+          sourceDomainId: 8,
+        }),
+      }).buildClaim({ chain: "sui", tx: DIGEST, payer: EVM_SENDER }),
+    );
+    expect(err.code).toBe("invalid_request");
+    expect(err.message).toContain("Stellar account");
+  });
+
+  it("refuses a malformed digest whatever the payer", async () => {
+    const err = await refusal(
+      svc().buildClaim({ chain: "sui", tx: "0xnot-a-digest", payer: EVM_SENDER }),
+    );
+    expect(err.code).toBe("invalid_request");
+  });
+});

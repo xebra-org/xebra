@@ -213,10 +213,19 @@ export function createService(deps: Deps, now: () => number = Date.now) {
       });
     }
     if (deps.suiStellar.enabled) {
+      // Stellar through our relayer; the rest through Circle's Forwarding Service. Standard only:
+      // Sui finalises in about a second, so Fast would buy nothing.
+      const forwarded = (deps.suiStellar.sendsTo ?? []).filter(
+        (id) => id === "solana" || isEvmChainId(id),
+      );
       groups.push({
         from: "sui",
         name: "Sui",
-        to: [{ id: "stellar", name: "Stellar", speeds: ["standard"] }],
+        to: (["stellar", ...forwarded] as DestId[]).map((id) => ({
+          id,
+          name: DEST_NAME(id),
+          speeds: ["standard"],
+        })),
       });
     }
     return { routes: groups, stellarContractRead: stellar.domains !== null };
@@ -265,7 +274,11 @@ export function createService(deps: Deps, now: () => number = Date.now) {
 
   async function circleFor(from: SourceId, to: DestId, newAccount: boolean): Promise<CircleHealth> {
     const src =
-      from === "stellar" ? STELLAR_CCTP_DOMAIN : EVM_CHAINS[from as EvmChainId].cctpDomainId;
+      from === "stellar"
+        ? STELLAR_CCTP_DOMAIN
+        : from === "sui"
+          ? SUI_CCTP_DOMAIN
+          : EVM_CHAINS[from].cctpDomainId;
     const dst =
       to === "solana"
         ? stellarDestination("solana").domain
@@ -402,7 +415,7 @@ export function createService(deps: Deps, now: () => number = Date.now) {
   }
 
   function evmOption(
-    from: EvmChainId,
+    from: Exclude<SourceId, "stellar">,
     to: DestId,
     units: bigint,
     speed: Speed,
@@ -499,15 +512,33 @@ export function createService(deps: Deps, now: () => number = Date.now) {
     await checkRoute(q.from, q.to);
 
     if (q.from === "sui") {
-      // Standard finality, no fee from Circle, none from us yet: the recipient gets all of it.
       const cap = deps.suiStellar.maxUnits;
       if (cap !== null && q.amount > cap) {
         throw new ApiError(
           "amount_above_maximum",
-          `Sui to Stellar takes at most ${formatUsdcAmount(cap)} USDC per transfer.`,
+          `Sui to ${DEST_NAME(q.to)} takes at most ${formatUsdcAmount(cap)} USDC per transfer.`,
           { maximum: cap },
         );
       }
+    }
+    if (q.from === "sui" && q.to !== "stellar") {
+      // Circle's Forwarding Service delivers it and keeps the whole `maxFee`, priced as on every
+      // direct EVM route. Standard only, with the Sui page's own cap.
+      const health = await circleFor("sui", q.to, opensAccount);
+      const tier = health.tiers.standard;
+      if (!tier) {
+        throw new ApiError(
+          "upstream_unavailable",
+          `Circle is not quoting Sui to ${DEST_NAME(q.to)} right now. Try again shortly.`,
+        );
+      }
+      const option = evmOption("sui", q.to, q.amount, "standard", tier, health, opensAccount, null);
+      if (option.ok) option.priced.quote.maximum = deps.suiStellar.maxUnits;
+      return { health, options: [option] };
+    }
+    if (q.from === "sui") {
+      // Standard finality, no fee from Circle, none from us yet: the recipient gets all of it.
+      const cap = deps.suiStellar.maxUnits;
       const quote = quoteOf(
         "sui",
         "stellar",
@@ -727,12 +758,52 @@ export function createService(deps: Deps, now: () => number = Date.now) {
       );
     }
 
-    if (r.from === "sui") {
+    if (r.from === "sui" && r.to === "stellar") {
       try {
         const step = await upstream("The Sui node", () =>
           b.suiBurn({ sender, amount: r.amount, stellarRecipient: recipient }),
         );
         return { quote: priced.quote, steps: [step] };
+      } catch (err) {
+        if (err instanceof InsufficientUsdcError) throw short(err.have, err.need, "Sui");
+        throw err;
+      }
+    }
+
+    if (r.from === "sui") {
+      // To an EVM chain or Solana, delivered by Circle's Forwarding Service. On Solana the burn
+      // names the token account, and asks Circle to open it when the quote priced that.
+      const plan = priced.evm;
+      if (!plan) throw new Error("a Sui forwarded quote without its fee plan");
+      const dest = routeDestination(r.to as Exclude<DestId, "stellar">);
+      try {
+        const step = await upstream("The Sui node", () =>
+          b.suiForwardBurn({
+            sender,
+            amount: r.amount,
+            recipient: solana
+              ? {
+                  kind: "solana",
+                  tokenAccount: bytesToHex(solana.tokenAccount),
+                  createAccountFor: opensAccount ? bytesToHex(solana.owner) : undefined,
+                }
+              : recipient,
+            destinationDomain: dest.cctpDomainId,
+            maxFee: plan.maxFee,
+            destinationName: dest.name,
+          }),
+        );
+        // Circle's fee is fixed into the burn when it is built, as on an EVM source.
+        return {
+          quote: priced.quote,
+          steps: [
+            {
+              ...step,
+              expiresAt: priced.quote.expiresAt,
+              description: `${step.description} Signed after ${priced.quote.expiresAt}, build it again first: the fee may have moved.`,
+            },
+          ],
+        };
       } catch (err) {
         if (err instanceof InsufficientUsdcError) throw short(err.have, err.need, "Sui");
         throw err;
@@ -870,7 +941,7 @@ export function createService(deps: Deps, now: () => number = Date.now) {
     const circleState = String(answer.state ?? "unknown");
     const refusal = typeof answer.refusal === "string" ? answer.refusal.slice(0, 200) : null;
     if (circleState === "complete" && answer.delivered !== true && refusal) {
-      // Not a burn the Stellar side would complete. A Sui burn to an EVM chain (Sui to Monad) is
+      // Not a burn the Stellar side would complete. A Sui burn to an EVM chain or Solana is
       // minted by Circle's Forwarding Service, so its record, not the Stellar check, is the answer.
       const forwarded = await suiForwarded(digest);
       if (forwarded) return forwarded;
@@ -896,19 +967,44 @@ export function createService(deps: Deps, now: () => number = Date.now) {
     };
   }
 
-  /** A Sui burn Circle forwarded (minted, or minting) on its destination, or null if it did not. */
+  /**
+   * A Sui burn to anywhere but Stellar, read from Circle's forwarding record as an EVM burn is: minted,
+   * minting, or waiting to be claimed at `/claim` (by an EVM wallet, or a Solana one). Null when the
+   * burn is not one Circle forwards, or the record could not be read.
+   *
+   * The record names the burn's destination. Without it (an older answer) only a delivery that is
+   * done or under way counts, because Circle never forwards to Stellar and those two say it did.
+   */
   async function suiForwarded(digest: string): Promise<TransferStatus | null> {
     const answer = await deps.delivery(digest, SUI_CCTP_DOMAIN).catch(() => null);
     if (!answer || answer.status !== "known") return null;
     const circleState = String(answer.state ?? "unknown");
-    if (circleState !== "delivered" && circleState !== "forwarding") return null;
+    const destination =
+      typeof answer.destinationDomain === "number" ? answer.destinationDomain : null;
+    const forwardedThere = destination !== null && destination !== STELLAR_CCTP_DOMAIN;
+    if (!forwardedThere && circleState !== "delivered" && circleState !== "forwarding") {
+      return null;
+    }
+    const state: DeliveryState =
+      circleState === "delivered"
+        ? "delivered"
+        : circleState === "forwarding"
+          ? "delivering"
+          : circleState === "claimable"
+            ? "needs_claim"
+            : circleState === "failed"
+              ? "failed"
+              : "pending";
+    const claimable = state === "needs_claim" || state === "failed";
     return {
-      state: circleState === "delivered" ? "delivered" : "delivering",
+      state,
       chain: "sui",
       tx: digest,
       deliveryTx: typeof answer.forwardTxHash === "string" ? answer.forwardTxHash : null,
-      reason: null,
-      claimUrl: null,
+      reason: typeof answer.reason === "string" ? answer.reason.slice(0, 200) : null,
+      claimUrl: claimable
+        ? `${deps.siteUrl.replace(/\/+$/, "")}/claim?tx=${encodeURIComponent(digest)}&src=${SUI_CCTP_DOMAIN}`
+        : null,
       circleState,
     };
   }
@@ -929,16 +1025,16 @@ export function createService(deps: Deps, now: () => number = Date.now) {
     if (!b) throw new Error("buildClaim needs the build dependencies");
     const payer = r.payer.trim();
 
-    if (r.chain === "sui") {
+    // A Sui burn to Stellar is minted by a Stellar payer through Circle's forwarder; one to an EVM
+    // chain or Solana is claimed there like any other burn, below. The payer says which.
+    if (r.chain === "sui" && !StrKey.isValidEd25519PublicKey(payer)) {
+      if (!SUI_DIGEST.test(r.tx.trim())) {
+        throw new ApiError("invalid_request", "tx must be a Sui transaction digest.");
+      }
+    } else if (r.chain === "sui") {
       const digest = r.tx.trim();
       if (!SUI_DIGEST.test(digest)) {
         throw new ApiError("invalid_request", "tx must be a Sui transaction digest.");
-      }
-      if (!StrKey.isValidEd25519PublicKey(payer)) {
-        throw new ApiError(
-          "invalid_request",
-          "payer must be the Stellar account (G...) that pays the fee.",
-        );
       }
       // The payer is the transaction's source, so it has to exist (and hold XLM for the fee).
       if (!(await upstream("The payer's Stellar account", () => b.stellarAccount(payer))).exists) {
@@ -973,9 +1069,10 @@ export function createService(deps: Deps, now: () => number = Date.now) {
       };
     }
 
-    const tx = r.tx.trim().toLowerCase();
+    // A Sui digest is base58, so its case is kept; it was checked above.
+    const tx = r.chain === "sui" ? r.tx.trim() : r.tx.trim().toLowerCase();
     const kind = r.chain === "stellar" ? /^[0-9a-f]{64}$/ : /^0x[0-9a-f]{64}$/;
-    if (!kind.test(tx)) {
+    if (r.chain !== "sui" && !kind.test(tx)) {
       throw new ApiError(
         "invalid_request",
         r.chain === "stellar"
@@ -984,7 +1081,11 @@ export function createService(deps: Deps, now: () => number = Date.now) {
       );
     }
     const srcDomain =
-      r.chain === "stellar" ? STELLAR_CCTP_DOMAIN : EVM_CHAINS[r.chain].cctpDomainId;
+      r.chain === "stellar"
+        ? STELLAR_CCTP_DOMAIN
+        : r.chain === "sui"
+          ? SUI_CCTP_DOMAIN
+          : EVM_CHAINS[r.chain].cctpDomainId;
     const att = await upstream("Circle's record of this burn", () => b.attestation(tx, srcDomain));
     if (!att || att.status === "unknown") {
       throw new ApiError(
@@ -1090,6 +1191,12 @@ export function createService(deps: Deps, now: () => number = Date.now) {
       return { steps };
     }
 
+    if (r.chain === "sui" && destinationDomain === STELLAR_CCTP_DOMAIN) {
+      throw new ApiError(
+        "invalid_request",
+        "payer must be the Stellar account (G...) that pays the fee: this Sui burn mints on Stellar.",
+      );
+    }
     throw new ApiError(
       "invalid_request",
       "This burn's destination cannot be claimed through the API.",
