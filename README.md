@@ -77,14 +77,14 @@ seconds from burn to wallet:
 
 1. Open [xebra.exchange/near-intents](https://xebra.exchange/near-intents). Enter `10`, pick **USDC on
    NEAR**, enter any existing NEAR account as recipient. You see "Straight into NEAR Intents: Not
-   available" next to "Through Xebra: 9.699 USDC", with Xebra's fee, Circle's fee and the time.
+   available" next to "Through Xebra: 9.898 USDC", with Xebra's fee, Circle's fee and the time.
 2. Connect a Stellar wallet holding USDC and press **Send through Xebra**. Sign once. The page shows
    the Stellar burn, Circle's mint on Base, then NEAR Intents' delivery, each with its explorer link.
 3. Locally: `pnpm install`, then `pnpm --filter @xebra/sdk test` runs the module's tests (no network).
 
 **What was built in the hackathon window.** Xebra itself (the CCTP bridge, contracts, API and SDK) was
 built before the hackathon and is live on mainnet. Only the NEAR Intents integration is entered:
-[`near-hackathon-baseline...near-hackathon-submission`](https://github.com/xebra-org/xebra/compare/near-hackathon-baseline...near-hackathon-submission).
+[`pre-hackathon...hackathon-submission`](https://github.com/xebra-org/xebra/compare/pre-hackathon...hackathon-submission).
 It uses NEAR Intents' public 1Click API and token list, Circle's CCTP, and our own `@xebra/sdk`.
 
 ## Status
