@@ -100,6 +100,7 @@ export function buildDeps(over: Partial<BuildDeps> = {}): BuildDeps {
     evmUsdc: async () => ({ balance: 1_000_000_000n, allowance: 0n }),
     evmWrapperOn: false,
     suiBurn: async () => SUI_STEP,
+    suiForwardBurn: async () => SUI_STEP,
     attestation: async () => ({
       status: "complete",
       message: "0x01",

@@ -1,4 +1,9 @@
-import { type Delivery, IrisUnavailable, readDelivery } from "@xebra/cctp-client";
+import {
+  type Delivery,
+  IrisUnavailable,
+  readDelivery,
+  readDestinationDomain,
+} from "@xebra/cctp-client";
 import { irisBaseUrl, irisFetch, stellarDomainId } from "../../../lib/server/iris";
 import { normaliseTxHash, readSource, txHashHint } from "../../../lib/server/routes";
 import { createTtlCache } from "../../../lib/server/ttl-cache";
@@ -18,12 +23,30 @@ import { createTtlCache } from "../../../lib/server/ttl-cache";
  * A burn made on an EVM chain names it with `&src=<CCTP domain>`; with no `src` the burn is a
  * Stellar one, as every link sent before EVM sources existed assumes.
  *
+ * `destinationDomain` is the domain the burn's message names, once Circle has indexed it: a Sui burn
+ * goes to Stellar through our relayer or anywhere else through Circle's Forwarding Service, and the
+ * same digest is read differently for each.
+ *
  * Read-only and public: it answers only about a burn hash the caller already holds.
  */
 
 export const dynamic = "force-dynamic";
 
-type Answer = { status: "known"; delivery: Delivery } | { status: "unknown"; reason: string };
+type Answer =
+  | { status: "known"; delivery: Delivery; destinationDomain: number | null }
+  | { status: "unknown"; reason: string };
+
+/** The destination domain of the first message in Iris's answer, or null when there is none. */
+function destinationOf(body: unknown): number | null {
+  const message = (body as { messages?: Array<{ message?: unknown }> } | null)?.messages?.[0]
+    ?.message;
+  if (typeof message !== "string" || !message.startsWith("0x")) return null;
+  try {
+    return readDestinationDomain(message as `0x${string}`);
+  } catch {
+    return null;
+  }
+}
 
 const cached = createTtlCache<Answer>(5_000);
 
@@ -44,9 +67,16 @@ export async function GET(request: Request): Promise<Response> {
       );
       // 404 is "not indexed yet", which is just waiting; anything else that is not OK is a
       // question we could not answer.
-      if (res.status === 404) return { status: "known", delivery: readDelivery(null) };
+      if (res.status === 404) {
+        return { status: "known", delivery: readDelivery(null), destinationDomain: null };
+      }
       if (!res.ok) return { status: "unknown", reason: `Circle returned ${res.status}` };
-      return { status: "known", delivery: readDelivery(await res.json()) };
+      const body: unknown = await res.json();
+      return {
+        status: "known",
+        delivery: readDelivery(body),
+        destinationDomain: destinationOf(body),
+      };
     } catch (err) {
       if (err instanceof IrisUnavailable) {
         return { status: "unknown", reason: "status lookups are paused for a moment" };
@@ -56,6 +86,8 @@ export async function GET(request: Request): Promise<Response> {
   });
 
   return Response.json(
-    answer.status === "known" ? { status: "known", ...answer.delivery } : answer,
+    answer.status === "known"
+      ? { status: "known", ...answer.delivery, destinationDomain: answer.destinationDomain }
+      : answer,
   );
 }

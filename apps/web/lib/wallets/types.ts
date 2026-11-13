@@ -1,22 +1,23 @@
 /**
- * One vocabulary for three wallet ecosystems.
+ * One vocabulary for every wallet ecosystem.
  *
- * Stellar, Solana and EVM wallets discover, connect and sign in unrelated ways, but the interface
+ * Stellar, Solana, EVM and Sui wallets discover, connect and sign in unrelated ways, but the interface
  * only needs a few facts about each: what to list, whether it is installed, and — once connected —
  * whose address it is. Everything chain-specific stays behind `connect`.
  */
-export type Family = "stellar" | "solana" | "evm";
+export type Family = "stellar" | "solana" | "evm" | "sui";
 
-export const FAMILIES: readonly Family[] = ["stellar", "solana", "evm"];
+export const FAMILIES: readonly Family[] = ["stellar", "solana", "evm", "sui"];
 
 export const FAMILY_LABEL: Record<Family, string> = {
   stellar: "Stellar",
   solana: "Solana",
   evm: "EVM",
+  sui: "Sui",
 };
 
 export interface WalletEntry {
-  /** Unique across families: `evm:io.metamask`, `solana:Phantom`, `stellar:freighter`. */
+  /** Unique across families: `evm:io.metamask`, `solana:Phantom`, `stellar:freighter`, `sui:Slush`. */
   key: string;
   family: Family;
   name: string;

@@ -3,6 +3,7 @@ import {
   maxUsdcBase,
   relayerSecret,
   suiEvmDestinations,
+  suiSendsToSolana,
   suiStellarEnabled,
 } from "../../../../lib/sui-stellar/config";
 
@@ -23,6 +24,8 @@ export function GET(): Response {
           maxUsdc: cap === null ? null : formatUsdcAmount(cap),
           // EVM chains Sui also sends to, delivered by Circle's Forwarding Service.
           evm: suiEvmDestinations().map((c) => c.id),
+          // And Solana, the same way, into the recipient's USDC account.
+          solana: suiSendsToSolana(),
         }
       : { enabled },
     { headers: { "cache-control": "no-store" } },

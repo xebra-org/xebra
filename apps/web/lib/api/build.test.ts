@@ -511,3 +511,148 @@ describe("buildTransfer: an upstream that cannot be reached", () => {
     expect(err.code).toBe("upstream_unavailable");
   });
 });
+
+describe("buildTransfer: Sui to an EVM chain or Solana", () => {
+  const sui = (sendsTo: ReadonlyArray<"base" | "monad" | "solana">) => ({
+    suiStellar: { enabled: true, maxUnits: null, sendsTo },
+  });
+
+  it("lists every Sui destination the switches name, Standard only", async () => {
+    const { routes } = await svc({}, sui(["monad", "base", "solana"])).routes();
+    expect(routes.find((g) => g.from === "sui")?.to).toEqual([
+      { id: "stellar", name: "Stellar", speeds: ["standard"] },
+      { id: "monad", name: "Monad", speeds: ["standard"] },
+      { id: "base", name: "Base", speeds: ["standard"] },
+      { id: "solana", name: "Solana", speeds: ["standard"] },
+    ]);
+  });
+
+  it("refuses a destination the switches do not name", async () => {
+    const err = await refusal(
+      svc({}, sui(["monad"])).quote({ from: "sui", to: "solana", amount: 5_000_000n }),
+    );
+    expect(err.code).toBe("route_unavailable");
+  });
+
+  it("prices Sui to an EVM chain from Circle's quote for domain 8, and builds the forwarded burn", async () => {
+    const circle = vi.fn(async () => health({}, 54_785));
+    const suiForwardBurn = vi.fn(async () => SUI_STEP);
+    const { quote, steps } = await svc(
+      { suiForwardBurn },
+      { ...sui(["base"]), circle },
+    ).buildTransfer({
+      from: "sui",
+      to: "base",
+      amount: 5_000_000n,
+      sender: SUI_SENDER,
+      recipient: RECIPIENT,
+    });
+    expect(circle).toHaveBeenCalledWith(8, 6);
+    expect(quote.fees).toEqual({ xebra: 0n, circle: 0n, delivery: 54_785n, total: 54_785n });
+    expect(quote.recipientGets).toBe(5_000_000n - 54_785n);
+    expect(suiForwardBurn).toHaveBeenCalledWith({
+      sender: SUI_SENDER,
+      amount: 5_000_000n,
+      recipient: RECIPIENT,
+      destinationDomain: 6,
+      maxFee: 54_785n,
+      destinationName: "Base",
+    });
+    expect(steps[0]?.expiresAt).toBe(quote.expiresAt);
+  });
+
+  it("mints to Solana into the token account, and has Circle open it when it is missing", async () => {
+    const circle = vi.fn(async () => health({}, 249_659));
+    const suiForwardBurn = vi.fn(async () => SUI_STEP);
+    await svc(
+      {
+        suiForwardBurn,
+        solanaRecipient: async () => ({ tokenAccount: TOKEN_ACCOUNT, status: "missing" }),
+      },
+      { ...sui(["solana"]), circle },
+    ).buildTransfer({
+      from: "sui",
+      to: "solana",
+      amount: 5_000_000n,
+      sender: SUI_SENDER,
+      recipient: SOLANA_WALLET,
+    });
+    // The account-opening quote, under Solana's own ceiling for it.
+    expect(circle).toHaveBeenCalledWith(8, 5, true);
+    expect(suiForwardBurn).toHaveBeenCalledWith(
+      expect.objectContaining({
+        destinationDomain: 5,
+        maxFee: 249_659n,
+        recipient: {
+          kind: "solana",
+          tokenAccount: bytesToHex(solanaAddressToBytes32(TOKEN_ACCOUNT)),
+          createAccountFor: bytesToHex(solanaAddressToBytes32(SOLANA_WALLET)),
+        },
+      }),
+    );
+  });
+
+  it("asks for no account when the Solana recipient already has one", async () => {
+    const suiForwardBurn = vi.fn(async () => SUI_STEP);
+    await svc({ suiForwardBurn }, sui(["solana"])).buildTransfer({
+      from: "sui",
+      to: "solana",
+      amount: 5_000_000n,
+      sender: SUI_SENDER,
+      recipient: SOLANA_WALLET,
+    });
+    expect(suiForwardBurn).toHaveBeenCalledWith(
+      expect.objectContaining({
+        recipient: {
+          kind: "solana",
+          tokenAccount: bytesToHex(solanaAddressToBytes32(TOKEN_ACCOUNT)),
+          createAccountFor: undefined,
+        },
+      }),
+    );
+  });
+
+  it("keeps the Sui page's cap on every destination", async () => {
+    const err = await refusal(
+      svc({}, { suiStellar: { enabled: true, maxUnits: 1_000_000n, sendsTo: ["base"] } }).quote({
+        from: "sui",
+        to: "base",
+        amount: 2_000_000n,
+      }),
+    );
+    expect(err.code).toBe("amount_above_maximum");
+  });
+
+  it("refuses a Solana delivery fee above Solana's ceiling", async () => {
+    const err = await refusal(
+      svc({}, { ...sui(["solana"]), circle: async () => health({}, 600_000) }).buildTransfer({
+        from: "sui",
+        to: "solana",
+        amount: 50_000_000n,
+        sender: SUI_SENDER,
+        recipient: SOLANA_WALLET,
+      }),
+    );
+    expect(err.code).toBe("upstream_unavailable");
+  });
+
+  it("says how much the Sui address holds when it is short", async () => {
+    const err = await refusal(
+      svc(
+        {
+          suiForwardBurn: async () => {
+            throw new InsufficientUsdcError(1_000_000n, 5_000_000n);
+          },
+        },
+        sui(["base"]),
+      ).buildTransfer({
+        from: "sui",
+        to: "base",
+        amount: 5_000_000n,
+        sender: SUI_SENDER,
+        recipient: RECIPIENT,
+      }),
+    );
+    expect(err.code).toBe("insufficient_balance");
+  });
+});

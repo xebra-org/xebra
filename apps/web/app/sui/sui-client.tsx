@@ -1,9 +1,9 @@
 "use client";
 
-import type { WalletAccount } from "@wallet-standard/base";
-import { EVM_CHAINS, type EvmChainId } from "@xebra/sdk/core";
+import type { EvmChainId } from "@xebra/sdk/core";
 import type React from "react";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import { CHAIN_NAMES } from "../../components/bridge/chain-glyph";
 import { Badge } from "../../components/ui/badge";
 import { Button } from "../../components/ui/button";
 import { cn } from "../../components/ui/cn";
@@ -14,13 +14,8 @@ import { Notice } from "../../components/ui/notice";
 import { useWallets } from "../../components/wallet/wallet-provider";
 import { reportError } from "../../lib/format-error";
 import { claimOnStellar } from "../../lib/sui-stellar/claim-client";
-import {
-  type SuiWalletEntry,
-  connectSui,
-  signAndExecuteSui,
-  watchSuiWallets,
-} from "../../lib/wallets/sui";
-import { type SuiDestination, SuiDestinationPicker, SuiToEvm, recallSuiEvm } from "./sui-evm";
+import { signAndExecuteSui } from "../../lib/wallets/sui";
+import { type SuiDestination, SuiDestinationPicker, SuiForwarded, recallSuiEvm } from "./sui-evm";
 
 /**
  * Sui to Stellar: connect a Sui wallet, burn USDC, and watch it arrive.
@@ -69,14 +64,14 @@ export function hasRememberedSuiTransfer(): boolean {
 
 const short = (s: string) => `${s.slice(0, 6)}...${s.slice(-4)}`;
 
-type Problem = { where: "connect" | "send"; text: string; declined: boolean };
+type Problem = { text: string; declined: boolean };
 
 // Wallets word a declined request differently ("User rejected the request", "Cancelled", ...).
 const DECLINED = /reject|declin|den(y|ied)|cancel|closed|dismiss/i;
 
-function problem(where: Problem["where"], label: string, err: unknown): Problem {
+function problem(label: string, err: unknown): Problem {
   const text = reportError(label, err);
-  return { where, text, declined: DECLINED.test(text) };
+  return { text, declined: DECLINED.test(text) };
 }
 
 /** The standalone `/sui` page: a heading around the same transfer the bridge screen embeds. */
@@ -84,20 +79,26 @@ export function SuiClient({
   maxUsdc,
   relayerEnabled,
   evmDestinations = [],
+  solana = false,
 }: {
   maxUsdc: string | null;
   relayerEnabled: boolean;
   evmDestinations?: EvmChainId[];
+  /** Sui also sends to Solana (`SUI_SENDS_TO_SOLANA`). */
+  solana?: boolean;
 }) {
+  const others = [...evmDestinations, ...(solana ? (["solana"] as const) : [])];
   const where =
-    evmDestinations.length === 0
+    others.length === 0
       ? "Stellar"
-      : `Stellar or ${evmDestinations.map((id) => EVM_CHAINS[id].name).join(" or ")}`;
+      : others.length <= 2
+        ? `Stellar or ${others.map((id) => CHAIN_NAMES[id]).join(" or ")}`
+        : "Stellar or the chain you choose";
   return (
     <main className="mx-auto flex w-full max-w-lg flex-col gap-6 px-4 py-14 sm:px-5 sm:py-20">
       <header className="px-1">
         <h1 className="text-2xl font-semibold tracking-tight text-bone [text-wrap:balance]">
-          {evmDestinations.length === 0 ? "Send USDC from Sui to Stellar" : "Send USDC from Sui"}
+          {others.length === 0 ? "Send USDC from Sui to Stellar" : "Send USDC from Sui"}
         </h1>
         <p className="mt-3 text-[0.8125rem] leading-relaxed text-bone/50">
           Burn native USDC on Sui with Circle&rsquo;s CCTP and it is minted on {where} to the
@@ -114,6 +115,7 @@ export function SuiClient({
         maxUsdc={maxUsdc}
         relayerEnabled={relayerEnabled}
         evmDestinations={evmDestinations}
+        solana={solana}
       />
     </main>
   );
@@ -128,6 +130,7 @@ export function SuiTransfer({
   maxUsdc,
   relayerEnabled,
   evmDestinations = [],
+  solana = false,
   embedded = false,
   sourcePicker,
   onBusyChange,
@@ -136,32 +139,38 @@ export function SuiTransfer({
   relayerEnabled: boolean;
   /** EVM chains the server lets Sui send to, delivered by Circle's Forwarding Service. */
   evmDestinations?: EvmChainId[];
+  /** Sui also sends to Solana, delivered the same way. */
+  solana?: boolean;
   embedded?: boolean;
   sourcePicker?: React.ReactNode;
   onBusyChange?: (busy: boolean) => void;
 }) {
-  const [wallets, setWallets] = useState<SuiWalletEntry[]>([]);
-  const [wallet, setWallet] = useState<SuiWalletEntry | null>(null);
-  const [account, setAccount] = useState<WalletAccount | null>(null);
   const [amount, setAmount] = useState("");
   const [recipient, setRecipient] = useState("");
   const [step, setStep] = useState<"idle" | "preparing" | "signing">("idle");
   const [error, setError] = useState<Problem | null>(null);
   const [to, setTo] = useState<SuiDestination>("stellar");
-  const evmKey = evmDestinations.join(",");
+  const forwardedKey = [...evmDestinations, ...(solana ? ["solana"] : [])].join(",");
 
   const [digest, setDigest] = useState<string | null>(null);
   const [attest, setAttest] = useState<Attest>("unknown");
   const [delivery, setDelivery] = useState<Delivery>({ kind: "idle" });
 
+  // The Sui wallet is the one connected in the wallet modal, the same connection the top bar shows.
   // Finishing the mint yourself needs a Stellar wallet that can pay the fee.
-  const { connections, stellarKit, open: openWallets } = useWallets();
+  const {
+    connections,
+    stellarKit,
+    sui: signer,
+    open: openWallets,
+    disconnect: disconnectWallet,
+  } = useWallets();
+  const wallet = signer?.wallet ?? null;
+  const account = signer?.account ?? null;
   const stellarAddress = connections.stellar?.address ?? null;
   const [claiming, setClaiming] = useState(false);
   const [claimError, setClaimError] = useState<string | null>(null);
   const [recipientSeen, setRecipientSeen] = useState<string | null>(null);
-
-  useEffect(() => watchSuiWallets(setWallets), []);
 
   // Changing the source chain on the bridge screen is blocked while a transfer is on screen.
   // On an EVM destination `SuiToEvm` reports instead.
@@ -179,26 +188,15 @@ export function SuiTransfer({
       setDigest(fromUrl);
       return;
     }
-    // A transfer to an EVM chain is followed by `SuiToEvm`, which reads its own record.
-    const evm = recallSuiEvm();
-    if (evm && evmKey.split(",").includes(evm.chain)) {
-      setTo(evm.chain);
+    // A transfer to an EVM chain or Solana is followed by `SuiForwarded`, which reads its own record.
+    const forwarded = recallSuiEvm();
+    if (forwarded && forwardedKey.split(",").includes(forwarded.chain)) {
+      setTo(forwarded.chain);
       return;
     }
     const start = recall();
     if (start) setDigest(start);
-  }, [evmKey]);
-
-  const connect = useCallback(async (entry: SuiWalletEntry) => {
-    setError(null);
-    try {
-      const acc = await connectSui(entry);
-      setWallet(entry);
-      setAccount(acc);
-    } catch (err) {
-      setError(problem("connect", "sui wallet connect failed", err));
-    }
-  }, []);
+  }, [forwardedKey]);
 
   const amountOk = /^\d{1,12}(\.\d{1,6})?$/.test(amount.trim()) && Number(amount) > 0;
   const recipientOk = /^G[A-Z2-7]{55}$/.test(recipient.trim());
@@ -220,11 +218,7 @@ export function SuiTransfer({
       });
       const body = (await res.json()) as { transaction?: string; error?: string };
       if (!res.ok || !body.transaction) {
-        setError({
-          where: "send",
-          text: body.error ?? "Could not prepare the transfer.",
-          declined: false,
-        });
+        setError({ text: body.error ?? "Could not prepare the transfer.", declined: false });
         return;
       }
       setStep("signing");
@@ -234,7 +228,7 @@ export function SuiTransfer({
       setDelivery({ kind: "idle" });
       setDigest(tx);
     } catch (err) {
-      setError(problem("send", "sui burn failed", err));
+      setError(problem("sui burn failed", err));
     } finally {
       setStep("idle");
     }
@@ -366,22 +360,19 @@ export function SuiTransfer({
         : "Burn on Sui";
 
   const walletSection = (
-    <>
-      <WalletSection
-        wallets={wallets}
-        account={account}
-        walletName={wallet?.name ?? null}
-        onConnect={connect}
-        onDisconnect={() => {
-          setWallet(null);
-          setAccount(null);
-        }}
-      />
-      {error?.where === "connect" && <ProblemNotice problem={error} />}
-    </>
+    <WalletSection
+      address={account?.address ?? null}
+      walletName={wallet?.name ?? null}
+      onConnect={() => openWallets(["sui"])}
+      onDisconnect={() => void disconnectWallet("sui")}
+    />
   );
 
-  const destinations: SuiDestination[] = ["stellar", ...evmDestinations];
+  const destinations: SuiDestination[] = [
+    "stellar",
+    ...evmDestinations,
+    ...(solana ? (["solana"] as const) : []),
+  ];
   const picker =
     destinations.length > 1 ? (
       <SuiDestinationPicker
@@ -439,7 +430,7 @@ export function SuiTransfer({
         />
       </Field>
 
-      {error?.where === "send" && <ProblemNotice problem={error} />}
+      {error && <ProblemNotice problem={error} />}
 
       <Button
         size="lg"
@@ -452,24 +443,23 @@ export function SuiTransfer({
     </div>
   );
 
-  const evmChain = to === "stellar" ? null : EVM_CHAINS[to];
-  const body = evmChain ? (
-    <SuiToEvm
-      chain={evmChain}
-      wallet={wallet}
-      account={account}
-      maxUsdc={maxUsdc}
-      walletSection={walletSection}
-      picker={picker}
-      {...(onBusyChange ? { onBusyChange } : {})}
-    />
-  ) : null;
+  const body =
+    to === "stellar" ? null : (
+      <SuiForwarded
+        to={to}
+        signer={signer}
+        maxUsdc={maxUsdc}
+        walletSection={walletSection}
+        picker={picker}
+        {...(onBusyChange ? { onBusyChange } : {})}
+      />
+    );
 
   if (embedded) {
     return (
       <>
         <h2 id="bridge-heading" className="sr-only">
-          Bridge USDC from Sui to {evmChain ? evmChain.name : "Stellar"}
+          Bridge USDC from Sui to {CHAIN_NAMES[to]}
         </h2>
         <div className="px-5 py-6 sm:px-6">
           {sourcePicker}
@@ -520,46 +510,42 @@ export function SuiTransfer({
 function ProblemNotice({ problem }: { problem: Problem }) {
   if (problem.declined) {
     return (
-      <Notice
-        tone="info"
-        title={problem.where === "connect" ? "Wallet not connected" : "Wallet request cancelled"}
-      >
+      <Notice tone="info" title="Wallet request cancelled">
         The wallet reported: {problem.text} If you did not cancel it yourself, the wallet window may
         have been blocked or closed. Allow pop-ups for this site, then try again.
       </Notice>
     );
   }
   return (
-    <Notice
-      tone="alarm"
-      title={problem.where === "connect" ? "Could not connect" : "Could not send"}
-    >
+    <Notice tone="alarm" title="Could not send">
       {problem.text}
     </Notice>
   );
 }
 
+/**
+ * The Sui wallet, as the wallet modal connected it: one place to connect, the same connection the
+ * top bar shows. Connecting opens the modal on its Sui tab, which lists every Sui wallet the browser
+ * has (through the Wallet Standard) and says so when there is none.
+ */
 function WalletSection({
-  wallets,
-  account,
+  address,
   walletName,
   onConnect,
   onDisconnect,
 }: {
-  wallets: SuiWalletEntry[];
-  account: WalletAccount | null;
+  address: string | null;
   walletName: string | null;
-  onConnect: (w: SuiWalletEntry) => void;
+  onConnect: () => void;
   onDisconnect: () => void;
 }) {
-  if (account) {
+  if (address) {
     return (
       <div className="flex items-center justify-between gap-3">
         <div>
           <p className="text-eyebrow font-medium uppercase text-bone/40">Sui wallet</p>
           <p className="mt-1.5 text-sm text-bone/85">
-            {walletName}{" "}
-            <span className="font-mono text-xs text-bone/50">{short(account.address)}</span>
+            {walletName} <span className="font-mono text-xs text-bone/50">{short(address)}</span>
           </p>
         </div>
         <Button variant="quiet" size="sm" onClick={onDisconnect}>
@@ -568,40 +554,12 @@ function WalletSection({
       </div>
     );
   }
-  if (wallets.length === 0) {
-    return (
-      <Notice tone="info" title="No Sui wallet found">
-        Install or unlock a Sui wallet in this browser, then reload the page. Any wallet that
-        supports the Wallet Standard will appear here.
-      </Notice>
-    );
-  }
   return (
     <div>
-      <p className="mb-2.5 text-eyebrow font-medium uppercase text-bone/40">Connect a Sui wallet</p>
-      <div className="grid gap-2 sm:grid-cols-2">
-        {wallets.map((w) => (
-          <Button
-            key={w.name}
-            variant="secondary"
-            onClick={() => onConnect(w)}
-            className="justify-start"
-          >
-            <span className="flex items-center justify-start gap-2.5 text-left">
-              {w.icon && (
-                <img
-                  src={w.icon}
-                  alt=""
-                  width={20}
-                  height={20}
-                  className="block h-5 w-5 shrink-0 rounded-md object-contain"
-                />
-              )}
-              <span className="truncate">{w.name}</span>
-            </span>
-          </Button>
-        ))}
-      </div>
+      <p className="mb-2.5 text-eyebrow font-medium uppercase text-bone/40">Sui wallet</p>
+      <Button variant="secondary" onClick={onConnect} className="w-full">
+        Connect a Sui wallet
+      </Button>
     </div>
   );
 }

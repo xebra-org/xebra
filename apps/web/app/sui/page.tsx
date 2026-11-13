@@ -7,6 +7,7 @@ import {
   maxUsdcBase,
   relayerSecret,
   suiEvmDestinations,
+  suiSendsToSolana,
   suiStellarEnabled,
 } from "../../lib/sui-stellar/config";
 import { SuiClient } from "./sui-client";
@@ -24,6 +25,7 @@ export default function SuiPage() {
         maxUsdc={cap === null ? null : formatUsdcAmount(cap)}
         relayerEnabled={relayerSecret() !== null}
         evmDestinations={suiEvmDestinations().map((c) => c.id)}
+        solana={suiSendsToSolana()}
       />
       <SiteFooter wrapperContractId={env.cctpWrapperContractId} contractLabel="Stellar contract" />
     </>

@@ -1,37 +1,47 @@
 "use client";
 
-import type { WalletAccount } from "@wallet-standard/base";
 import type { CircleHealth } from "@xebra/cctp-client";
 import {
-  EVM_CHAINS,
-  type EvmChain,
   type EvmChainId,
   type FeePlan,
   checkAddressOn,
-  explorerTxUrl,
+  checkSolanaAddress,
+  isEvmChainId,
   planEvmFee,
 } from "@xebra/sdk/core";
 import type React from "react";
 import { useEffect, useMemo, useState } from "react";
-import { type Chain, ChainGlyph } from "../../components/bridge/chain-glyph";
+import { CHAIN_NAMES } from "../../components/bridge/chain-glyph";
+import { ChainPicker, PickerLabel } from "../../components/bridge/chain-picker";
 import { EvmQuotePanel } from "../../components/bridge/evm-quote-panel";
 import { SubmittedNotice } from "../../components/bridge/receipt";
+import { RecipientPanel, UseMyWallet } from "../../components/bridge/recipient-panels";
 import { Button } from "../../components/ui/button";
-import { cn } from "../../components/ui/cn";
 import { Field, Input } from "../../components/ui/field";
 import { ArrowRight } from "../../components/ui/icons";
 import { Notice } from "../../components/ui/notice";
+import { type SuiSigner, useWallets } from "../../components/wallet/wallet-provider";
 import { type DeliveryView, getDelivery, getRouteHealth } from "../../lib/circle-status";
 import { reportError } from "../../lib/format-error";
-import { type SuiWalletEntry, signAndExecuteSui } from "../../lib/wallets/sui";
+import {
+  type RouteDestination,
+  feeDestination,
+  routeDestination,
+} from "../../lib/route-destination";
+import { type RecipientResolution, resolveRecipient } from "../../lib/solana-recipient";
+import { signAndExecuteSui } from "../../lib/wallets/sui";
 
 /**
- * Sui to an EVM chain (Monad first): burn on Sui and Circle's Forwarding Service mints on the
+ * Sui to an EVM chain or to Solana: burn on Sui and Circle's Forwarding Service mints on the
  * destination. Unlike Sui to Stellar nothing of ours finishes the transfer, so there is no relayer
- * and no claim on this page; a delivery that fails is claimed at `/claim`, like any EVM-bound one.
+ * and no claim on this page; a delivery that fails is claimed at `/claim`, like any other.
  *
  * The fee is Circle's delivery fee only, priced with the same rules as every direct EVM route
  * (`planEvmFee`), and the server prices it again before building the burn.
+ *
+ * Solana: the person names a wallet, and the burn names its USDC token account. When the account
+ * does not exist yet Circle opens it during delivery, for a higher fee with its own ceiling; the
+ * page prices that from the lookup, and the server looks it up again before building the burn.
  */
 
 const SUI_DOMAIN = 8;
@@ -45,11 +55,15 @@ const HEALTH_MS = 30_000;
  */
 const CLAIM_GRACE_MS = 10 * 60_000;
 
-export type SuiDestination = "stellar" | EvmChainId;
+/** Where Sui sends: Stellar through our relayer, the rest through Circle's Forwarding Service. */
+export type SuiForwardedId = EvmChainId | "solana";
+export type SuiDestination = "stellar" | SuiForwardedId;
+
+const isForwardedId = (v: string): v is SuiForwardedId => v === "solana" || isEvmChainId(v);
 
 interface Remembered {
   digest: string;
-  chain: EvmChainId;
+  chain: SuiForwardedId;
   /** When it was burned, for the claim grace. */
   at: number;
 }
@@ -63,21 +77,24 @@ function remember(t: Remembered | null) {
   }
 }
 
-/** The Sui to EVM transfer this browser was following, if any. */
+/** The Sui transfer to an EVM chain or Solana this browser was following, if any. */
 export function recallSuiEvm(): Remembered | null {
   try {
     const raw = window.localStorage.getItem(STORAGE_KEY);
     if (!raw) return null;
     const v = JSON.parse(raw) as Partial<Remembered>;
-    return typeof v.digest === "string" && DIGEST.test(v.digest) && typeof v.chain === "string"
-      ? { digest: v.digest, chain: v.chain as EvmChainId, at: typeof v.at === "number" ? v.at : 0 }
+    return typeof v.digest === "string" &&
+      DIGEST.test(v.digest) &&
+      typeof v.chain === "string" &&
+      isForwardedId(v.chain)
+      ? { digest: v.digest, chain: v.chain, at: typeof v.at === "number" ? v.at : 0 }
       : null;
   } catch {
     return null;
   }
 }
 
-/** "Send to": Stellar, or one of the EVM chains the server lets Sui send to. */
+/** "Send to": Stellar, or one of the chains the server lets Sui send to through Circle. */
 export function SuiDestinationPicker({
   value,
   options,
@@ -90,53 +107,17 @@ export function SuiDestinationPicker({
   disabled?: boolean;
 }) {
   return (
-    <fieldset disabled={disabled} className="min-w-0 border-0 p-0 disabled:opacity-50">
-      <legend className="mb-2.5 text-eyebrow font-medium uppercase text-bone/40">Send to</legend>
-      <div
-        className={cn(
-          "grid gap-1 rounded-tray bg-obsidian-sunken p-1 ring-1 ring-inset ring-bone/[0.06]",
-          options.length === 2 ? "grid-cols-2" : "grid-cols-3",
-        )}
-      >
-        {options.map((id) => {
-          const chosen = id === value;
-          const name = id === "stellar" ? "Stellar" : EVM_CHAINS[id].name;
-          return (
-            <label
-              key={id}
-              className="relative block min-w-0 cursor-pointer has-[:disabled]:cursor-not-allowed"
-            >
-              <input
-                type="radio"
-                name="sui-destination"
-                value={id}
-                checked={chosen}
-                onChange={() => onChange(id)}
-                className="peer sr-only"
-              />
-              <span
-                className={cn(
-                  "flex items-center gap-2.5 rounded-[0.875rem] px-3.5 py-2.5",
-                  "transition-colors duration-400 ease-haptic active:scale-[0.99]",
-                  "peer-focus-visible:ring-1 peer-focus-visible:ring-bone/40",
-                  chosen ? "bg-bone/[0.1]" : "hover:bg-bone/[0.04]",
-                )}
-              >
-                <ChainGlyph chain={id as Chain} className={chosen ? "" : "opacity-60"} />
-                <span
-                  className={cn(
-                    "truncate text-sm font-medium tracking-[-0.01em]",
-                    chosen ? "text-bone" : "text-bone/45",
-                  )}
-                >
-                  {name}
-                </span>
-              </span>
-            </label>
-          );
-        })}
-      </div>
-    </fieldset>
+    <div className="min-w-0">
+      <PickerLabel>Send to</PickerLabel>
+      <ChainPicker
+        legend="Destination chain"
+        name="sui-destination"
+        options={options.map((id) => ({ id, name: CHAIN_NAMES[id] }))}
+        value={value}
+        onChange={onChange}
+        {...(disabled !== undefined ? { disabled } : {})}
+      />
+    </div>
   );
 }
 
@@ -149,28 +130,34 @@ function parseAmount(input: string): bigint | null {
 
 /**
  * The form and, once burned, the receipt. `walletSection` and `picker` belong to the Sui transfer
- * around it, so switching between Stellar and an EVM chain keeps the connected wallet.
+ * around it, so switching destination keeps the connected wallet. The wallet itself is the one
+ * connected in the wallet modal (`signer`).
  */
-export function SuiToEvm({
-  chain,
-  wallet,
-  account,
+export function SuiForwarded({
+  to,
+  signer,
   maxUsdc,
   walletSection,
   picker,
   onBusyChange,
 }: {
-  chain: EvmChain;
-  wallet: SuiWalletEntry | null;
-  account: WalletAccount | null;
+  to: SuiForwardedId;
+  signer: SuiSigner | null;
   maxUsdc: string | null;
   walletSection: React.ReactNode;
   picker: React.ReactNode;
   onBusyChange?: (busy: boolean) => void;
 }) {
+  const chain: RouteDestination = useMemo(() => routeDestination(to), [to]);
+  const { connections, open: openWallets } = useWallets();
   const [amount, setAmount] = useState("");
   const [recipient, setRecipient] = useState("");
-  const [health, setHealth] = useState<CircleHealth | null>(null);
+  // A health reading only counts for the route it was taken for, and on Solana for whether it
+  // priced opening the account.
+  const [healthState, setHealthState] = useState<{
+    key: string;
+    value: CircleHealth | null;
+  } | null>(null);
   const [step, setStep] = useState<"idle" | "preparing" | "signing">("idle");
   const [error, setError] = useState<string | null>(null);
   const [digest, setDigest] = useState<string | null>(null);
@@ -191,13 +178,55 @@ export function SuiToEvm({
     onBusyChange?.(step !== "idle" || (digest !== null && !delivered));
   }, [onBusyChange, step, digest, delivered]);
 
+  const address = useMemo(
+    () => (chain.evm ? checkAddressOn(chain.evm, recipient) : checkSolanaAddress(recipient)),
+    [chain, recipient],
+  );
+
+  // Solana only. CCTP mints into a USDC token account, not a wallet, so the wallet typed is
+  // resolved to its account before anything is priced. A missing account is a price, not a wall.
+  const [solanaRecipient, setSolanaRecipient] = useState<RecipientResolution | null>(null);
+  const [resolving, setResolving] = useState(false);
+  useEffect(() => {
+    if (chain.evm || !address.ok) {
+      setSolanaRecipient(null);
+      setResolving(false);
+      return;
+    }
+    let cancelled = false;
+    setResolving(true);
+    resolveRecipient(recipient.trim())
+      .then((r) => {
+        if (!cancelled) setSolanaRecipient(r);
+      })
+      .catch(() => {
+        if (!cancelled) setSolanaRecipient(null);
+      })
+      .finally(() => {
+        if (!cancelled) setResolving(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [chain.evm, address.ok, recipient]);
+  const opensAccount = !chain.evm && solanaRecipient?.status === "missing";
+  // Not knowing is not "it exists": an unverified Solana recipient holds the transfer instead.
+  const recipientUnverified =
+    !chain.evm &&
+    address.ok &&
+    (resolving || !solanaRecipient || solanaRecipient.status === "unknown");
+
+  const healthKey = `${chain.cctpDomainId}:${opensAccount}`;
+  const health = healthState?.key === healthKey ? healthState.value : null;
+
   // Circle's quote for Sui to this chain, refreshed while the form is open.
   useEffect(() => {
     if (digest) return;
     let cancelled = false;
+    const key = `${chain.cctpDomainId}:${opensAccount}`;
     const load = async () => {
-      const h = await getRouteHealth(SUI_DOMAIN, chain.cctpDomainId);
-      if (!cancelled) setHealth(h);
+      const h = await getRouteHealth(SUI_DOMAIN, chain.cctpDomainId, opensAccount);
+      if (!cancelled) setHealthState({ key, value: h });
     };
     void load();
     const t = setInterval(load, HEALTH_MS);
@@ -205,7 +234,7 @@ export function SuiToEvm({
       cancelled = true;
       clearInterval(t);
     };
-  }, [chain.cctpDomainId, digest]);
+  }, [chain.cctpDomainId, opensAccount, digest]);
 
   // Follow the burn until Circle has delivered it (or says it could not).
   useEffect(() => {
@@ -230,11 +259,13 @@ export function SuiToEvm({
   }, [digest]);
 
   const units = parseAmount(amount);
-  const address = checkAddressOn(chain, recipient);
   const tier = health?.tiers.standard ?? null;
   const plan: FeePlan | null = useMemo(
-    () => (units !== null && tier ? planEvmFee({ amount: units, tier, destination: chain }) : null),
-    [units, tier, chain],
+    () =>
+      units !== null && tier
+        ? planEvmFee({ amount: units, tier, destination: feeDestination(chain, opensAccount) })
+        : null,
+    [units, tier, chain, opensAccount],
   );
   const routeDown = health?.status === "down" || (health !== null && !tier);
   const quoteError = routeDown
@@ -245,10 +276,15 @@ export function SuiToEvm({
   const amountError = plan && !plan.ok && plan.kind !== "cap" ? plan.reason : null;
 
   const canSend =
-    Boolean(wallet && account) && address.ok && plan?.ok === true && !routeDown && step === "idle";
+    Boolean(signer) &&
+    address.ok &&
+    !recipientUnverified &&
+    plan?.ok === true &&
+    !routeDown &&
+    step === "idle";
 
   async function send() {
-    if (!wallet || !account || !plan?.ok) return;
+    if (!signer || !plan?.ok) return;
     setError(null);
     setStep("preparing");
     try {
@@ -256,7 +292,7 @@ export function SuiToEvm({
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
-          sender: account.address,
+          sender: signer.account.address,
           amount: amount.trim(),
           recipient: recipient.trim(),
           chain: chain.id,
@@ -267,11 +303,14 @@ export function SuiToEvm({
       if (!res.ok || !body.transaction) {
         setError(body.error ?? "Could not prepare the transfer.");
         // A fee that moved is shown again from a fresh quote before anything is signed.
-        if (res.status === 409) setHealth(await getRouteHealth(SUI_DOMAIN, chain.cctpDomainId));
+        if (res.status === 409) {
+          const value = await getRouteHealth(SUI_DOMAIN, chain.cctpDomainId, opensAccount);
+          setHealthState({ key: healthKey, value });
+        }
         return;
       }
       setStep("signing");
-      const tx = await signAndExecuteSui(wallet, account, body.transaction);
+      const tx = await signAndExecuteSui(signer.wallet, signer.account, body.transaction);
       const at = Date.now();
       remember({ digest: tx, chain: chain.id, at });
       setSentAt(at);
@@ -307,7 +346,7 @@ export function SuiToEvm({
           delivery={shown}
           destination={{
             name: chain.name,
-            explorerTxUrl: (hash) => explorerTxUrl(chain, hash),
+            explorerTxUrl: chain.explorerTxUrl,
             claimCost: chain.claimCost,
           }}
           route={{
@@ -368,23 +407,39 @@ export function SuiToEvm({
         />
       </Field>
 
-      <Field
-        id="sui-evm-recipient"
-        label={`${chain.name} address`}
-        hint={`The wallet that receives USDC on ${chain.name}. Circle delivers it; you need no ${chain.nativeCurrency.symbol}.`}
-        error={recipient.trim() !== "" && !address.ok ? (address.error ?? null) : null}
-      >
-        <Input
+      <div>
+        <Field
           id="sui-evm-recipient"
-          autoComplete="off"
-          spellCheck={false}
-          value={recipient}
-          onChange={(e) => setRecipient(e.target.value)}
-          placeholder="0x…"
-          className="h-12 font-mono text-xs"
-          invalid={recipient.trim() !== "" && !address.ok}
+          label={`${chain.name} address`}
+          hint={`The wallet that receives USDC on ${chain.name}. Circle delivers it; you need no ${chain.evm ? chain.evm.nativeCurrency.symbol : "SOL"}.`}
+          error={recipient.trim() !== "" && !address.ok ? (address.error ?? null) : null}
+        >
+          <Input
+            id="sui-evm-recipient"
+            autoComplete="off"
+            spellCheck={false}
+            value={recipient}
+            onChange={(e) => setRecipient(e.target.value)}
+            placeholder={chain.evm ? "0x…" : "Recipient wallet"}
+            className="h-12 font-mono text-xs placeholder:font-sans"
+            invalid={recipient.trim() !== "" && !address.ok}
+          />
+        </Field>
+        <UseMyWallet
+          family={chain.evm ? "evm" : "solana"}
+          connection={chain.evm ? connections.evm : connections.solana}
+          disabled={step !== "idle"}
+          onUse={setRecipient}
+          onConnect={openWallets}
         />
-      </Field>
+        {!chain.evm && (
+          <RecipientPanel
+            resolving={resolving}
+            recipient={solanaRecipient}
+            addressValid={address.ok}
+          />
+        )}
+      </div>
 
       {(units !== null || quoteError) && (
         <div className="-mt-6">

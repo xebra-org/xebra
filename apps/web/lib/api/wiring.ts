@@ -1,7 +1,7 @@
 import { Connection, type Transaction } from "@solana/web3.js";
 import { rpc } from "@stellar/stellar-sdk";
 import type { CircleHealth } from "@xebra/cctp-client";
-import { buildSuiBurn } from "@xebra/sdk/build";
+import { buildSuiBurn, buildSuiForwardStep } from "@xebra/sdk/build";
 import { type FeeParams, stellarDestinations, wrapperFor } from "@xebra/sdk/core";
 import { GET as attestation } from "../../app/api/attestation/route";
 import { GET as circleHealth } from "../../app/api/circle-health/route";
@@ -17,7 +17,12 @@ import { checkClaim, isAlreadyMinted } from "../evm-claim";
 import { type WrapperState, parseWrapperState } from "../evm-wrapper";
 import { createTtlCache } from "../server/ttl-cache";
 import { suiClient } from "../sui-stellar/client";
-import { maxUsdcBase, suiStellarEnabled } from "../sui-stellar/config";
+import {
+  maxUsdcBase,
+  suiEvmDestinations,
+  suiSendsToSolana,
+  suiStellarEnabled,
+} from "../sui-stellar/config";
 import { planClaim, recipientStatus } from "../sui-stellar/stellar-side";
 import type { Eip1193Provider } from "../wallets/types";
 import type { Deps, StellarRoutes } from "./deps";
@@ -73,7 +78,14 @@ async function readJson(res: Response): Promise<Record<string, unknown> | null> 
 
 export const liveDeps: Deps = {
   siteUrl: SITE_URL,
-  suiStellar: { enabled: suiStellarEnabled(), maxUnits: maxUsdcBase() },
+  suiStellar: {
+    enabled: suiStellarEnabled(),
+    maxUnits: maxUsdcBase(),
+    sendsTo: [
+      ...suiEvmDestinations().map((c) => c.id),
+      ...(suiSendsToSolana() ? (["solana"] as const) : []),
+    ],
+  },
   evmRoutes: env.evmRoutes,
   stellarRoutes,
   evmWrapperAddress: (chain) => wrapperFor(chain, env.arcUseWrapper),
@@ -156,6 +168,7 @@ export const liveDeps: Deps = {
     },
     evmWrapperOn: env.arcUseWrapper,
     suiBurn: (p) => buildSuiBurn(suiClient(), p),
+    suiForwardBurn: (p) => buildSuiForwardStep(suiClient(), p),
     async attestation(tx, srcDomain) {
       return readJsonAnyStatus(
         await attestation(new Request(`${ORIGIN}/api/attestation?tx=${tx}&src=${srcDomain}`)),

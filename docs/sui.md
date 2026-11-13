@@ -75,7 +75,8 @@ Server environment (Vercel, read at request time, not build inputs):
 | `SUI_STELLAR_RELAYER_SECRET` | Funded mainnet Stellar secret that pays the fee (about 0.02 XLM per completion). Unset: users can burn but nothing completes it. Use a dedicated account holding a small float. |
 | `SUI_STELLAR_MAX_USDC` | Optional per-transfer cap in USDC. Unset means no cap (it was 10 until 2026-11-08). |
 | `SUI_RPC_URL` | Sui fullnode, default Mysten's public mainnet node. |
-| `SUI_SENDS_TO_EVM` | EVM chains Sui also sends to (comma list of chain ids, e.g. `monad`), or `none`. Unset means `monad`. Only while `SUI_STELLAR_ENABLED=true`. |
+| `SUI_SENDS_TO_EVM` | EVM chains Sui also sends to: a comma list of chain ids (e.g. `monad,base`), `all` for every chain in the EVM table (Arc included), or `none`. Unset means `monad`. Unknown names are ignored. Only while `SUI_STELLAR_ENABLED=true`. |
+| `SUI_SENDS_TO_SOLANA` | `true` to let Sui send to Solana as well (Circle's Forwarding Service, into the recipient's USDC account). Off unless set. Only while `SUI_STELLAR_ENABLED=true`. |
 
 On the main bridge screen, Sui appears in the "Send from" picker when `SUI_STELLAR_ENABLED=true`
 (`/api/sui-stellar/config` tells the page). It is the same transfer as `/sui`, embedded in the plate.
@@ -103,6 +104,24 @@ finalities; the burn uses Standard (2000) because Sui finalises in about a secon
 - Progress is `/api/delivery?src=8&tx=<digest>`; a failed delivery is claimed at `/claim?tx=<digest>&src=8` with an EVM
   wallet on Monad (the claim page now accepts Sui as a source).
 - `/api/circle-health?src=8&dst=15` answers for the routes `SUI_SENDS_TO_EVM` names.
+
+## Sui to every EVM chain and to Solana (built 2026-11-13, no real transfer yet)
+
+Iris quoted Sui forwarding on 2026-11-13 to every domain in the EVM table and Arc, and to Solana (5: `high` 0.1306 USDC,
+0.2497 with `includeRecipientSetup`); it refuses Aptos (9) and Stellar (27). `SUI_SENDS_TO_EVM=all` offers every EVM chain;
+`SUI_SENDS_TO_SOLANA=true` adds Solana.
+
+- **Solana.** The page and `/v1` take a wallet address; the server resolves its USDC associated token account
+  (`/api/recipient`) and the burn's `mintRecipient` is that account, never the wallet. When the account does not exist the
+  hook is the 65-byte `cctp-forward` form that asks Circle to open it for the wallet, and the fee is priced with
+  `includeRecipientSetup` under the account-opening ceiling (1.0 USDC; 0.5 otherwise). The encoding is the same
+  `recipientAndHook` every EVM source uses (`forwardBurnArgs` in `packages/sdk/src/build/sui.ts`).
+- **Status and claims.** `/api/delivery` now also reports the burn's `destinationDomain`, so `/v1/transfers/sui/<digest>`
+  reads a Sui burn to anywhere but Stellar from Circle's forwarding record, including `needs_claim` with a `/claim?src=8`
+  link. `POST /v1/claims` with `chain: "sui"` and an EVM or Solana payer builds the mint on that chain.
+- **Wallet.** The Sui wallet is connected in the wallet modal's Sui tab, the same connection the top bar shows.
+- Simulated on Sui mainnet on 2026-11-13 (not sent): 2 USDC to Solana with and without account opening, to Base and to Arc,
+  each emitting `DepositForBurn` with the expected domain, `mint_recipient` and hook.
 
 **Address balances.** Sui accounts can hold USDC as an address balance with no coin objects (the pilot tester's 49.7 USDC
 was held that way on 2026-11-11, so the old coin-listing builder reported "not enough USDC"). Both routes now take the coin
