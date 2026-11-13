@@ -35,13 +35,13 @@ const STORAGE_KEY = "xebra.sui-stellar.digest";
 const POLL_MS = 4000;
 const DIGEST = /^[1-9A-HJ-NP-Za-km-z]{32,64}$/;
 
-type Delivery =
+export type Delivery =
   | { kind: "idle" }
   | { kind: "completing" }
   | { kind: "done"; hash: string | null }
   | { kind: "stuck"; message: string };
 
-type Attest = "unknown" | "pending" | "complete";
+export type Attest = "unknown" | "pending" | "complete";
 
 function remember(digest: string | null) {
   try {
@@ -606,7 +606,11 @@ function WalletSection({
   );
 }
 
-function Progress({
+/**
+ * A burn into Stellar on its way: burned, attested, minted. Shared with the Aptos source, which
+ * names its own chain and explorer link; Sui's are the defaults.
+ */
+export function Progress({
   digest,
   attest,
   delivery,
@@ -619,7 +623,11 @@ function Progress({
   onConnectStellar,
   onRetry,
   onReset,
+  sourceName = "Sui",
+  burnUrl = `https://suivision.xyz/txblock/${digest}`,
 }: {
+  sourceName?: string;
+  burnUrl?: string;
   digest: string;
   attest: Attest;
   delivery: Delivery;
@@ -651,11 +659,11 @@ function Progress({
         <ol className="flex flex-col gap-4">
           <Row
             state="done"
-            title="Burned on Sui"
+            title={`Burned on ${sourceName}`}
             detail={
               <a
                 className="font-mono text-xs underline decoration-bone/20 underline-offset-4 hover:decoration-bone/60"
-                href={`https://suivision.xyz/txblock/${digest}`}
+                href={burnUrl}
                 target="_blank"
                 rel="noreferrer"
               >

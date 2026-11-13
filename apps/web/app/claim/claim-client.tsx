@@ -91,10 +91,13 @@ type Source = string;
 const STELLAR: Source = "stellar";
 /** Sui's CCTP domain. A Sui burn to an EVM chain is claimed there like any EVM-bound one. */
 const SUI: Source = "8";
+/** Aptos's CCTP domain. Its hashes are 0x and 64 hex, read like an EVM chain's. */
+const APTOS: Source = "9";
 
 const SOURCES: Array<{ value: Source; label: string }> = [
   { value: STELLAR, label: "Stellar" },
   { value: SUI, label: "Sui" },
+  { value: APTOS, label: "Aptos" },
   ...Object.values(EVM_CHAINS).map((c) => ({ value: String(c.cctpDomainId), label: c.name })),
 ];
 
@@ -132,6 +135,11 @@ export function ClaimClient() {
     if (src === SUI) {
       setSource(SUI);
       if (raw && SUI_DIGEST.test(raw)) setTxHash(raw);
+      return;
+    }
+    if (src === APTOS) {
+      setSource(APTOS);
+      if (fromLink && EVM_HASH.test(fromLink)) setTxHash(fromLink);
       return;
     }
     const chain = src !== null && /^\d+$/.test(src) ? evmChainForDomain(Number(src)) : null;

@@ -13,11 +13,13 @@ export async function claimOnStellar(
   kit: StellarWalletsKit,
   payer: string,
   digest: string,
+  /** Another chain's claim route, and how it names the burn (Aptos: `/api/aptos/claim`, `tx`). */
+  via: { url: string; key: string } = { url: "/api/sui-stellar/claim", key: "digest" },
 ): Promise<{ hash: string; delivered: boolean }> {
-  const res = await fetch("/api/sui-stellar/claim", {
+  const res = await fetch(via.url, {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ digest, payer }),
+    body: JSON.stringify({ [via.key]: digest, payer }),
   });
   const body = (await res.json()) as { xdr?: string; error?: string; delivered?: boolean };
   if (body.delivered) return { hash: "", delivered: true };
