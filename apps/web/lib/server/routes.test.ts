@@ -164,3 +164,40 @@ describe("Sui as a source", () => {
     }
   });
 });
+
+describe("Aptos as a source", () => {
+  it("is refused while its switch is off, whatever APTOS_SENDS_TO says", () => {
+    vi.stubEnv("APTOS_ENABLED", "");
+    vi.stubEnv("APTOS_SENDS_TO", "all");
+    expect(readSource("9", STELLAR)).toBeNull();
+    expect(isOfferedRoute(9, 6, STELLAR)).toBe(false);
+  });
+
+  it("is read once switched on, and offers nothing until APTOS_SENDS_TO names a chain", () => {
+    vi.stubEnv("APTOS_ENABLED", "true");
+    vi.stubEnv("APTOS_SENDS_TO", undefined as unknown as string);
+    expect(readSource("9", STELLAR)).toEqual({ domain: 9, kind: "aptos" });
+    for (const d of [6, 26, 5, 27]) expect(isOfferedRoute(9, d, STELLAR), String(d)).toBe(false);
+  });
+
+  it("quotes the chains Circle forwards to, never Stellar (nothing forwards into it)", () => {
+    vi.stubEnv("APTOS_ENABLED", "true");
+    vi.stubEnv("APTOS_SENDS_TO", "all");
+    for (const d of [1, 2, 3, 6, 7, 10, 12, 13, 14, 15, 16, 18, 19, 21, 26, 5]) {
+      expect(isOfferedRoute(9, d, STELLAR), String(d)).toBe(true);
+    }
+    // Stellar, Sui, Aptos itself, and Circle chains outside the table (Ethereum, Linea).
+    for (const d of [27, 8, 9, 0, 11]) expect(isOfferedRoute(9, d, STELLAR), String(d)).toBe(false);
+    vi.stubEnv("APTOS_SENDS_TO", "base, solana, nonsense");
+    expect(isOfferedRoute(9, 6, STELLAR)).toBe(true);
+    expect(isOfferedRoute(9, 5, STELLAR)).toBe(true);
+    expect(isOfferedRoute(9, 26, STELLAR)).toBe(false);
+  });
+
+  it("reads hashes as 0x and 64 hex, lower-cased like Circle indexes them", () => {
+    expect(normaliseTxHash("aptos", ` 0x${HEX.toUpperCase()} `)).toBe(`0x${HEX}`);
+    for (const bad of [null, "", HEX, SUI_TX, `0x${HEX}00`]) {
+      expect(normaliseTxHash("aptos", bad), String(bad)).toBeNull();
+    }
+  });
+});

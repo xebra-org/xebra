@@ -15,6 +15,7 @@ import {
   type VerifiedBurn,
   verifyMessage,
 } from "@xebra/sdk/core";
+import { APTOS_CCTP_DOMAIN, aptosDestinations } from "../aptos/config";
 import { env } from "../env";
 import { readAttestation } from "./attestation";
 
@@ -72,10 +73,20 @@ export const STELLAR_INBOUND_SOURCES: readonly number[] = [
   ...Object.values(EVM_CHAINS).map((c) => c.cctpDomainId),
 ];
 
+/**
+ * `STELLAR_INBOUND_SOURCES`, plus Aptos while Aptos may send to Stellar (`APTOS_ENABLED` and
+ * `stellar` in `APTOS_SENDS_TO`). Read on each call, so the switch takes effect without a rebuild.
+ */
+export function stellarInboundSources(): readonly number[] {
+  return aptosDestinations().includes("stellar")
+    ? [...STELLAR_INBOUND_SOURCES, APTOS_CCTP_DOMAIN]
+    : STELLAR_INBOUND_SOURCES;
+}
+
 function verify(message: string): VerifiedBurn {
   return verifyMessage(hexBytes(message), {
     tokenMessenger: env.cctpTokenMessengerId,
-    sources: STELLAR_INBOUND_SOURCES,
+    sources: stellarInboundSources(),
   });
 }
 

@@ -1,10 +1,14 @@
 import { EVM_CHAINS, SUI_DOMAIN } from "@xebra/sdk/core";
+
+/** Aptos's CCTP domain; its transaction hashes are 0x and 64 hex, like an EVM chain's. */
+const APTOS_DOMAIN = 9;
 import { SUI_DIGEST } from "../../../../lib/sui-stellar/attestation";
 import { relayerSecret } from "../../../../lib/sui-stellar/config";
-import { STELLAR_INBOUND_SOURCES, completeBurn } from "../../../../lib/sui-stellar/stellar-side";
+import { completeBurn, stellarInboundSources } from "../../../../lib/sui-stellar/stellar-side";
 
 /**
- * Completes an attested burn into Stellar from any chain we list (Sui, or an EVM chain), paying the
+ * Completes an attested burn into Stellar from any chain we list (Sui, an EVM chain, or Aptos while
+ * Aptos may send to Stellar), paying the
  * XLM fee from the relayer account. Circle's Forwarding Service delivers to Stellar from no chain, so
  * this is how every transfer into Stellar lands unless its owner claims it.
  *
@@ -40,10 +44,12 @@ export async function POST(request: Request): Promise<Response> {
   } catch {
     // falls through to the validation below
   }
-  if (!Number.isInteger(src) || !STELLAR_INBOUND_SOURCES.includes(src)) {
+  const sources = stellarInboundSources();
+  if (!Number.isInteger(src) || !sources.includes(src)) {
     const names = [
       "Sui (8)",
       ...Object.values(EVM_CHAINS).map((c) => `${c.name} (${c.cctpDomainId})`),
+      ...(sources.includes(APTOS_DOMAIN) ? ["Aptos (9)"] : []),
     ];
     return Response.json(
       { error: `src must be the CCTP domain of one of: ${names.join(", ")}.` },
@@ -56,7 +62,9 @@ export async function POST(request: Request): Promise<Response> {
       {
         error: sui
           ? "tx must be a Sui transaction digest."
-          : "tx must be 0x and 64 hex characters.",
+          : src === APTOS_DOMAIN
+            ? "tx must be an Aptos transaction hash: 0x and 64 hex characters."
+            : "tx must be 0x and 64 hex characters.",
       },
       { status: 400 },
     );
