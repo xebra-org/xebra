@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { toUnits } from "./plan";
+import { legSeconds, refundFor, sourceOf, toUnits } from "./plan";
 
 describe("toUnits", () => {
   it("scales a decimal amount to a token's base units", () => {
@@ -16,5 +16,42 @@ describe("toUnits", () => {
     expect(() => toUnits("1e6", 6)).toThrow();
     expect(() => toUnits("-1", 6)).toThrow();
     expect(() => toUnits("", 6)).toThrow();
+  });
+});
+
+describe("sourceOf", () => {
+  it("defaults to Stellar and takes either naming", () => {
+    expect(sourceOf({})).toBe("stellar");
+    expect(sourceOf({ from: "arc" })).toBe("arc");
+    expect(sourceOf({ from: "arb" })).toBe("arbitrum");
+    expect(sourceOf({ from: "Unichain" })).toBe("unichain");
+  });
+
+  it("refuses chains a swap cannot start on through Xebra", () => {
+    expect(() => sourceOf({ from: "solana" })).toThrow("not solana");
+    expect(() => sourceOf({ from: "sui" })).toThrow("not sui");
+    expect(() => sourceOf({ from: "tron" })).toThrow("not tron");
+  });
+});
+
+describe("refundFor", () => {
+  const G = "GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN";
+  it("sends a Stellar user's refund to their own NEAR Intents account", () => {
+    const r = refundFor("stellar", G);
+    expect(r.refundType).toBe("INTENTS");
+    expect(r.refundTo).toMatch(/^[0-9a-f]{64}$/);
+  });
+
+  it("sends an EVM user's refund to the same address on the hub", () => {
+    const a = "0x1111111111111111111111111111111111111111";
+    expect(refundFor("arc", a)).toEqual({ refundTo: a, refundType: "ORIGIN_CHAIN" });
+  });
+});
+
+describe("legSeconds", () => {
+  it("is a minute from Stellar and fast-finality chains, longer from rollups", () => {
+    expect(legSeconds("stellar")).toBe(60);
+    expect(legSeconds("arc")).toBe(60);
+    expect(legSeconds("base")).toBe(20 * 60);
   });
 });

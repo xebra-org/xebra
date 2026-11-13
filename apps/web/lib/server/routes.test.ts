@@ -105,6 +105,22 @@ describe("isOfferedRoute", () => {
   });
 });
 
+describe("the EVM mesh", () => {
+  it("offers any two different chains named in NEXT_PUBLIC_EVM_MESH, and nothing else", () => {
+    vi.stubEnv("NEXT_PUBLIC_EVM_MESH", "unichain,base");
+    expect(isOfferedRoute(10, 6, STELLAR)).toBe(true);
+    expect(isOfferedRoute(6, 10, STELLAR)).toBe(true);
+    expect(isOfferedRoute(10, 3, STELLAR)).toBe(false);
+    expect(isOfferedRoute(6, 6, STELLAR)).toBe(false);
+    vi.stubEnv("NEXT_PUBLIC_EVM_MESH", "all");
+    expect(isOfferedRoute(6, 3, STELLAR)).toBe(true);
+    expect(isOfferedRoute(6, 5, STELLAR)).toBe(false);
+    vi.stubEnv("NEXT_PUBLIC_EVM_MESH", "bsae");
+    expect(isOfferedRoute(6, 3, STELLAR)).toBe(false);
+    vi.unstubAllEnvs();
+  });
+});
+
 describe("readDomain", () => {
   it("reads digits only", () => {
     expect(readDomain("26")).toBe(26);

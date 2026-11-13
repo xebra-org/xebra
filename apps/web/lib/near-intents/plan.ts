@@ -1,17 +1,24 @@
 import { type TransferBuild, type Quote as XebraQuote, createXebraClient } from "@xebra/sdk";
-import { parseUsdcAmount } from "@xebra/sdk/core";
-import { createIntentsRouter, intentsAccountFor, usdcChainOf } from "@xebra/sdk/intents";
+import { EVM_CHAINS, checkAddressOn, isEvmChainId, parseUsdcAmount } from "@xebra/sdk/core";
+import {
+  createIntentsRouter,
+  intentsAccountFor,
+  toXebraChain,
+  usdcChainOf,
+} from "@xebra/sdk/intents";
 import * as oneclick from "./oneclick";
 
 /**
- * Prices a swap that starts with USDC on Stellar and ends with any asset NEAR Intents can deliver,
- * two ways, and prepares the cheaper one for the user's wallet to sign.
+ * Prices a swap that starts with USDC on a CCTP chain (Stellar, Arc, or any EVM chain Xebra sends
+ * from) and ends with any asset NEAR Intents can deliver, two ways, and prepares the cheaper one
+ * for the user's wallet to sign.
  *
- * - **Direct:** the user deposits Stellar USDC into NEAR Intents (through the HOT bridge) and a
- *   solver swaps it. Only possible when some solver quotes Stellar USDC.
- * - **Through Xebra:** Xebra moves the USDC from Stellar to a chain where NEAR Intents' USDC is
- *   deepest (Base first) over Circle's CCTP, straight into a 1Click deposit address there, and a
- *   solver takes it from that deposit. One signature, on Stellar.
+ * - **Direct:** the user deposits their chain's USDC into NEAR Intents and a solver swaps it. Only
+ *   possible when Intents lists that chain's USDC and some solver quotes it. It does not for
+ *   Stellar, Arc, Unichain, Sonic, World Chain, Sei, XDC, Ink, Codex and others.
+ * - **Through Xebra:** Xebra moves the USDC from the user's chain to a chain where NEAR Intents'
+ *   USDC is deepest (Base first) over Circle's CCTP, straight into a 1Click deposit address there,
+ *   and a solver takes it from that deposit. The user signs on their own chain only.
  *
  * The Xebra leg is chosen with `@xebra/sdk/intents`, the same calls the integration guide gives
  * NEAR Intents: ask `isRouteAvailable` first, keep the usual path when the answer is no.
@@ -26,9 +33,16 @@ const SLIPPAGE_BPS = 100;
 const DEADLINE_MS = 60 * 60_000;
 
 export interface PlanRequest {
-  /** Decimal USDC on Stellar, e.g. "25". */
+  /**
+   * The chain the user's USDC is on, named as Xebra or NEAR Intents names it. Default `stellar`.
+   */
+  from?: string;
+  /** Decimal USDC on the source chain, e.g. "25". */
   amount: string;
-  /** The user's Stellar account; it signs, and refunds go to its NEAR Intents account. */
+  /**
+   * The user's address on the source chain; it signs. A Stellar sender's refunds go to its own
+   * NEAR Intents account; an EVM sender's go to the same address on the hub chain.
+   */
   sender: string;
   /** A 1Click asset id, e.g. `nep141:wrap.near`. */
   destinationAsset: string;
@@ -52,6 +66,7 @@ export interface ViaXebraPrice extends PathPrice {
 }
 
 export interface Comparison {
+  from: string;
   amount: string;
   destination: oneclick.OneClickToken;
   direct: PathPrice;
@@ -66,16 +81,49 @@ export function toUnits(amount: string, decimals: number): string {
   return (BigInt(m[1] ?? "0") * 10n ** BigInt(decimals) + BigInt(frac || "0")).toString();
 }
 
-/** About how long Xebra's leg takes from Stellar: Stellar finality, Circle's attestation, the mint. */
-const XEBRA_LEG_SECONDS = 60;
+/** The chains a swap can start on: Stellar and the EVM chains (Arc included). */
+type Source = "stellar" | keyof typeof EVM_CHAINS;
 
-async function findTokens(destinationAsset: string) {
+/**
+ * About how long Xebra's leg takes: source finality, Circle's attestation, the mint. Stellar and
+ * the fast-finality chains settle in under a minute; the rollups wait for Ethereum's finality.
+ */
+export function legSeconds(from: Source): number {
+  if (from === "stellar") return 60;
+  const eta = EVM_CHAINS[from].standardEta;
+  if (/under a minute/.test(eta)) return 60;
+  const minutes = [...eta.matchAll(/\d+/g)].map((m) => Number(m[0]));
+  return minutes.length ? Math.max(...minutes) * 60 : 20 * 60;
+}
+
+/** The source chain of a request, or a sentence saying why it is not one. */
+export function sourceOf(r: Pick<PlanRequest, "from">): Source {
+  const chain = toXebraChain(r.from ?? "stellar");
+  if (chain === "stellar" || (chain && isEvmChainId(chain))) return chain as Source;
+  throw new Error(`Swaps through Xebra start on Stellar or an EVM chain, not ${r.from}.`);
+}
+
+/**
+ * Where NEAR Intents sends a refund if the swap cannot be filled, and on which ledger.
+ * A Stellar wallet owns a NEAR Intents account already (its key, SEP-53), so the refund waits
+ * there. An EVM wallet is the same address on every EVM chain, so the refund goes to it on the hub.
+ */
+export function refundFor(from: Source, sender: string) {
+  return from === "stellar"
+    ? { refundTo: intentsAccountFor(sender), refundType: "INTENTS" as const }
+    : { refundTo: sender, refundType: "ORIGIN_CHAIN" as const };
+}
+
+async function findTokens(destinationAsset: string, from: Source) {
   const list = await oneclick.tokens();
   const destination = list.find((t) => t.assetId === destinationAsset);
   if (!destination) throw new Error("NEAR Intents does not list that asset.");
-  const stellarUsdc = list.find((t) => usdcChainOf(t) === "stellar");
   const usdcOn = (chain: string) => list.find((t) => usdcChainOf(t) === chain);
-  return { destination, stellarUsdc, usdcOn };
+  return { destination, sourceUsdc: usdcOn(from), usdcOn };
+}
+
+function chainName(from: Source): string {
+  return from === "stellar" ? "Stellar" : EVM_CHAINS[from].name;
 }
 
 function request(
@@ -96,32 +144,41 @@ function request(
   };
 }
 
-function validate(r: PlanRequest) {
+function validate(r: PlanRequest): Source {
+  const from = sourceOf(r);
   if (parseUsdcAmount(r.amount) === null) throw new Error("Enter an amount of USDC, e.g. 25.");
-  intentsAccountFor(r.sender); // throws on anything but a Stellar account
+  if (from === "stellar") intentsAccountFor(r.sender); // throws on anything but a Stellar account
+  else {
+    const check = checkAddressOn(EVM_CHAINS[from], r.sender);
+    if (!check.ok) throw new Error(check.error ?? `Not an address on ${chainName(from)}.`);
+  }
   if (!r.recipient.trim()) throw new Error("Enter who receives.");
+  return from;
 }
 
 /** Both prices, read-only. Nothing is reserved and no deposit address is issued. */
 export async function compare(r: PlanRequest): Promise<Comparison> {
-  validate(r);
-  const { destination, stellarUsdc, usdcOn } = await findTokens(r.destinationAsset);
+  const from = validate(r);
+  const { destination, sourceUsdc, usdcOn } = await findTokens(r.destinationAsset, from);
 
   const direct: Promise<PathPrice> = (async () => {
-    if (!stellarUsdc)
-      return { available: false, reason: "NEAR Intents does not list Stellar USDC." };
+    if (!sourceUsdc)
+      return {
+        available: false,
+        reason: `NEAR Intents does not list ${chainName(from)} USDC.`,
+      };
     try {
       const { quote } = await oneclick.quote(
         request(
           {
             dry: true,
-            originAsset: stellarUsdc.assetId,
-            amount: toUnits(r.amount, stellarUsdc.decimals),
+            originAsset: sourceUsdc.assetId,
+            amount: toUnits(r.amount, sourceUsdc.decimals),
             refundTo: r.sender,
             refundType: "ORIGIN_CHAIN",
           },
           r,
-          { depositMode: "MEMO" },
+          from === "stellar" ? { depositMode: "MEMO" } : {},
         ),
       );
       return {
@@ -138,17 +195,24 @@ export async function compare(r: PlanRequest): Promise<Comparison> {
   const viaXebra: Promise<ViaXebraPrice> = (async () => {
     let hub: string | null;
     try {
-      hub = await router.pickHub("stellar");
+      hub = await router.pickHub(from);
     } catch {
       return { available: false, reason: "Xebra could not be reached." };
     }
     if (!hub)
-      return { available: false, reason: "Xebra reaches no NEAR Intents hub from Stellar." };
+      return {
+        available: false,
+        reason: `Xebra reaches no NEAR Intents hub from ${chainName(from)}.`,
+      };
     const hubUsdc = usdcOn(hub);
     if (!hubUsdc) return { available: false, reason: `NEAR Intents does not list USDC on ${hub}.` };
     let xq: XebraQuote;
     try {
-      xq = await xebra.quote({ from: "stellar", to: hub as XebraQuote["to"], amount: r.amount });
+      xq = await xebra.quote({
+        from: from as XebraQuote["from"],
+        to: hub as XebraQuote["to"],
+        amount: r.amount,
+      });
     } catch (err) {
       return { available: false, hub, reason: err instanceof Error ? err.message : String(err) };
     }
@@ -159,8 +223,7 @@ export async function compare(r: PlanRequest): Promise<Comparison> {
             dry: true,
             originAsset: hubUsdc.assetId,
             amount: toUnits(xq.recipientGets, hubUsdc.decimals),
-            refundTo: intentsAccountFor(r.sender),
-            refundType: "INTENTS",
+            ...refundFor(from, r.sender),
           },
           r,
         ),
@@ -171,7 +234,7 @@ export async function compare(r: PlanRequest): Promise<Comparison> {
         xebra: xq,
         amountOut: quote.amountOutFormatted,
         ...(quote.amountOutUsd ? { amountOutUsd: quote.amountOutUsd } : {}),
-        timeEstimate: quote.timeEstimate + XEBRA_LEG_SECONDS,
+        timeEstimate: quote.timeEstimate + legSeconds(from),
       };
     } catch (err) {
       return {
@@ -183,10 +246,17 @@ export async function compare(r: PlanRequest): Promise<Comparison> {
     }
   })();
 
-  return { amount: r.amount, destination, direct: await direct, viaXebra: await viaXebra };
+  return {
+    from,
+    amount: r.amount,
+    destination,
+    direct: await direct,
+    viaXebra: await viaXebra,
+  };
 }
 
 export interface Prepared {
+  from: string;
   hub: string;
   depositAddress: string;
   intents: oneclick.Quote;
@@ -196,31 +266,34 @@ export interface Prepared {
 }
 
 /**
- * A real 1Click quote (which issues a deposit address on the hub chain) and the Stellar
- * transaction that sends the user's USDC there through Xebra. Nothing is signed here.
+ * A real 1Click quote (which issues a deposit address on the hub chain) and the transaction(s)
+ * that send the user's USDC there through Xebra, from their own chain. Nothing is signed here.
  *
- * The 1Click quote is FLEX_INPUT so the deposit is accepted at whatever Xebra delivers, and its
- * refund goes to the user's own NEAR Intents account (their Stellar key), since they hold nothing
- * on the hub chain. `maxTotalFee` pins Xebra's leg to the fee just quoted.
+ * The 1Click quote is FLEX_INPUT so the deposit is accepted at whatever Xebra delivers. A refund
+ * goes where `refundFor` says: a Stellar user's own NEAR Intents account, or an EVM user's own
+ * address on the hub. `maxTotalFee` pins Xebra's leg to the fee just quoted.
  */
 export async function prepare(r: PlanRequest): Promise<Prepared> {
-  validate(r);
-  const { usdcOn } = await findTokens(r.destinationAsset);
-  const hub = await router.pickHub("stellar");
-  if (!hub) throw new Error("Xebra reaches no NEAR Intents hub from Stellar right now.");
+  const from = validate(r);
+  const { usdcOn } = await findTokens(r.destinationAsset, from);
+  const hub = await router.pickHub(from);
+  if (!hub) throw new Error(`Xebra reaches no NEAR Intents hub from ${chainName(from)} right now.`);
   const hubUsdc = usdcOn(hub);
   if (!hubUsdc) throw new Error(`NEAR Intents does not list USDC on ${hub}.`);
 
-  const xq = await xebra.quote({ from: "stellar", to: hub as XebraQuote["to"], amount: r.amount });
-  const refundAccount = intentsAccountFor(r.sender);
+  const xq = await xebra.quote({
+    from: from as XebraQuote["from"],
+    to: hub as XebraQuote["to"],
+    amount: r.amount,
+  });
+  const refund = refundFor(from, r.sender);
   const { quote } = await oneclick.quote(
     request(
       {
         dry: false,
         originAsset: hubUsdc.assetId,
         amount: toUnits(xq.recipientGets, hubUsdc.decimals),
-        refundTo: refundAccount,
-        refundType: "INTENTS",
+        ...refund,
       },
       r,
       { swapType: "FLEX_INPUT" },
@@ -229,7 +302,7 @@ export async function prepare(r: PlanRequest): Promise<Prepared> {
   if (!quote.depositAddress) throw new Error("NEAR Intents issued no deposit address.");
 
   const build = await router.buildDeposit({
-    from: "stellar",
+    from,
     depositChain: hub,
     depositAddress: quote.depositAddress,
     sender: r.sender,
@@ -237,19 +310,24 @@ export async function prepare(r: PlanRequest): Promise<Prepared> {
     maxTotalFee: xq.fees.total,
   });
   return {
+    from,
     hub,
     depositAddress: quote.depositAddress,
     intents: quote,
     xebra: xq,
     build,
-    refundAccount,
+    refundAccount: refund.refundTo,
   };
 }
 
-/** Where both legs are: Xebra's burn on Stellar, then NEAR Intents' swap at the deposit address. */
-export async function track(depositAddress: string, stellarTx?: string) {
+/**
+ * Where both legs are: Xebra's burn on the source chain, then NEAR Intents' swap at the deposit
+ * address.
+ */
+export async function track(depositAddress: string, sourceTx?: string, from = "stellar") {
+  const chain = sourceOf({ from });
   const [xebraLeg, intentsLeg] = await Promise.all([
-    stellarTx ? xebra.getTransfer("stellar", stellarTx).catch(() => null) : Promise.resolve(null),
+    sourceTx ? xebra.getTransfer(chain, sourceTx).catch(() => null) : Promise.resolve(null),
     oneclick.status(depositAddress).catch(() => null),
   ]);
   return { xebra: xebraLeg, intents: intentsLeg };

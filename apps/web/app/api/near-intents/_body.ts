@@ -1,6 +1,9 @@
 import type { PlanRequest } from "../../../lib/near-intents/plan";
 
-/** Reads the four fields both POST routes take, or explains what is missing. */
+/**
+ * Reads the fields both POST routes take, or explains what is missing. `from` is optional and
+ * means Stellar when absent, so callers from before it existed keep working.
+ */
 export async function readPlanRequest(req: Request): Promise<PlanRequest | Response> {
   let body: Record<string, unknown>;
   try {
@@ -14,7 +17,11 @@ export async function readPlanRequest(req: Request): Promise<PlanRequest | Respo
       return Response.json({ error: `Missing ${f}.` }, { status: 400 });
     }
   }
+  if (body.from !== undefined && (typeof body.from !== "string" || !body.from.trim())) {
+    return Response.json({ error: "from must name a chain, e.g. arc." }, { status: 400 });
+  }
   return {
+    ...(typeof body.from === "string" ? { from: body.from.trim() } : {}),
     amount: (body.amount as string).trim(),
     sender: (body.sender as string).trim(),
     destinationAsset: (body.destinationAsset as string).trim(),

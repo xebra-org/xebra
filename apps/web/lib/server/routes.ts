@@ -1,4 +1,5 @@
 import { CCTP_DOMAIN, evmChainForDomain, isArcToSolana, isEvmRoute } from "@xebra/network-config";
+import { parseEvmMesh } from "@xebra/sdk/core";
 import { SUI_CCTP_DOMAIN, suiSendsToDomain, suiStellarEnabled } from "../sui-stellar/config";
 
 /**
@@ -69,7 +70,7 @@ export function readDomain(raw: string | null): number | null {
 /**
  * Whether a quote may be asked for between two domains: the wrapper's Stellar routes (to Solana and
  * to every EVM chain in the table, Arc included), and the direct routes (each EVM peer with Arc,
- * both ways, and Arc to Solana).
+ * both ways, Arc to Solana, and any two chains of `NEXT_PUBLIC_EVM_MESH`).
  *
  * Stellar's list is every destination the wrapper *could* have committed, not the ones it has: a
  * quote is a public fact about Circle, and the contract, which is read by the page, decides what can
@@ -85,5 +86,27 @@ export function isOfferedRoute(
   }
   // Sui to the EVM chains its switch names, delivered by Circle's Forwarding Service.
   if (source === SUI_CCTP_DOMAIN) return suiSendsToDomain(destination);
-  return isEvmRoute(source, destination) || isArcToSolana(source, destination);
+  return (
+    isEvmRoute(source, destination) ||
+    isArcToSolana(source, destination) ||
+    inEvmMesh(source, destination)
+  );
+}
+
+/**
+ * Two different EVM chains that are both in `NEXT_PUBLIC_EVM_MESH`, which lets every chain in it
+ * send to every other. Read on each call, like the Sui switch, so the answer follows the build.
+ */
+function inEvmMesh(source: number, destination: number): boolean {
+  if (source === destination) return false;
+  const a = evmChainForDomain(source);
+  const b = evmChainForDomain(destination);
+  if (!a || !b) return false;
+  let mesh: string[];
+  try {
+    mesh = parseEvmMesh(process.env.NEXT_PUBLIC_EVM_MESH);
+  } catch {
+    return false;
+  }
+  return mesh.length >= 2 && mesh.includes(a.id) && mesh.includes(b.id);
 }
