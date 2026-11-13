@@ -1,0 +1,29 @@
+{
+  "meta": {
+    "url": "https://iris-api.circle.com/v2/burn/USDC/fees/0/6?forward=true",
+    "method": "GET",
+    "requestBody": null,
+    "fetchedAtUtc": "2026-11-13T11:57:33.110Z",
+    "httpStatus": 200
+  },
+  "body": [
+    {
+      "finalityThreshold": 1000,
+      "minimumFee": 1,
+      "forwardFee": {
+        "low": 53285,
+        "med": 53870,
+        "high": 54560
+      }
+    },
+    {
+      "finalityThreshold": 2000,
+      "minimumFee": 0,
+      "forwardFee": {
+        "low": 53285,
+        "med": 53870,
+        "high": 54560
+      }
+    }
+  ]
+}

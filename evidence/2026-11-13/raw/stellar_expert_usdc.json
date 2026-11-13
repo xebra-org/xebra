@@ -1,0 +1,13 @@
+{
+  "meta": {
+    "url": "https://api.stellar.expert/explorer/public/asset/USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN",
+    "method": "GET",
+    "requestBody": null,
+    "fetchedAtUtc": "2026-11-13T12:15:34.765Z",
+    "httpStatus": 402
+  },
+  "body": {
+    "error": "Payment Required. Payment required",
+    "status": 402
+  }
+}

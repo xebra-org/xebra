@@ -15,7 +15,8 @@
       "**/*.sol",
       "**/convex/_generated/**",
       "**/.convex/**",
-      "packages/sdk/openapi.json"
+      "packages/sdk/openapi.json",
+      "evidence/**"
     ]
   },
   "formatter": {

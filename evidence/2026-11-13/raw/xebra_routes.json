@@ -1,0 +1,154 @@
+{
+  "meta": {
+    "url": "https://api.xebra.exchange/v1/routes",
+    "method": "GET",
+    "requestBody": null,
+    "fetchedAtUtc": "2026-11-13T12:14:19.394Z",
+    "httpStatus": 200
+  },
+  "body": {
+    "routes": [
+      {
+        "from": "stellar",
+        "to": "solana",
+        "speeds": [
+          "standard"
+        ]
+      },
+      {
+        "from": "stellar",
+        "to": "arc",
+        "speeds": [
+          "standard"
+        ]
+      },
+      {
+        "from": "stellar",
+        "to": "base",
+        "speeds": [
+          "standard"
+        ]
+      },
+      {
+        "from": "stellar",
+        "to": "monad",
+        "speeds": [
+          "standard"
+        ]
+      },
+      {
+        "from": "arc",
+        "to": "avalanche",
+        "speeds": [
+          "standard"
+        ]
+      },
+      {
+        "from": "arc",
+        "to": "optimism",
+        "speeds": [
+          "standard"
+        ]
+      },
+      {
+        "from": "arc",
+        "to": "arbitrum",
+        "speeds": [
+          "standard"
+        ]
+      },
+      {
+        "from": "arc",
+        "to": "base",
+        "speeds": [
+          "standard"
+        ]
+      },
+      {
+        "from": "arc",
+        "to": "polygon",
+        "speeds": [
+          "standard"
+        ]
+      },
+      {
+        "from": "arc",
+        "to": "unichain",
+        "speeds": [
+          "standard"
+        ]
+      },
+      {
+        "from": "arc",
+        "to": "codex",
+        "speeds": [
+          "standard"
+        ]
+      },
+      {
+        "from": "arc",
+        "to": "sonic",
+        "speeds": [
+          "standard"
+        ]
+      },
+      {
+        "from": "arc",
+        "to": "worldchain",
+        "speeds": [
+          "standard"
+        ]
+      },
+      {
+        "from": "arc",
+        "to": "monad",
+        "speeds": [
+          "standard"
+        ]
+      },
+      {
+        "from": "arc",
+        "to": "sei",
+        "speeds": [
+          "standard"
+        ]
+      },
+      {
+        "from": "arc",
+        "to": "xdc",
+        "speeds": [
+          "standard"
+        ]
+      },
+      {
+        "from": "arc",
+        "to": "hyperevm",
+        "speeds": [
+          "standard"
+        ]
+      },
+      {
+        "from": "arc",
+        "to": "ink",
+        "speeds": [
+          "standard"
+        ]
+      },
+      {
+        "from": "arc",
+        "to": "solana",
+        "speeds": [
+          "standard"
+        ]
+      },
+      {
+        "from": "sui",
+        "to": "stellar",
+        "speeds": [
+          "standard"
+        ]
+      }
+    ],
+    "complete": true
+  }
+}

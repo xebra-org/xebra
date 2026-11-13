@@ -1,0 +1,32 @@
+{
+  "meta": {
+    "url": "https://api.coingecko.com/api/v3/simple/price?ids=ethereum,avalanche-2,polygon-ecosystem-token,solana,stellar,sui,near&vs_currencies=usd",
+    "method": "GET",
+    "requestBody": null,
+    "fetchedAtUtc": "2026-11-13T12:13:55.961Z",
+    "httpStatus": 200
+  },
+  "body": {
+    "ethereum": {
+      "usd": 1962.18
+    },
+    "avalanche-2": {
+      "usd": 8.42
+    },
+    "polygon-ecosystem-token": {
+      "usd": 0.087146
+    },
+    "solana": {
+      "usd": 80.75
+    },
+    "stellar": {
+      "usd": 0.147594
+    },
+    "sui": {
+      "usd": 0.804819
+    },
+    "near": {
+      "usd": 3.54
+    }
+  }
+}

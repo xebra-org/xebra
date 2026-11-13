@@ -1,0 +1,112 @@
+---
+title: The numbers
+description: Where USDC cannot reach NEAR Intents, what moving size costs, and what integrating CCTP directly involves. Measured on 13 November 2026, every figure linked to its raw response.
+---
+
+Everything on this page was read from public APIs and chains on **13 November 2026, 11:57 to 12:22
+UTC**, with no keys and nothing signed. Each response is saved with its URL, timestamp and HTTP
+status in [`evidence/2026-11-13`](https://github.com/xebra-org/xebra/tree/main/evidence/2026-11-13),
+with the scripts that collected it, so any number here can be checked or collected again.
+
+## $2 billion of USDC that NEAR Intents cannot take
+
+NEAR Intents' 1Click API lists 230 assets on 39 chains. It has no Circle USDC on Arc, Sonic, Ink,
+XDC, Sei, Unichain, World Chain or Codex, and it lists Stellar USDC but refused every quote from it:
+19 of 19, from 0.1 to 10,000,000 USDC, into USDC on Base, NEAR and Solana (`Quoting for this pair is
+not available`). Circle reports how much USDC is on each of those chains:
+
+| Chain | USDC on the chain (Circle) | In NEAR Intents' 1Click |
+|---|---|---|
+| Arc | 1,422,883,532 | not listed |
+| Stellar | 353,128,483 | listed, every quote refused |
+| Sonic | 87,254,408 | not listed |
+| Ink | 62,026,123 | not listed |
+| XDC | 56,500,692 | not listed |
+| Sei | 33,477,149 | not listed |
+| Unichain | 17,004,237 | not listed |
+| World Chain | 16,077,204 | not listed |
+| Codex | 3,988,319 | not listed |
+| **Total** | **about 2.05 billion** | |
+
+Sources: `GET https://api.circle.com/v1/stablecoins` (`raw/circle_stablecoins_api.json`),
+`GET https://1click.chaindefuser.com/v0/tokens` (`raw/oneclick_tokens.json`), and the Stellar-origin
+quotes in `raw/oneclick_stellar_*.json`. HyperEVM (6.1 billion USDC) is left out because whether
+1Click lists Circle's USDC there was not settled.
+
+All nine are CCTP chains. Xebra moves USDC from each of them to Base over CCTP, straight into the
+deposit address 1Click issues, and NEAR Intents takes it from there
+([guide](/docs/guides/near-intents)). The Stellar path is proven on mainnet: burn on Stellar at
+23:24:27 UTC on 12 November, mint on Base at 23:24:38, USDC delivered on NEAR at 23:25:03, 36 seconds
+end to end.
+
+## Size: CCTP has no pool to run dry
+
+CCTP burns on one chain and Circle mints on the other, so the size of a transfer is not limited by
+anyone's liquidity. Pool and solver bridges are.
+
+| | Largest size quoted | Refused at |
+|---|---|---|
+| Circle CCTP V2 | 10,000,000 per message, read on chain on Ethereum, Base, Arbitrum, Polygon and Avalanche; any number of messages | none |
+| Across, Base to Arbitrum | 610,852 | 1,000,000 (`Max amount is 610851.84 USDC`) |
+| Across, Arbitrum to Ethereum | 537,437 | |
+| Relay, Base to Arbitrum | 1,000,000 | 5,000,000 (`Quote amount exceeds the maximum for this pair`) |
+| NEAR Intents 1Click, Base to Arbitrum | 500,000 | 1,000,000 (`No liquidity available`) |
+
+Xebra's own contracts cap each transfer while they are new: 100 USDC per transfer from Stellar
+today, raised through a 48-hour timelock (see [Fees](/docs/concepts/fees)). The rail underneath has
+no such limit.
+
+## Cost: flat beats a percentage at size
+
+Circle's fee for a Standard transfer is zero. Its Forwarding Service, which submits the mint on the
+destination, charges a flat amount per transfer. Bridges that front liquidity charge a share of
+the amount. For Base to Arbitrum:
+
+| Amount | CCTP Standard + Circle delivery | Across | Relay | NEAR Intents 1Click | LI.FI | deBridge |
+|---|---|---|---|---|---|---|
+| 100 | 0.07 | 0.02 | 0.03 | 0.01 | 0.25 | 2.29 |
+| 1,000 | 0.07 | 0.11 | 0.12 | 0.20 | 2.50 | 3.01 |
+| 10,000 | 0.07 | 1.01 | 1.02 | 0.72 | 25.00 | 10.37 |
+| 100,000 | 0.07 | 10.01 | 10.02 | 20.20 | 250.00 | 84.42 |
+
+USD, total fees, from `quotes.csv`. Below a few hundred USDC the liquidity bridges are cheaper,
+and much faster from rollups; above that, a flat CCTP route wins by more each time the amount grows.
+
+## What integrating CCTP directly involves
+
+CCTP is free to call. Using it across every chain means handling, among other things (each from
+Circle's documentation):
+
+- **31 domains**, each with its own domain id, and contract addresses that are shared on EVM chains
+  except EDGE, where all four differ; Solana, Sui, Stellar, Aptos and Starknet each work differently.
+- **Attestation polling** under a rate limit Circle documents as both 35 and 40 requests a second;
+  going over it blocks every request for five minutes.
+- **Attestations that expire** after 24 hours (counted in Ethereum blocks, even on rollups), then a
+  re-attest and a second mint.
+- **Fees that move**: Circle says to read them at least weekly and never hard-code them; a `maxFee`
+  set too low quietly turns a Fast transfer into a Standard one.
+- **Destination gas on every chain**, or Circle's Forwarding Service, which does not deliver to
+  Stellar, Sui, Aptos, Starknet, Injective, Morph or Pharos.
+- **Solana**: the mint goes to the recipient's token account, which may not exist yet; asking Circle
+  to open it doubled the delivery fee in our sample (0.109 to 0.228).
+- **Stellar**: 7 decimals against CCTP's 6, and inbound transfers must name Circle's `CctpForwarder`
+  as both `mintRecipient` and `destinationCaller`. Circle warns twice that getting either wrong
+  leaves the funds "permanently stuck and cannot be recovered".
+- **Finality** from 5 seconds on Stellar to 15 to 19 minutes on OP Stack chains and Arbitrum, and 6
+  to 32 hours on Linea.
+
+With Xebra that is `GET /v1/quote` and `POST /v1/transfers`, or
+[`@xebra/sdk`](/docs/sdk), on the routes [Xebra offers](/docs/concepts/routes).
+
+## What these numbers do not show
+
+- **Xebra is not cheaper than calling CCTP yourself.** Every Xebra route is CCTP plus Xebra's fee;
+  what you save is the work above.
+- **Xebra is not cheaper for small transfers.** At 10 to 100 USDC, Across, Relay and 1Click charged
+  less on every EVM pair sampled, and Mayan's own CCTP route charged as little as 0.005.
+- **Xebra is not faster from rollups.** It uses Standard finality: seconds from Stellar, Arc and Sui,
+  15 to 19 minutes from Ethereum, Base and Arbitrum, where Across fills in seconds.
+- **Stellar is not the only way into NEAR Intents for every asset.** It is the only path we found
+  for Stellar USDC through 1Click. Allbridge Core supports Stellar but could not be reached when
+  these numbers were taken.
+- **Fees move.** These are one 25-minute window of quotes, not an average.

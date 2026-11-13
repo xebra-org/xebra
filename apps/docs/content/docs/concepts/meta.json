@@ -1,4 +1,13 @@
 {
   "title": "Concepts",
-  "pages": ["cctp", "forwarding", "fees", "routes", "recovery", "security", "mainnet-transfers"]
+  "pages": [
+    "cctp",
+    "forwarding",
+    "fees",
+    "routes",
+    "recovery",
+    "security",
+    "evidence",
+    "mainnet-transfers"
+  ]
 }

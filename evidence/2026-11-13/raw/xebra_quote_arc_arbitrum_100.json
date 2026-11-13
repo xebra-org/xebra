@@ -1,0 +1,26 @@
+{
+  "meta": {
+    "url": "https://api.xebra.exchange/v1/quote?from=arc&to=arbitrum&amount=100",
+    "method": "GET",
+    "requestBody": null,
+    "fetchedAtUtc": "2026-11-13T12:14:42.513Z",
+    "httpStatus": 200
+  },
+  "body": {
+    "from": "arc",
+    "to": "arbitrum",
+    "speed": "standard",
+    "amount": "100",
+    "recipientGets": "99.927954",
+    "fees": {
+      "xebra": "0",
+      "circle": "0",
+      "delivery": "0.072046",
+      "total": "0.072046"
+    },
+    "minimum": "0.76",
+    "maximum": null,
+    "circleStatus": "ok",
+    "expiresAt": "2026-11-13T12:15:43.443Z"
+  }
+}

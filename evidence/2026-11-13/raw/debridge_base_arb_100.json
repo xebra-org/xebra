@@ -1,0 +1,92 @@
+{
+  "meta": {
+    "url": "https://dln.debridge.finance/v1.0/dln/order/quote?srcChainId=8453&srcChainTokenIn=0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913&srcChainTokenInAmount=100000000&dstChainId=42161&dstChainTokenOut=0xaf88d065e77c8cC2239327C5EDb3A432268e5831&prependOperatingExpenses=true",
+    "method": "GET",
+    "requestBody": null,
+    "fetchedAtUtc": "2026-11-13T12:03:28.231Z",
+    "latencyMs": 301,
+    "httpStatus": 200
+  },
+  "body": {
+    "estimation": {
+      "srcChainTokenIn": {
+        "chainId": 8453,
+        "address": "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913",
+        "name": "USD Coin",
+        "symbol": "USDC",
+        "decimals": 6,
+        "amount": "100245539",
+        "approximateOperatingExpense": "245539",
+        "mutatedWithOperatingExpense": true,
+        "approximateUsdValue": 100.245539,
+        "originApproximateUsdValue": 100
+      },
+      "dstChainTokenOut": {
+        "chainId": 42161,
+        "address": "0xaf88d065e77c8cc2239327c5edb3a432268e5831",
+        "name": "USD Coin",
+        "symbol": "USDC",
+        "decimals": 6,
+        "amount": "99920018",
+        "recommendedAmount": "99920018",
+        "maxTheoreticalAmount": "99920018",
+        "approximateUsdValue": 99.920018,
+        "recommendedApproximateUsdValue": 99.920018,
+        "maxTheoreticalApproximateUsdValue": 99.920018
+      },
+      "costsDetails": [
+        {
+          "chain": "8453",
+          "tokenIn": "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913",
+          "tokenOut": "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913",
+          "amountIn": "100245539",
+          "amountOut": "100205441",
+          "type": "DlnProtocolFee",
+          "payload": {
+            "feeAmount": "40098",
+            "feeBps": "4",
+            "feeApproximateUsdValue": "0.040098"
+          }
+        },
+        {
+          "chain": "42161",
+          "tokenIn": "0xaf88d065e77c8cc2239327c5edb3a432268e5831",
+          "tokenOut": "0xaf88d065e77c8cc2239327c5edb3a432268e5831",
+          "amountIn": "100205441",
+          "amountOut": "100165359",
+          "type": "TakerMargin",
+          "payload": {
+            "feeAmount": "40082",
+            "feeBps": "4"
+          }
+        },
+        {
+          "chain": "42161",
+          "tokenIn": "0xaf88d065e77c8cc2239327c5edb3a432268e5831",
+          "tokenOut": "0xaf88d065e77c8cc2239327c5edb3a432268e5831",
+          "amountIn": "100165359",
+          "amountOut": "99920018",
+          "type": "EstimatedOperatingExpenses",
+          "payload": {
+            "feeAmount": "245341"
+          }
+        }
+      ],
+      "recommendedSlippage": 0
+    },
+    "tx": {
+      "allowanceTarget": "0xeF4fB24aD0916217251F553c0596F8Edc630EB66",
+      "allowanceValue": "100245539"
+    },
+    "prependedOperatingExpenseCost": "245539",
+    "order": {
+      "approximateFulfillmentDelay": 1
+    },
+    "fixFee": "1000000000000000",
+    "protocolFee": "40098",
+    "userPoints": 200.01,
+    "integratorPoints": 50,
+    "protocolFeeApproximateUsdValue": 0.040098,
+    "usdPriceImpact": -0.07998200000000111
+  }
+}

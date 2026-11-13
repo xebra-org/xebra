@@ -1,0 +1,10 @@
+{
+  "meta": {
+    "url": "https://core.api.allbridgecoreapi.net/token-info",
+    "method": "GET",
+    "requestBody": null,
+    "fetchedAtUtc": "2026-11-13T12:14:52.568Z",
+    "httpStatus": 0
+  },
+  "body": ""
+}

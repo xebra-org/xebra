@@ -1,0 +1,29 @@
+{
+  "meta": {
+    "url": "https://1click.chaindefuser.com/v0/quote",
+    "method": "POST",
+    "requestBody": {
+      "dry": true,
+      "swapType": "EXACT_INPUT",
+      "slippageTolerance": 50,
+      "originAsset": "nep141:base-0x833589fcd6edb6e08f4c7c32d4f71b54bda02913.omft.near",
+      "depositType": "ORIGIN_CHAIN",
+      "destinationAsset": "nep141:arb-0xaf88d065e77c8cc2239327c5edb3a432268e5831.omft.near",
+      "amount": "100000",
+      "refundTo": "0x1111111111111111111111111111111111111111",
+      "refundType": "ORIGIN_CHAIN",
+      "recipient": "0x1111111111111111111111111111111111111111",
+      "recipientType": "DESTINATION_CHAIN",
+      "deadline": "2026-11-13T13:08:35.315Z"
+    },
+    "fetchedAtUtc": "2026-11-13T12:08:35.319Z",
+    "latencyMs": 2363,
+    "httpStatus": 400
+  },
+  "body": {
+    "message": "Amount is too low for bridge, try at least 150000",
+    "correlationId": "784956a5-603b-4708-bc07-f1b13098a713",
+    "timestamp": "2026-11-13T12:08:37.241Z",
+    "path": "/v0/quote"
+  }
+}

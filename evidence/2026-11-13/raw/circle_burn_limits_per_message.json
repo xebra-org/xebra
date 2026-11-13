@@ -1,0 +1,34 @@
+{
+  "meta": {
+    "fetchedAtUtc": "2026-11-13T12:16:10Z",
+    "method": "eth_call TokenMinterV2.burnLimitsPerMessage(USDC) via cast",
+    "contract": "0xfd78EE919681417d192449715b2594ab58f5D002"
+  },
+  "results": {
+    "eth": {
+      "rpc": "https://ethereum-rpc.publicnode.com",
+      "usdc": "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
+      "burnLimitPerMessageSubunits": "10000000000000"
+    },
+    "base": {
+      "rpc": "https://base-rpc.publicnode.com",
+      "usdc": "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
+      "burnLimitPerMessageSubunits": "10000000000000"
+    },
+    "arb": {
+      "rpc": "https://arb1.arbitrum.io/rpc",
+      "usdc": "0xaf88d065e77c8cC2239327C5EDb3A432268e5831",
+      "burnLimitPerMessageSubunits": "10000000000000"
+    },
+    "pol": {
+      "rpc": "https://polygon-bor-rpc.publicnode.com",
+      "usdc": "0x3c499c542cEF5E3811e1192ce70d8cC03d5c3359",
+      "burnLimitPerMessageSubunits": "10000000000000"
+    },
+    "avax": {
+      "rpc": "https://avalanche-c-chain-rpc.publicnode.com",
+      "usdc": "0xB97EF9Ef8734C71904D8002F8b6Bc66Dd9c48a6E",
+      "burnLimitPerMessageSubunits": "10000000000000"
+    }
+  }
+}

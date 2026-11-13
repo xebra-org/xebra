@@ -1,0 +1,103 @@
+{
+  "meta": {
+    "url": "https://dln.debridge.finance/v1.0/supported-chains-info",
+    "method": "GET",
+    "requestBody": null,
+    "fetchedAtUtc": "2026-11-13T12:00:54.031Z",
+    "httpStatus": 200
+  },
+  "body": {
+    "chains": [
+      {
+        "chainId": 1,
+        "originalChainId": 1,
+        "chainName": "Ethereum"
+      },
+      {
+        "chainId": 10,
+        "originalChainId": 10,
+        "chainName": "Optimism"
+      },
+      {
+        "chainId": 56,
+        "originalChainId": 56,
+        "chainName": "BSC"
+      },
+      {
+        "chainId": 137,
+        "originalChainId": 137,
+        "chainName": "Polygon"
+      },
+      {
+        "chainId": 4663,
+        "originalChainId": 4663,
+        "chainName": "Robinhood"
+      },
+      {
+        "chainId": 5042,
+        "originalChainId": 5042,
+        "chainName": "Arc"
+      },
+      {
+        "chainId": 8453,
+        "originalChainId": 8453,
+        "chainName": "Base"
+      },
+      {
+        "chainId": 42161,
+        "originalChainId": 42161,
+        "chainName": "Arbitrum"
+      },
+      {
+        "chainId": 43114,
+        "originalChainId": 43114,
+        "chainName": "Avalanche"
+      },
+      {
+        "chainId": 59144,
+        "originalChainId": 59144,
+        "chainName": "Linea"
+      },
+      {
+        "chainId": 7565164,
+        "originalChainId": 7565164,
+        "chainName": "Solana"
+      },
+      {
+        "chainId": 100000013,
+        "originalChainId": 1514,
+        "chainName": "Story"
+      },
+      {
+        "chainId": 100000019,
+        "originalChainId": 25,
+        "chainName": "Cronos"
+      },
+      {
+        "chainId": 100000022,
+        "originalChainId": 999,
+        "chainName": "HyperEVM"
+      },
+      {
+        "chainId": 100000026,
+        "originalChainId": 728126428,
+        "chainName": "Tron"
+      },
+      {
+        "chainId": 100000029,
+        "originalChainId": 1776,
+        "chainName": "Injective"
+      },
+      {
+        "chainId": 100000030,
+        "originalChainId": 143,
+        "chainName": "Monad"
+      },
+      {
+        "chainId": 100000031,
+        "originalChainId": 4326,
+        "chainName": "Megaeth"
+      }
+    ]
+  }
+}

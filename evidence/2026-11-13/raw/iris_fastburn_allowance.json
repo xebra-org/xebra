@@ -1,0 +1,13 @@
+{
+  "meta": {
+    "url": "https://iris-api.circle.com/v2/fastBurn/USDC/allowance",
+    "method": "GET",
+    "requestBody": null,
+    "fetchedAtUtc": "2026-11-13T11:57:58.896Z",
+    "httpStatus": 200
+  },
+  "body": {
+    "allowance": 54216662.63238,
+    "lastUpdated": "2026-11-13T11:57:57.987Z"
+  }
+}

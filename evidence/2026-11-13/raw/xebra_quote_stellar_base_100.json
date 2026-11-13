@@ -1,0 +1,26 @@
+{
+  "meta": {
+    "url": "https://api.xebra.exchange/v1/quote?from=stellar&to=base&amount=100",
+    "method": "GET",
+    "requestBody": null,
+    "fetchedAtUtc": "2026-11-13T12:14:38.631Z",
+    "httpStatus": 200
+  },
+  "body": {
+    "from": "stellar",
+    "to": "base",
+    "speed": "standard",
+    "amount": "100",
+    "recipientGets": "99.7",
+    "fees": {
+      "xebra": "0.244018",
+      "circle": "0",
+      "delivery": "0.055982",
+      "total": "0.3"
+    },
+    "minimum": "1",
+    "maximum": "100",
+    "circleStatus": "ok",
+    "expiresAt": "2026-11-13T12:15:39.261Z"
+  }
+}

@@ -1,0 +1,624 @@
+{
+  "meta": {
+    "url": "https://api.mainnet-beta.solana.com",
+    "method": "POST",
+    "requestBody": {
+      "jsonrpc": "2.0",
+      "id": 1,
+      "method": "getRecentPrioritizationFees",
+      "params": [
+        [
+          "CCTPV2vPZJS2u2BBsUoscuikbYjnpFmbFsvVuJdgUMQe"
+        ]
+      ]
+    },
+    "fetchedAtUtc": "2026-11-13T12:13:44.333Z",
+    "httpStatus": 200
+  },
+  "body": {
+    "jsonrpc": "2.0",
+    "result": [
+      {
+        "prioritizationFee": 0,
+        "slot": 468922257
+      },
+      {
+        "prioritizationFee": 0,
+        "slot": 468922258
+      },
+      {
+        "prioritizationFee": 0,
+        "slot": 468922259
+      },
+      {
+        "prioritizationFee": 0,
+        "slot": 468922260
+      },
+      {
+        "prioritizationFee": 0,
+        "slot": 468922261
+      },
+      {
+        "prioritizationFee": 0,
+        "slot": 468922262
+      },
+      {
+        "prioritizationFee": 0,
+        "slot": 468922263
+      },
+      {
+        "prioritizationFee": 0,
+        "slot": 468922264
+      },
+      {
+        "prioritizationFee": 0,
+        "slot": 468922265
+      },
+      {
+        "prioritizationFee": 0,
+        "slot": 468922266
+      },
+      {
+        "prioritizationFee": 0,
+        "slot": 468922267
+      },
+      {
+        "prioritizationFee": 0,
+        "slot": 468922268
+      },
+      {
+        "prioritizationFee": 0,
+        "slot": 468922269
+      },
+      {
+        "prioritizationFee": 0,
+        "slot": 468922270
+      },
+      {
+        "prioritizationFee": 0,
+        "slot": 468922271
+      },
+      {
+        "prioritizationFee": 0,
+        "slot": 468922272
+      },
+      {
+        "prioritizationFee": 0,
+        "slot": 468922273
+      },
+      {
+        "prioritizationFee": 0,
+        "slot": 468922274
+      },
+      {
+        "prioritizationFee": 0,
+        "slot": 468922275
+      },
+      {
+        "prioritizationFee": 0,
+        "slot": 468922276
+      },
+      {
+        "prioritizationFee": 0,
+        "slot": 468922277
+      },
+      {
+        "prioritizationFee": 0,
+        "slot": 468922278
+      },
+      {
+        "prioritizationFee": 0,
+        "slot": 468922279
+      },
+      {
+        "prioritizationFee": 0,
+        "slot": 468922280
+      },
+      {
+        "prioritizationFee": 0,
+        "slot": 468922281
+      },
+      {
+        "prioritizationFee": 0,
+        "slot": 468922282
+      },
+      {
+        "prioritizationFee": 0,
+        "slot": 468922283
+      },
+      {
+        "prioritizationFee": 0,
+        "slot": 468922284
+      },
+      {
+        "prioritizationFee": 0,
+        "slot": 468922285
+      },
+      {
+        "prioritizationFee": 0,
+        "slot": 468922286
+      },
+      {
+        "prioritizationFee": 0,
+        "slot": 468922287
+      },
+      {
+        "prioritizationFee": 0,
+        "slot": 468922288
+      },
+      {
+        "prioritizationFee": 0,
+        "slot": 468922289
+      },
+      {
+        "prioritizationFee": 0,
+        "slot": 468922290
+      },
+      {
+        "prioritizationFee": 0,
+        "slot": 468922291
+      },
+      {
+        "prioritizationFee": 0,
+        "slot": 468922292
+      },
+      {
+        "prioritizationFee": 0,
+        "slot": 468922293
+      },
+      {
+        "prioritizationFee": 0,
+        "slot": 468922294
+      },
+      {
+        "prioritizationFee": 0,
+        "slot": 468922295
+      },
+      {
+        "prioritizationFee": 0,
+        "slot": 468922296
+      },
+      {
+        "prioritizationFee": 0,
+        "slot": 468922297
+      },
+      {
+        "prioritizationFee": 0,
+        "slot": 468922298
+      },
+      {
+        "prioritizationFee": 0,
+        "slot": 468922299
+      },
+      {
+        "prioritizationFee": 0,
+        "slot": 468922300
+      },
+      {
+        "prioritizationFee": 0,
+        "slot": 468922301
+      },
+      {
+        "prioritizationFee": 0,
+        "slot": 468922302
+      },
+      {
+        "prioritizationFee": 0,
+        "slot": 468922303
+      },
+      {
+        "prioritizationFee": 0,
+        "slot": 468922304
+      },
+      {
+        "prioritizationFee": 0,
+        "slot": 468922305
+      },
+      {
+        "prioritizationFee": 0,
+        "slot": 468922306
+      },
+      {
+        "prioritizationFee": 0,
+        "slot": 468922307
+      },
+      {
+        "prioritizationFee": 0,
+        "slot": 468922308
+      },
+      {
+        "prioritizationFee": 0,
+        "slot": 468922309
+      },
+      {
+        "prioritizationFee": 0,
+        "slot": 468922310
+      },
+      {
+        "prioritizationFee": 0,
+        "slot": 468922311
+      },
+      {
+        "prioritizationFee": 0,
+        "slot": 468922312
+      },
+      {
+        "prioritizationFee": 0,
+        "slot": 468922313
+      },
+      {
+        "prioritizationFee": 0,
+        "slot": 468922314
+      },
+      {
+        "prioritizationFee": 0,
+        "slot": 468922315
+      },
+      {
+        "prioritizationFee": 0,
+        "slot": 468922316
+      },
+      {
+        "prioritizationFee": 0,
+        "slot": 468922317
+      },
+      {
+        "prioritizationFee": 0,
+        "slot": 468922318
+      },
+      {
+        "prioritizationFee": 0,
+        "slot": 468922319
+      },
+      {
+        "prioritizationFee": 0,
+        "slot": 468922320
+      },
+      {
+        "prioritizationFee": 0,
+        "slot": 468922321
+      },
+      {
+        "prioritizationFee": 0,
+        "slot": 468922322
+      },
+      {
+        "prioritizationFee": 0,
+        "slot": 468922323
+      },
+      {
+        "prioritizationFee": 0,
+        "slot": 468922324
+      },
+      {
+        "prioritizationFee": 0,
+        "slot": 468922325
+      },
+      {
+        "prioritizationFee": 0,
+        "slot": 468922326
+      },
+      {
+        "prioritizationFee": 0,
+        "slot": 468922327
+      },
+      {
+        "prioritizationFee": 0,
+        "slot": 468922328
+      },
+      {
+        "prioritizationFee": 0,
+        "slot": 468922329
+      },
+      {
+        "prioritizationFee": 0,
+        "slot": 468922330
+      },
+      {
+        "prioritizationFee": 0,
+        "slot": 468922331
+      },
+      {
+        "prioritizationFee": 0,
+        "slot": 468922332
+      },
+      {
+        "prioritizationFee": 0,
+        "slot": 468922333
+      },
+      {
+        "prioritizationFee": 0,
+        "slot": 468922334
+      },
+      {
+        "prioritizationFee": 0,
+        "slot": 468922335
+      },
+      {
+        "prioritizationFee": 0,
+        "slot": 468922336
+      },
+      {
+        "prioritizationFee": 0,
+        "slot": 468922337
+      },
+      {
+        "prioritizationFee": 0,
+        "slot": 468922338
+      },
+      {
+        "prioritizationFee": 0,
+        "slot": 468922339
+      },
+      {
+        "prioritizationFee": 0,
+        "slot": 468922340
+      },
+      {
+        "prioritizationFee": 0,
+        "slot": 468922341
+      },
+      {
+        "prioritizationFee": 0,
+        "slot": 468922342
+      },
+      {
+        "prioritizationFee": 0,
+        "slot": 468922343
+      },
+      {
+        "prioritizationFee": 0,
+        "slot": 468922344
+      },
+      {
+        "prioritizationFee": 0,
+        "slot": 468922345
+      },
+      {
+        "prioritizationFee": 0,
+        "slot": 468922346
+      },
+      {
+        "prioritizationFee": 0,
+        "slot": 468922347
+      },
+      {
+        "prioritizationFee": 0,
+        "slot": 468922348
+      },
+      {
+        "prioritizationFee": 0,
+        "slot": 468922349
+      },
+      {
+        "prioritizationFee": 0,
+        "slot": 468922350
+      },
+      {
+        "prioritizationFee": 0,
+        "slot": 468922351
+      },
+      {
+        "prioritizationFee": 0,
+        "slot": 468922352
+      },
+      {
+        "prioritizationFee": 0,
+        "slot": 468922353
+      },
+      {
+        "prioritizationFee": 0,
+        "slot": 468922354
+      },
+      {
+        "prioritizationFee": 0,
+        "slot": 468922355
+      },
+      {
+        "prioritizationFee": 0,
+        "slot": 468922356
+      },
+      {
+        "prioritizationFee": 0,
+        "slot": 468922357
+      },
+      {
+        "prioritizationFee": 0,
+        "slot": 468922358
+      },
+      {
+        "prioritizationFee": 0,
+        "slot": 468922359
+      },
+      {
+        "prioritizationFee": 0,
+        "slot": 468922360
+      },
+      {
+        "prioritizationFee": 0,
+        "slot": 468922361
+      },
+      {
+        "prioritizationFee": 0,
+        "slot": 468922362
+      },
+      {
+        "prioritizationFee": 0,
+        "slot": 468922363
+      },
+      {
+        "prioritizationFee": 0,
+        "slot": 468922364
+      },
+      {
+        "prioritizationFee": 0,
+        "slot": 468922365
+      },
+      {
+        "prioritizationFee": 0,
+        "slot": 468922366
+      },
+      {
+        "prioritizationFee": 0,
+        "slot": 468922367
+      },
+      {
+        "prioritizationFee": 0,
+        "slot": 468922368
+      },
+      {
+        "prioritizationFee": 0,
+        "slot": 468922369
+      },
+      {
+        "prioritizationFee": 0,
+        "slot": 468922370
+      },
+      {
+        "prioritizationFee": 0,
+        "slot": 468922371
+      },
+      {
+        "prioritizationFee": 0,
+        "slot": 468922372
+      },
+      {
+        "prioritizationFee": 0,
+        "slot": 468922373
+      },
+      {
+        "prioritizationFee": 0,
+        "slot": 468922374
+      },
+      {
+        "prioritizationFee": 0,
+        "slot": 468922375
+      },
+      {
+        "prioritizationFee": 0,
+        "slot": 468922376
+      },
+      {
+        "prioritizationFee": 0,
+        "slot": 468922377
+      },
+      {
+        "prioritizationFee": 0,
+        "slot": 468922378
+      },
+      {
+        "prioritizationFee": 0,
+        "slot": 468922379
+      },
+      {
+        "prioritizationFee": 0,
+        "slot": 468922380
+      },
+      {
+        "prioritizationFee": 0,
+        "slot": 468922381
+      },
+      {
+        "prioritizationFee": 0,
+        "slot": 468922382
+      },
+      {
+        "prioritizationFee": 0,
+        "slot": 468922383
+      },
+      {
+        "prioritizationFee": 0,
+        "slot": 468922384
+      },
+      {
+        "prioritizationFee": 0,
+        "slot": 468922385
+      },
+      {
+        "prioritizationFee": 0,
+        "slot": 468922386
+      },
+      {
+        "prioritizationFee": 0,
+        "slot": 468922387
+      },
+      {
+        "prioritizationFee": 0,
+        "slot": 468922388
+      },
+      {
+        "prioritizationFee": 0,
+        "slot": 468922389
+      },
+      {
+        "prioritizationFee": 0,
+        "slot": 468922390
+      },
+      {
+        "prioritizationFee": 0,
+        "slot": 468922391
+      },
+      {
+        "prioritizationFee": 0,
+        "slot": 468922392
+      },
+      {
+        "prioritizationFee": 0,
+        "slot": 468922393
+      },
+      {
+        "prioritizationFee": 0,
+        "slot": 468922394
+      },
+      {
+        "prioritizationFee": 0,
+        "slot": 468922395
+      },
+      {
+        "prioritizationFee": 0,
+        "slot": 468922396
+      },
+      {
+        "prioritizationFee": 0,
+        "slot": 468922397
+      },
+      {
+        "prioritizationFee": 0,
+        "slot": 468922398
+      },
+      {
+        "prioritizationFee": 0,
+        "slot": 468922399
+      },
+      {
+        "prioritizationFee": 0,
+        "slot": 468922400
+      },
+      {
+        "prioritizationFee": 0,
+        "slot": 468922401
+      },
+      {
+        "prioritizationFee": 0,
+        "slot": 468922402
+      },
+      {
+        "prioritizationFee": 0,
+        "slot": 468922403
+      },
+      {
+        "prioritizationFee": 0,
+        "slot": 468922404
+      },
+      {
+        "prioritizationFee": 0,
+        "slot": 468922405
+      },
+      {
+        "prioritizationFee": 0,
+        "slot": 468922406
+      }
+    ],
+    "id": 1
+  }
+}

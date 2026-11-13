@@ -1,0 +1,134 @@
+{
+  "meta": {
+    "rpc": "https://base-rpc.publicnode.com",
+    "fetchedAtUtc": "2026-11-13T12:12:03.586Z",
+    "method": "eth_gasPrice + eth_getLogs(MessageTransmitterV2) + receipts",
+    "messageTransmitterV2": "0x81d40f21f12a8f0e3252bccb954d722d4c464b64"
+  },
+  "gasPriceWei": "6000000",
+  "samples": [
+    {
+      "tx": "0xc479c09a3d29fc1b02233b142254685be22bfcb3b2969528e8a468753d1ac72d",
+      "block": "56905211",
+      "gasUsed": "154152",
+      "effectiveGasPriceWei": "6000000",
+      "l1FeeWei": "2150062893",
+      "totalCostWei": "927062062893"
+    },
+    {
+      "tx": "0xfb32504e826d7fe81f16a67691ca3719c446bd4fbe38005e23d3312e6162af3f",
+      "block": "56905579",
+      "gasUsed": "171672",
+      "effectiveGasPriceWei": "23130200",
+      "l1FeeWei": "2722668075",
+      "totalCostWei": "3973530362475"
+    },
+    {
+      "tx": "0x49350df19c3bec95654510bd296c9996c4093d940efd260aaea3fd408eec4815",
+      "block": "56905597",
+      "gasUsed": "154152",
+      "effectiveGasPriceWei": "6000000",
+      "l1FeeWei": "2491096863",
+      "totalCostWei": "927403096863"
+    },
+    {
+      "tx": "0x46e1af117873974a1b446921729fec9876ff17d5ab9719a70bb85f43b732a8b7",
+      "block": "56905815",
+      "gasUsed": "169291",
+      "effectiveGasPriceWei": "6013011",
+      "l1FeeWei": "3109513246",
+      "totalCostWei": "1021058158447"
+    },
+    {
+      "tx": "0x226baf2fd2bf6e3accebc195f0bfe43a307fb038d9acd95eebddb51456fd5a61",
+      "block": "56906212",
+      "gasUsed": "171269",
+      "effectiveGasPriceWei": "6000000",
+      "l1FeeWei": "2818317362",
+      "totalCostWei": "1030432317362"
+    },
+    {
+      "tx": "0x586f5977ffc1354d9b26013d08adfc591d3553f1fb2453df4a53dc55a8835cd3",
+      "block": "56906233",
+      "gasUsed": "154896",
+      "effectiveGasPriceWei": "6002721",
+      "l1FeeWei": "2929603750",
+      "totalCostWei": "932727075766"
+    },
+    {
+      "tx": "0x51ad59590d86a6a9e85c351261418bd4a93b54a431980ba8f2654a09301511a8",
+      "block": "56906300",
+      "gasUsed": "154164",
+      "effectiveGasPriceWei": "9004245",
+      "l1FeeWei": "2724301216",
+      "totalCostWei": "1390854727396"
+    },
+    {
+      "tx": "0xf8935e9debc6e2a8d443130fc40b0953720abc93c3222420d18521fab1e94c56",
+      "block": "56906327",
+      "gasUsed": "171689",
+      "effectiveGasPriceWei": "25300999",
+      "l1FeeWei": "3162723911",
+      "totalCostWei": "4347065941222"
+    },
+    {
+      "tx": "0xc84b00975c3144cc1ad6e7d4201e711f364bdbe68a5285d20b8994184071b199",
+      "block": "56906405",
+      "gasUsed": "115195",
+      "effectiveGasPriceWei": "30000000",
+      "l1FeeWei": "2962487509",
+      "totalCostWei": "3458812487509"
+    },
+    {
+      "tx": "0x0323531f708ac94ffde45479e5504807a9800dc0176ae2df1864ce673e4ce0ea",
+      "block": "56906425",
+      "gasUsed": "171240",
+      "effectiveGasPriceWei": "6000000",
+      "l1FeeWei": "2913005593",
+      "totalCostWei": "1030353005593"
+    },
+    {
+      "tx": "0xa01fad9a9f58dce7be4d121325383e6282b3e927f431a8c6e52692cc4f414a66",
+      "block": "56906434",
+      "gasUsed": "190021",
+      "effectiveGasPriceWei": "6640975",
+      "l1FeeWei": "3839879325",
+      "totalCostWei": "1265764589800"
+    },
+    {
+      "tx": "0x2c21f1fab4fbe63ae01df13735585a03e9ac845c30c658821b239031c04a9610",
+      "block": "56906559",
+      "gasUsed": "114973",
+      "effectiveGasPriceWei": "30000000",
+      "l1FeeWei": "2858947037",
+      "totalCostWei": "3452048947037"
+    },
+    {
+      "tx": "0x4564d528b6f8fb1347c6c066f6b23949f08ca9aa81a127b475107f1ee837e180",
+      "block": "56906849",
+      "gasUsed": "154135",
+      "effectiveGasPriceWei": "6000000",
+      "l1FeeWei": "3004888540",
+      "totalCostWei": "927814888540"
+    },
+    {
+      "tx": "0xa4fd22444f234844bef137d400fc63e55e1517353798c181f52843b7f5cdbdf9",
+      "block": "56906903",
+      "gasUsed": "169243",
+      "effectiveGasPriceWei": "6150000",
+      "l1FeeWei": "3321254527",
+      "totalCostWei": "1044165704527"
+    },
+    {
+      "tx": "0xc320287b99e56042b2ccbc82874eae0a6db1ef3393ba9145062c58c5474a6208",
+      "block": "56907118",
+      "gasUsed": "154932",
+      "effectiveGasPriceWei": "6000000",
+      "l1FeeWei": "2925818914",
+      "totalCostWei": "932517818914"
+    }
+  ],
+  "errors": [],
+  "headBlock": "56907745",
+  "logsScanned": 67
+}

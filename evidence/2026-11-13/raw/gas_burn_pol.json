@@ -1,0 +1,46 @@
+{
+  "meta": {
+    "rpc": "https://polygon-bor-rpc.publicnode.com",
+    "fetchedAtUtc": "2026-11-13T12:18:41.567Z",
+    "method": "eth_gasPrice + eth_getLogs(TokenMessengerV2 depositForBurn) + receipts",
+    "tokenMessengerV2": "0x28b5a0e9c621a5badaa536219b3a228c8168cf5d"
+  },
+  "gasPriceWei": "278503686845",
+  "samples": [
+    {
+      "tx": "0x2372d760b96981e0200659c11bec305c04a037cdf65656696cf0578274fdc96d",
+      "block": "97243732",
+      "gasUsed": "167303",
+      "effectiveGasPriceWei": "278715356559",
+      "l1FeeWei": "0",
+      "totalCostWei": "46629915298390377"
+    },
+    {
+      "tx": "0x8781de9860a7726a22ca41d863caa811cd58e115e9c0a2e4474043d40a839f7f",
+      "block": "97243770",
+      "gasUsed": "175355",
+      "effectiveGasPriceWei": "275000000000",
+      "l1FeeWei": "0",
+      "totalCostWei": "48222625000000000"
+    },
+    {
+      "tx": "0x65047292888d86d9e253e43a96581e296794be3e284ee9a09936821408f92e70",
+      "block": "97243891",
+      "gasUsed": "167303",
+      "effectiveGasPriceWei": "323651657202",
+      "l1FeeWei": "0",
+      "totalCostWei": "54147893204866206"
+    },
+    {
+      "tx": "0x06078f07ec040772b62f29bd8c18e3e682012b22b8aad642063adcc257fad6f0",
+      "block": "97244231",
+      "gasUsed": "167291",
+      "effectiveGasPriceWei": "688906811333",
+      "l1FeeWei": "0",
+      "totalCostWei": "115247909374708903"
+    }
+  ],
+  "errors": [],
+  "headBlock": "97244578",
+  "logsScanned": 328
+}

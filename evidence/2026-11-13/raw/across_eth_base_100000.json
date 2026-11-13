@@ -1,0 +1,69 @@
+{
+  "meta": {
+    "url": "https://app.across.to/api/suggested-fees?inputToken=0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48&outputToken=0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913&originChainId=1&destinationChainId=8453&amount=100000000000&recipient=0x000000000000000000000000000000000000dEaD",
+    "method": "GET",
+    "requestBody": null,
+    "fetchedAtUtc": "2026-11-13T12:02:54.768Z",
+    "latencyMs": 482,
+    "httpStatus": 200
+  },
+  "body": {
+    "estimatedFillTimeSec": 27,
+    "capitalFeePct": "100000000000000",
+    "capitalFeeTotal": "10000000",
+    "relayGasFeePct": "33770000000",
+    "relayGasFeeTotal": "3377",
+    "relayFeePct": "100033770000000",
+    "relayFeeTotal": "10003377",
+    "lpFeePct": "0",
+    "timestamp": "1794571211",
+    "isAmountTooLow": false,
+    "quoteBlock": "26405900",
+    "exclusiveRelayer": "0x0000000000000000000000000000000000000000",
+    "exclusivityDeadline": 0,
+    "spokePoolAddress": "0x5c7BCd6E7De5423a257D81B442095A1a6ced35C5",
+    "destinationSpokePoolAddress": "0x09aea4b2242abC8bb4BB78D537A67a245A7bEC64",
+    "totalRelayFee": {
+      "pct": "100033770000000",
+      "total": "10003377"
+    },
+    "relayerCapitalFee": {
+      "pct": "100000000000000",
+      "total": "10000000"
+    },
+    "relayerGasFee": {
+      "pct": "33770000000",
+      "total": "3377"
+    },
+    "lpFee": {
+      "pct": "0",
+      "total": "0"
+    },
+    "internalizedSwapFee": {
+      "pct": "0",
+      "total": "0"
+    },
+    "limits": {
+      "minDeposit": "500224",
+      "maxDeposit": "925801933587",
+      "maxDepositInstant": "454226784271",
+      "maxDepositShortDelay": "925801933587",
+      "recommendedDepositInstant": "454226784271"
+    },
+    "fillDeadline": "1794578411",
+    "outputAmount": "99989996623",
+    "inputToken": {
+      "address": "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
+      "symbol": "USDC",
+      "decimals": 6,
+      "chainId": 1
+    },
+    "outputToken": {
+      "address": "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
+      "symbol": "USDC",
+      "decimals": 6,
+      "chainId": 8453
+    },
+    "id": "wxfdk-1794571374848-448ef9fba1a2"
+  }
+}

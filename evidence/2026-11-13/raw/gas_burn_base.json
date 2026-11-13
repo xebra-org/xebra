@@ -1,0 +1,30 @@
+{
+  "meta": {
+    "rpc": "https://base-rpc.publicnode.com",
+    "fetchedAtUtc": "2026-11-13T12:16:51.273Z",
+    "method": "eth_gasPrice + eth_getLogs(TokenMessengerV2 depositForBurn) + receipts",
+    "tokenMessengerV2": "0x28b5a0e9c621a5badaa536219b3a228c8168cf5d"
+  },
+  "gasPriceWei": "6000000",
+  "samples": [
+    {
+      "tx": "0x86098f922f37168148f055704ca79bb356c8c835b0d4e90430a58fbf4c562db8",
+      "block": "56906746",
+      "gasUsed": "104719",
+      "effectiveGasPriceWei": "6500000",
+      "l1FeeWei": "1473911430",
+      "totalCostWei": "682147411430"
+    },
+    {
+      "tx": "0xca15d64b5916bccf6ad7a2bd1877f90103b17fd2085b1a4b2674c8d7d89b53b7",
+      "block": "56907523",
+      "gasUsed": "113903",
+      "effectiveGasPriceWei": "7000000",
+      "l1FeeWei": "1056954009",
+      "totalCostWei": "798377954009"
+    }
+  ],
+  "errors": [],
+  "headBlock": "56909185",
+  "logsScanned": 124
+}

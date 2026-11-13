@@ -1,0 +1,17 @@
+{
+  "meta": {
+    "url": "https://app.across.to/api/suggested-fees?inputToken=0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913&outputToken=0xaf88d065e77c8cC2239327C5EDb3A432268e5831&originChainId=8453&destinationChainId=42161&amount=1000000000000&recipient=0x000000000000000000000000000000000000dEaD",
+    "method": "GET",
+    "requestBody": null,
+    "fetchedAtUtc": "2026-11-13T12:09:18.583Z",
+    "latencyMs": 1974,
+    "httpStatus": 400
+  },
+  "body": {
+    "type": "AcrossApiError",
+    "code": "AMOUNT_TOO_HIGH",
+    "status": 400,
+    "message": "Amount is higher than available liquidity. Max amount is 610851.84068 USDC.",
+    "id": "8ngns-1794571760061-850d25a85493"
+  }
+}

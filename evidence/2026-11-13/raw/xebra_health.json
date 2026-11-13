@@ -1,0 +1,13 @@
+{
+  "meta": {
+    "url": "https://api.xebra.exchange/v1/health",
+    "method": "GET",
+    "requestBody": null,
+    "fetchedAtUtc": "2026-11-13T12:14:22.099Z",
+    "httpStatus": 200
+  },
+  "body": {
+    "status": "ok",
+    "version": "0.2.0"
+  }
+}

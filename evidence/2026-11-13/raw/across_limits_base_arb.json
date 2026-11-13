@@ -1,0 +1,33 @@
+{
+  "meta": {
+    "url": "https://app.across.to/api/limits?inputToken=0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913&outputToken=0xaf88d065e77c8cC2239327C5EDb3A432268e5831&originChainId=8453&destinationChainId=42161",
+    "method": "GET",
+    "requestBody": null,
+    "fetchedAtUtc": "2026-11-13T12:09:29.789Z",
+    "httpStatus": 200
+  },
+  "body": {
+    "minDeposit": "500232",
+    "maxDeposit": "610851840680",
+    "maxDepositInstant": "73415307809",
+    "maxDepositShortDelay": "610851840680",
+    "recommendedDepositInstant": "73415307809",
+    "relayerFeeDetails": {
+      "relayFeeTotal": "7012",
+      "relayFeePercent": "70120100000000000000",
+      "gasFeeTotal": "7012",
+      "gasFeePercent": "70120000000000000000",
+      "capitalFeeTotal": "0",
+      "capitalFeePercent": "100000000000000"
+    },
+    "gasFeeDetails": {
+      "nativeGasCost": "127642",
+      "gasPrice": "28000001",
+      "tokenGasCost": "3573976127642"
+    },
+    "reserves": {
+      "liquidReserves": "494412576573",
+      "utilizedReserves": "22972273451"
+    }
+  }
+}

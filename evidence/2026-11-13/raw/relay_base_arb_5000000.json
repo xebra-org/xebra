@@ -1,0 +1,24 @@
+{
+  "meta": {
+    "url": "https://api.relay.link/quote",
+    "method": "POST",
+    "requestBody": {
+      "user": "0x000000000000000000000000000000000000dEaD",
+      "recipient": "0x000000000000000000000000000000000000dEaD",
+      "originChainId": 8453,
+      "destinationChainId": 42161,
+      "originCurrency": "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
+      "destinationCurrency": "0xaf88d065e77c8cC2239327C5EDb3A432268e5831",
+      "amount": "5000000000000",
+      "tradeType": "EXACT_INPUT"
+    },
+    "fetchedAtUtc": "2026-11-13T12:09:21.648Z",
+    "latencyMs": 868,
+    "httpStatus": 400
+  },
+  "body": {
+    "message": "Quote amount exceeds the maximum for this pair",
+    "errorCode": "AMOUNT_TOO_HIGH",
+    "requestId": "0x1794571761a6a4c183ad1f5a2c5359f43ddaf7e32f58e7aa3fcf8e336c5fb497"
+  }
+}

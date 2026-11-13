@@ -1,0 +1,12 @@
+{
+  "meta": {
+    "url": "https://iris-api.circle.com/v2/burn/USDC/fees/6/8?forward=true",
+    "method": "GET",
+    "requestBody": null,
+    "fetchedAtUtc": "2026-11-13T11:57:51.108Z",
+    "httpStatus": 400
+  },
+  "body": {
+    "error": "Destination domain not supported for forwarding"
+  }
+}

@@ -1,0 +1,17 @@
+{
+  "meta": {
+    "url": "https://api.xebra.exchange/v1/quote?from=stellar&to=base&amount=1000",
+    "method": "GET",
+    "requestBody": null,
+    "fetchedAtUtc": "2026-11-13T12:14:40.562Z",
+    "httpStatus": 422
+  },
+  "body": {
+    "type": "https://docs.xebra.exchange/errors/amount_above_maximum",
+    "title": "Amount above the maximum",
+    "status": 422,
+    "detail": "The bridge contract takes at most 100.00 USDC per transfer.",
+    "code": "amount_above_maximum",
+    "maximum": "100"
+  }
+}

@@ -1,0 +1,413 @@
+{
+  "meta": {
+    "url": "https://li.quest/v1/quote?fromChain=137&toChain=43114&fromToken=0x3c499c542cEF5E3811e1192ce70d8cC03d5c3359&toToken=0xB97EF9Ef8734C71904D8002F8b6Bc66Dd9c48a6E&fromAmount=10000000000&fromAddress=0x000000000000000000000000000000000000dEaD&toAddress=0x000000000000000000000000000000000000dEaD&slippage=0.005",
+    "method": "GET",
+    "requestBody": null,
+    "fetchedAtUtc": "2026-11-13T12:05:16.910Z",
+    "latencyMs": 1405,
+    "httpStatus": 200
+  },
+  "body": {
+    "type": "lifi",
+    "id": "8a8434c5-e438-476f-b969-776080f67fd8:0",
+    "tool": "polymerStandard",
+    "toolDetails": {
+      "key": "polymerStandard",
+      "name": "Polymer (Standard)",
+      "logoURI": "https://raw.githubusercontent.com/lifinance/types/main/src/assets/icons/bridges/polymer.svg"
+    },
+    "action": {
+      "fromToken": {
+        "address": "0x3c499c542cEF5E3811e1192ce70d8cC03d5c3359",
+        "chainId": 137,
+        "symbol": "USDC",
+        "decimals": 6,
+        "name": "USD Coin",
+        "coinKey": "USDC",
+        "logoURI": "https://static.debank.com/image/coin/logo_url/usdc/e87790bfe0b3f2ea855dc29069b38818.png",
+        "priceUSD": "0.9995225254",
+        "tags": [
+          "stablecoin"
+        ],
+        "verificationStatus": "verified",
+        "verificationStatusBreakdown": [
+          {
+            "provider": "hypernative",
+            "result": "verified",
+            "providerResult": "accept"
+          }
+        ]
+      },
+      "fromAmount": "10000000000",
+      "toToken": {
+        "address": "0xB97EF9Ef8734C71904D8002F8b6Bc66Dd9c48a6E",
+        "chainId": 43114,
+        "symbol": "USDC",
+        "decimals": 6,
+        "name": "USD Coin",
+        "coinKey": "USDC",
+        "logoURI": "https://raw.githubusercontent.com/trustwallet/assets/master/blockchains/ethereum/assets/0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48/logo.png",
+        "priceUSD": "1.0005439438",
+        "tags": [
+          "stablecoin"
+        ],
+        "verificationStatus": "verified",
+        "verificationStatusBreakdown": [
+          {
+            "provider": "hypernative",
+            "result": "verified",
+            "providerResult": "accept"
+          }
+        ]
+      },
+      "fromChainId": 137,
+      "toChainId": 43114,
+      "slippage": 0.005,
+      "fromAddress": "0x000000000000000000000000000000000000dEaD",
+      "toAddress": "0x000000000000000000000000000000000000dEaD"
+    },
+    "estimate": {
+      "tool": "polymerStandard",
+      "approvalAddress": "0x1231DEB6f5749EF6cE6943a275A1D3E7486F4EaE",
+      "toAmountMin": "9975000000",
+      "toAmount": "9975000000",
+      "fromAmount": "10000000000",
+      "feeCosts": [
+        {
+          "name": "LIFI Fixed Fee",
+          "description": "Fixed LIFI fee, independent of any other fee",
+          "token": {
+            "address": "0x3c499c542cEF5E3811e1192ce70d8cC03d5c3359",
+            "chainId": 137,
+            "symbol": "USDC",
+            "decimals": 6,
+            "name": "USD Coin",
+            "coinKey": "USDC",
+            "logoURI": "https://static.debank.com/image/coin/logo_url/usdc/e87790bfe0b3f2ea855dc29069b38818.png",
+            "priceUSD": "0.9995225254",
+            "tags": [
+              "stablecoin"
+            ],
+            "verificationStatus": "verified",
+            "verificationStatusBreakdown": [
+              {
+                "provider": "hypernative",
+                "result": "verified",
+                "providerResult": "accept"
+              }
+            ]
+          },
+          "amount": "25000000",
+          "amountUSD": "24.9881",
+          "percentage": "0.0025",
+          "included": true,
+          "feeSplit": {
+            "lifiFee": "25000000",
+            "integratorFee": "0",
+            "recipients": [
+              {
+                "name": "lifi",
+                "type": "FIXED",
+                "fee": "25000000"
+              }
+            ]
+          }
+        }
+      ],
+      "gasCosts": [
+        {
+          "type": "SEND",
+          "price": "327696238080",
+          "estimate": "355744",
+          "limit": "533616",
+          "amount": "116575970519531520",
+          "amountUSD": "0.0101",
+          "token": {
+            "address": "0x0000000000000000000000000000000000000000",
+            "chainId": 137,
+            "symbol": "POL",
+            "decimals": 18,
+            "name": "Polygon Ecosystem Token",
+            "coinKey": "POL",
+            "logoURI": "https://static.debank.com/image/matic_token/logo_url/matic/6f5a6b6f0732a7a235131bd7804d357c.png",
+            "priceUSD": "0.0869895622190818",
+            "tags": [
+              "major_asset"
+            ],
+            "verificationStatus": "verified",
+            "verificationStatusBreakdown": [
+              {
+                "provider": "hypernative",
+                "result": "verified",
+                "providerResult": "accept"
+              }
+            ]
+          }
+        }
+      ],
+      "executionDuration": 1080,
+      "fromAmountUSD": "9995.2253",
+      "toAmountUSD": "9980.4258"
+    },
+    "includedSteps": [
+      {
+        "id": "80cdd83e-d94c-4952-95da-0ba56369add8",
+        "type": "protocol",
+        "action": {
+          "fromChainId": 137,
+          "fromAmount": "10000000000",
+          "fromToken": {
+            "address": "0x3c499c542cEF5E3811e1192ce70d8cC03d5c3359",
+            "chainId": 137,
+            "symbol": "USDC",
+            "decimals": 6,
+            "name": "USD Coin",
+            "coinKey": "USDC",
+            "logoURI": "https://static.debank.com/image/coin/logo_url/usdc/e87790bfe0b3f2ea855dc29069b38818.png",
+            "priceUSD": "0.9995225254",
+            "tags": [
+              "stablecoin"
+            ],
+            "verificationStatus": "verified",
+            "verificationStatusBreakdown": [
+              {
+                "provider": "hypernative",
+                "result": "verified",
+                "providerResult": "accept"
+              }
+            ]
+          },
+          "toChainId": 137,
+          "toToken": {
+            "address": "0x3c499c542cEF5E3811e1192ce70d8cC03d5c3359",
+            "chainId": 137,
+            "symbol": "USDC",
+            "decimals": 6,
+            "name": "USD Coin",
+            "coinKey": "USDC",
+            "logoURI": "https://static.debank.com/image/coin/logo_url/usdc/e87790bfe0b3f2ea855dc29069b38818.png",
+            "priceUSD": "0.9995225254",
+            "tags": [
+              "stablecoin"
+            ],
+            "verificationStatus": "verified",
+            "verificationStatusBreakdown": [
+              {
+                "provider": "hypernative",
+                "result": "verified",
+                "providerResult": "accept"
+              }
+            ]
+          },
+          "slippage": 0.005,
+          "fromAddress": "0x1231DEB6f5749EF6cE6943a275A1D3E7486F4EaE",
+          "toAddress": "0x1231DEB6f5749EF6cE6943a275A1D3E7486F4EaE"
+        },
+        "estimate": {
+          "fromAmount": "10000000000",
+          "toAmount": "9975000000",
+          "toAmountMin": "9975000000",
+          "tool": "feeCollection",
+          "approvalAddress": "0xDe2b920506EE931a6A2ABDF566526220214FBbAE",
+          "gasCosts": [
+            {
+              "type": "SEND",
+              "price": "327696238080",
+              "estimate": "130000",
+              "limit": "195000",
+              "amount": "42600510950400000",
+              "amountUSD": "0.0037",
+              "token": {
+                "address": "0x0000000000000000000000000000000000000000",
+                "chainId": 137,
+                "symbol": "POL",
+                "decimals": 18,
+                "name": "Polygon Ecosystem Token",
+                "coinKey": "POL",
+                "logoURI": "https://static.debank.com/image/matic_token/logo_url/matic/6f5a6b6f0732a7a235131bd7804d357c.png",
+                "priceUSD": "0.0869895622190818",
+                "tags": [
+                  "major_asset"
+                ],
+                "verificationStatus": "verified",
+                "verificationStatusBreakdown": [
+                  {
+                    "provider": "hypernative",
+                    "result": "verified",
+                    "providerResult": "accept"
+                  }
+                ]
+              }
+            }
+          ],
+          "feeCosts": [
+            {
+              "name": "LIFI Fixed Fee",
+              "description": "Fixed LIFI fee, independent of any other fee",
+              "token": {
+                "address": "0x3c499c542cEF5E3811e1192ce70d8cC03d5c3359",
+                "chainId": 137,
+                "symbol": "USDC",
+                "decimals": 6,
+                "name": "USD Coin",
+                "coinKey": "USDC",
+                "logoURI": "https://static.debank.com/image/coin/logo_url/usdc/e87790bfe0b3f2ea855dc29069b38818.png",
+                "priceUSD": "0.9995225254",
+                "tags": [
+                  "stablecoin"
+                ],
+                "verificationStatus": "verified",
+                "verificationStatusBreakdown": [
+                  {
+                    "provider": "hypernative",
+                    "result": "verified",
+                    "providerResult": "accept"
+                  }
+                ]
+              },
+              "amount": "25000000",
+              "amountUSD": "24.9881",
+              "percentage": "0.0025",
+              "included": true,
+              "feeSplit": {
+                "lifiFee": "25000000",
+                "integratorFee": "0",
+                "recipients": [
+                  {
+                    "name": "lifi",
+                    "type": "FIXED",
+                    "fee": "25000000"
+                  }
+                ]
+              }
+            }
+          ],
+          "executionDuration": 0
+        },
+        "tool": "feeCollection",
+        "toolDetails": {
+          "key": "feeCollection",
+          "name": "Integrator Fee",
+          "logoURI": "https://raw.githubusercontent.com/lifinance/types/main/src/assets/icons/protocols/feeCollection.svg"
+        }
+      },
+      {
+        "id": "4ac6ee8b-45f5-4c71-92fb-df7729377c7d",
+        "type": "cross",
+        "action": {
+          "fromChainId": 137,
+          "fromAmount": "9975000000",
+          "fromToken": {
+            "address": "0x3c499c542cEF5E3811e1192ce70d8cC03d5c3359",
+            "chainId": 137,
+            "symbol": "USDC",
+            "decimals": 6,
+            "name": "USD Coin",
+            "coinKey": "USDC",
+            "logoURI": "https://static.debank.com/image/coin/logo_url/usdc/e87790bfe0b3f2ea855dc29069b38818.png",
+            "priceUSD": "0.9995225254",
+            "tags": [
+              "stablecoin"
+            ],
+            "verificationStatus": "verified",
+            "verificationStatusBreakdown": [
+              {
+                "provider": "hypernative",
+                "result": "verified",
+                "providerResult": "accept"
+              }
+            ]
+          },
+          "toChainId": 43114,
+          "toToken": {
+            "address": "0xB97EF9Ef8734C71904D8002F8b6Bc66Dd9c48a6E",
+            "chainId": 43114,
+            "symbol": "USDC",
+            "decimals": 6,
+            "name": "USD Coin",
+            "coinKey": "USDC",
+            "logoURI": "https://raw.githubusercontent.com/trustwallet/assets/master/blockchains/ethereum/assets/0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48/logo.png",
+            "priceUSD": "1.0005439438",
+            "tags": [
+              "stablecoin"
+            ],
+            "verificationStatus": "verified",
+            "verificationStatusBreakdown": [
+              {
+                "provider": "hypernative",
+                "result": "verified",
+                "providerResult": "accept"
+              }
+            ]
+          },
+          "slippage": 0.005,
+          "fromAddress": "0x1231DEB6f5749EF6cE6943a275A1D3E7486F4EaE",
+          "toAddress": "0x000000000000000000000000000000000000dEaD",
+          "destinationGasConsumption": "0"
+        },
+        "estimate": {
+          "tool": "polymerStandard",
+          "fromAmount": "9975000000",
+          "toAmount": "9975000000",
+          "toAmountMin": "9975000000",
+          "gasCosts": [
+            {
+              "type": "SEND",
+              "price": "327696238080",
+              "estimate": "210000",
+              "limit": "315000",
+              "amount": "68816209996800000",
+              "amountUSD": "0.0060",
+              "token": {
+                "address": "0x0000000000000000000000000000000000000000",
+                "chainId": 137,
+                "symbol": "POL",
+                "decimals": 18,
+                "name": "Polygon Ecosystem Token",
+                "coinKey": "POL",
+                "logoURI": "https://static.debank.com/image/matic_token/logo_url/matic/6f5a6b6f0732a7a235131bd7804d357c.png",
+                "priceUSD": "0.0869895622190818",
+                "tags": [
+                  "major_asset"
+                ],
+                "verificationStatus": "verified",
+                "verificationStatusBreakdown": [
+                  {
+                    "provider": "hypernative",
+                    "result": "verified",
+                    "providerResult": "accept"
+                  }
+                ]
+              }
+            }
+          ],
+          "executionDuration": 1080,
+          "approvalAddress": "0x1231DEB6f5749EF6cE6943a275A1D3E7486F4EaE",
+          "feeCosts": []
+        },
+        "tool": "polymerStandard",
+        "toolDetails": {
+          "key": "polymerStandard",
+          "name": "Polymer (Standard)",
+          "logoURI": "https://raw.githubusercontent.com/lifinance/types/main/src/assets/icons/bridges/polymer.svg"
+        }
+      }
+    ],
+    "integrator": "lifi-api",
+    "stepSimulation": {
+      "status": "success",
+      "gasSource": "simulation"
+    },
+    "transactionRequest": {
+      "value": "0x0",
+      "to": "0x1231DEB6f5749EF6cE6943a275A1D3E7486F4EaE",
+      "data": "0x17917a4e00000000000000000000000000000000000000000000000000000000000000600000000000000000000000000000000000000000000000000000000000000220000000000000000000000000000000000000000000000000000000000000042030dac97df4656eb4f03a7986131368f7175dd8f8a673a4446237be140d0241df0000000000000000000000000000000000000000000000000000000000000140000000000000000000000000000000000000000000000000000000000000018000000000000000000000000000000000000000000000000000000000000000000000000000000000000000003c499c542cef5e3811e1192ce70d8cc03d5c3359000000000000000000000000000000000000000000000000000000000000dead00000000000000000000000000000000000000000000000000000002528e6bc0000000000000000000000000000000000000000000000000000000000000a86a00000000000000000000000000000000000000000000000000000000000000010000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000f706f6c796d65725374616e64617264000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000086c6966692d61706900000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000010000000000000000000000000000000000000000000000000000000000000020000000000000000000000000de2b920506ee931a6a2abdf566526220214fbbae000000000000000000000000de2b920506ee931a6a2abdf566526220214fbbae0000000000000000000000003c499c542cef5e3811e1192ce70d8cc03d5c33590000000000000000000000003c499c542cef5e3811e1192ce70d8cc03d5c335900000000000000000000000000000000000000000000000000000002540be40000000000000000000000000000000000000000000000000000000000000000e0000000000000000000000000000000000000000000000000000000000000000100000000000000000000000000000000000000000000000000000000000000a4332d746b0000000000000000000000003c499c542cef5e3811e1192ce70d8cc03d5c335900000000000000000000000000000000000000000000000000000000000000400000000000000000000000000000000000000000000000000000000000000001000000000000000000000000c06ebbefd94032b85424d51906e2a335efae264b00000000000000000000000000000000000000000000000000000000017d784000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000007d0000000000000000000000000000000000000000000000000000000000000dead00000000000000000000000000000000000000000000000000000000000000e00000000000000000000000000000000000000000000000000000000000000000",
+      "from": "0x000000000000000000000000000000000000dEaD",
+      "chainId": 137,
+      "gasPrice": "0x4c4c37c600",
+      "gasLimit": "0x82470"
+    },
+    "transactionId": "0x30dac97df4656eb4f03a7986131368f7175dd8f8a673a4446237be140d0241df",
+    "recommendedSlippage": 0.005
+  }
+}

@@ -1,0 +1,19 @@
+{
+  "meta": {
+    "url": "https://iris-api.circle.com/v2/burn/USDC/fees/26/27",
+    "method": "GET",
+    "requestBody": null,
+    "fetchedAtUtc": "2026-11-13T11:58:09.394Z",
+    "httpStatus": 200
+  },
+  "body": [
+    {
+      "finalityThreshold": 1000,
+      "minimumFee": 0
+    },
+    {
+      "finalityThreshold": 2000,
+      "minimumFee": 0
+    }
+  ]
+}

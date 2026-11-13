@@ -1,0 +1,30 @@
+{
+  "meta": {
+    "url": "https://1click.chaindefuser.com/v0/quote",
+    "method": "POST",
+    "requestBody": {
+      "dry": true,
+      "depositMode": "MEMO",
+      "swapType": "EXACT_INPUT",
+      "slippageTolerance": 50,
+      "originAsset": "nep245:v2_1.omni.hot.tg:1100_111bzQBB65GxAPAVoxqmMcgYo5oS3txhqs1Uh1cgahKQUeTUq1TJu",
+      "depositType": "ORIGIN_CHAIN",
+      "destinationAsset": "nep141:sol-5ce3bf3a31af18be40ba30f721101b4341690186.omft.near",
+      "amount": "10000000000",
+      "refundTo": "GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN",
+      "refundType": "ORIGIN_CHAIN",
+      "recipient": "1nc1nerator11111111111111111111111111111111",
+      "recipientType": "DESTINATION_CHAIN",
+      "deadline": "2026-11-13T13:08:29.061Z"
+    },
+    "fetchedAtUtc": "2026-11-13T12:08:29.061Z",
+    "latencyMs": 404,
+    "httpStatus": 400
+  },
+  "body": {
+    "message": "Quoting for this pair is not available",
+    "correlationId": "a7c0c561-c2a9-4cf3-9a05-9cc751ff25f2",
+    "timestamp": "2026-11-13T12:08:29.228Z",
+    "path": "/v0/quote"
+  }
+}

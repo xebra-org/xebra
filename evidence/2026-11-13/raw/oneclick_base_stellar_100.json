@@ -1,0 +1,29 @@
+{
+  "meta": {
+    "url": "https://1click.chaindefuser.com/v0/quote",
+    "method": "POST",
+    "requestBody": {
+      "dry": true,
+      "swapType": "EXACT_INPUT",
+      "slippageTolerance": 50,
+      "originAsset": "nep141:base-0x833589fcd6edb6e08f4c7c32d4f71b54bda02913.omft.near",
+      "depositType": "ORIGIN_CHAIN",
+      "destinationAsset": "nep245:v2_1.omni.hot.tg:1100_111bzQBB65GxAPAVoxqmMcgYo5oS3txhqs1Uh1cgahKQUeTUq1TJu",
+      "amount": "100000000",
+      "refundTo": "0x1111111111111111111111111111111111111111",
+      "refundType": "ORIGIN_CHAIN",
+      "recipient": "GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN",
+      "recipientType": "DESTINATION_CHAIN",
+      "deadline": "2026-11-13T13:21:40.291Z"
+    },
+    "fetchedAtUtc": "2026-11-13T12:21:40.293Z",
+    "latencyMs": 1691,
+    "httpStatus": 400
+  },
+  "body": {
+    "message": "Destination address does not have a trustline for this asset.\n\nBlockchain: stellar:pubnet\nAsset ID: nep245:v2_1.omni.hot.tg:1100_111bzQBB65GxAPAVoxqmMcgYo5oS3txhqs1Uh1cgahKQUeTUq1TJu\nDestination address: GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN\nToken address: CCW67TSZV3SSS2HXMBQ5JFGCKJNXKZM7UQUWUZPUTHXSTZLEO7SJMI75\n\nDetails: The destination address must establish a trustline before receiving this asset.",
+    "correlationId": "aeb8a7f2-528e-4b67-b30f-c757c65f4bb1",
+    "timestamp": "2026-11-13T12:21:41.723Z",
+    "path": "/v0/quote"
+  }
+}

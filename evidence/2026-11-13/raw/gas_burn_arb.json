@@ -1,0 +1,13 @@
+{
+  "meta": {
+    "rpc": "https://arb1.arbitrum.io/rpc",
+    "fetchedAtUtc": "2026-11-13T12:17:22.087Z",
+    "method": "eth_gasPrice + eth_getLogs(TokenMessengerV2 depositForBurn) + receipts",
+    "tokenMessengerV2": "0x28b5a0e9c621a5badaa536219b3a228c8168cf5d"
+  },
+  "gasPriceWei": "20040000",
+  "samples": [],
+  "errors": [],
+  "headBlock": "523861008",
+  "logsScanned": 425
+}

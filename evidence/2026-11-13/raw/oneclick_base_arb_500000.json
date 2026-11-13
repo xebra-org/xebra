@@ -1,0 +1,65 @@
+{
+  "meta": {
+    "url": "https://1click.chaindefuser.com/v0/quote",
+    "method": "POST",
+    "requestBody": {
+      "dry": true,
+      "swapType": "EXACT_INPUT",
+      "slippageTolerance": 50,
+      "originAsset": "nep141:base-0x833589fcd6edb6e08f4c7c32d4f71b54bda02913.omft.near",
+      "depositType": "ORIGIN_CHAIN",
+      "destinationAsset": "nep141:arb-0xaf88d065e77c8cc2239327c5edb3a432268e5831.omft.near",
+      "amount": "500000000000",
+      "refundTo": "0x1111111111111111111111111111111111111111",
+      "refundType": "ORIGIN_CHAIN",
+      "recipient": "0x1111111111111111111111111111111111111111",
+      "recipientType": "DESTINATION_CHAIN",
+      "deadline": "2026-11-13T13:09:16.204Z"
+    },
+    "fetchedAtUtc": "2026-11-13T12:09:16.204Z",
+    "latencyMs": 555,
+    "httpStatus": 201
+  },
+  "body": {
+    "quote": {
+      "amountIn": "500000000000",
+      "amountInFormatted": "500000.0",
+      "amountInUsd": "499765.000000000000",
+      "minAmountIn": "500000000000",
+      "amountOut": "499898999900",
+      "amountOutFormatted": "499898.9999",
+      "amountOutUsd": "499664.047370047017",
+      "minAmountOut": "497399504900",
+      "timeEstimate": 34,
+      "refundFee": "2400",
+      "withdrawFee": "5300"
+    },
+    "quoteRequest": {
+      "dry": true,
+      "depositMode": "SIMPLE",
+      "swapType": "EXACT_INPUT",
+      "slippageTolerance": 50,
+      "originAsset": "nep141:base-0x833589fcd6edb6e08f4c7c32d4f71b54bda02913.omft.near",
+      "depositType": "ORIGIN_CHAIN",
+      "destinationAsset": "nep141:arb-0xaf88d065e77c8cc2239327c5edb3a432268e5831.omft.near",
+      "amount": "500000000000",
+      "refundTo": "0x1111111111111111111111111111111111111111",
+      "refundType": "ORIGIN_CHAIN",
+      "recipient": "0x1111111111111111111111111111111111111111",
+      "recipientType": "DESTINATION_CHAIN",
+      "deadline": "2026-11-13T13:09:16.204Z",
+      "confidentiality": "public",
+      "quoteWaitingTimeMs": 0,
+      "insured": false,
+      "appFees": [
+        {
+          "recipient": "5880ad2b362620fadf759cbceb1cd5737ce8c6ed7fb8e9942881e6731f9247dd",
+          "fee": 1
+        }
+      ]
+    },
+    "signature": "ed25519:9kSKSTEmwK1xNBZKxA1diJuMBWBAanKZP5mD7YQ4XQCNg7cZ2zchepSdAc87XEoSUMnwTVZouTCjy7piDfms4Hk",
+    "timestamp": "2026-11-13T12:09:16.291Z",
+    "correlationId": "315ed14a-8bbc-45e0-a0a6-94cfcdde5936"
+  }
+}

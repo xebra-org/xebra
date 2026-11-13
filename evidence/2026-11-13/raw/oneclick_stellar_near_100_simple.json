@@ -1,0 +1,29 @@
+{
+  "meta": {
+    "url": "https://1click.chaindefuser.com/v0/quote",
+    "method": "POST",
+    "requestBody": {
+      "dry": true,
+      "depositMode": "SIMPLE",
+      "swapType": "EXACT_INPUT",
+      "slippageTolerance": 50,
+      "originAsset": "nep245:v2_1.omni.hot.tg:1100_111bzQBB65GxAPAVoxqmMcgYo5oS3txhqs1Uh1cgahKQUeTUq1TJu",
+      "depositType": "ORIGIN_CHAIN",
+      "destinationAsset": "nep141:17208628f84f5d6ad33f0da3bbbeb27ffcb398eac501a31bd6ad2011e36133a1",
+      "amount": "1000000000",
+      "refundTo": "GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN",
+      "refundType": "ORIGIN_CHAIN",
+      "recipient": "intents.near",
+      "recipientType": "DESTINATION_CHAIN",
+      "deadline": "2026-11-13T13:21:45Z"
+    },
+    "fetchedAtUtc": "2026-11-13T12:21:46.720Z",
+    "httpStatus": 400
+  },
+  "body": {
+    "message": "Incorrect depositMode for originAsset from stellar chain",
+    "correlationId": "a88fcae5-0d3b-4804-93d3-ce7f8b3f72b1",
+    "timestamp": "2026-11-13T12:21:47.459Z",
+    "path": "/v0/quote"
+  }
+}

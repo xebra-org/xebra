@@ -1,0 +1,17 @@
+{
+  "meta": {
+    "url": "https://app.across.to/api/suggested-fees?inputToken=0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913&outputToken=EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v&originChainId=8453&destinationChainId=34268394551451&amount=100000000&recipient=1nc1nerator11111111111111111111111111111111",
+    "method": "GET",
+    "requestBody": null,
+    "fetchedAtUtc": "2026-11-13T12:03:07.163Z",
+    "latencyMs": 399,
+    "httpStatus": 400
+  },
+  "body": {
+    "type": "AcrossApiError",
+    "code": "ROUTE_NOT_ENABLED",
+    "status": 400,
+    "message": "Route is not enabled.",
+    "id": "2xk4j-1794571387208-7d77f7882c40"
+  }
+}

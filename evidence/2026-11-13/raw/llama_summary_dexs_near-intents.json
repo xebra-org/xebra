@@ -1,0 +1,91 @@
+{
+  "meta": {
+    "url": "https://api.llama.fi/summary/dexs/near-intents?excludeTotalDataChart=true&excludeTotalDataChartBreakdown=true",
+    "method": "GET",
+    "requestBody": null,
+    "fetchedAtUtc": "2026-11-13T12:15:47.142Z",
+    "httpStatus": 200
+  },
+  "body": {
+    "id": "6225",
+    "name": "NEAR Intents",
+    "address": null,
+    "symbol": "NEAR",
+    "url": "https://near.com/",
+    "description": "NEAR Intents are a new type of transaction that allow information, requests, assets, and actions to be exchanged between AI agents, services, and end users",
+    "chain": "Near",
+    "logo": "https://icons.llamao.fi/icons/protocols/near-intents",
+    "audits": "0",
+    "gecko_id": null,
+    "cmcId": null,
+    "category": "Bridge",
+    "chains": [
+      "Near"
+    ],
+    "module": "near-intents",
+    "twitter": "NEARProtocol",
+    "parentProtocol": "parent#near-protocol",
+    "dimensions": {
+      "dexs": "near-intents",
+      "fees": "near-intents"
+    },
+    "listedAt": 1760656359,
+    "methodology": {},
+    "misrepresentedTokens": false,
+    "doublecounted": false,
+    "tvlCodePath": "https://github.com/DefiLlama/DefiLlama-Adapters/blob/main/registries/sumTokens.js",
+    "defillamaId": "6225",
+    "displayName": "NEAR Intents",
+    "methodologyURL": "https://github.com/DefiLlama/dimension-adapters/blob/master/dexs/near-intents",
+    "forkedFrom": null,
+    "audit_links": null,
+    "github": null,
+    "governanceID": null,
+    "treasury": null,
+    "previousNames": null,
+    "hallmarks": null,
+    "defaultChartView": null,
+    "breakdownMethodology": null,
+    "unknownBreakdownMethodology": null,
+    "slug": "near-intents",
+    "protocolType": "protocol",
+    "linkedProtocols": [
+      "NEAR Protocol",
+      "NEAR Intents"
+    ],
+    "total24h": 176440686,
+    "total48hto24h": 113124728,
+    "total7d": 952535842,
+    "total30d": 3774153452,
+    "total1y": 32927090833,
+    "annualized1y": 32927090833,
+    "totalAllTime": 37614087536,
+    "totalDataChart": [],
+    "totalDataChartBreakdown": [],
+    "hasLabelBreakdown": false,
+    "change_1d": 55.97,
+    "chainBreakdown": {
+      "Near": {
+        "total24h": 176440686,
+        "total48hto24h": 113124728,
+        "totalLastFullDay": 176440686,
+        "total7d": 952535842,
+        "total14dto7d": 915466658,
+        "total30d": 3774153452,
+        "total60dto30d": 4811676399,
+        "total1y": 32927090833,
+        "annualized1y": 32927090833,
+        "total7DaysAgo": 131020261,
+        "total30DaysAgo": 133642221,
+        "totalAllTime": 37614087536,
+        "average1y": 90211207.76164384,
+        "monthlyAverage1y": 2746029164.2644386,
+        "change_1d": 55.97,
+        "change_7d": 34.67,
+        "change_1m": 32.02,
+        "change_7dover7d": 4.05,
+        "change_30dover30d": -21.56
+      }
+    }
+  }
+}

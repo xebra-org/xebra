@@ -1,0 +1,15 @@
+{
+  "meta": {
+    "url": "https://app.across.to/api/limits?inputToken=0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913&outputToken=EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v&originChainId=8453&destinationChainId=34268394551451",
+    "method": "GET",
+    "requestBody": null,
+    "fetchedAtUtc": "2026-11-13T12:09:35.531Z",
+    "httpStatus": 400
+  },
+  "body": {
+    "type": "AcrossApiError",
+    "code": "ROUTE_NOT_ENABLED",
+    "status": 400,
+    "message": "Route is not enabled."
+  }
+}

@@ -1,0 +1,29 @@
+{
+  "meta": {
+    "url": "https://1click.chaindefuser.com/v0/quote",
+    "method": "POST",
+    "requestBody": {
+      "dry": true,
+      "swapType": "EXACT_INPUT",
+      "slippageTolerance": 50,
+      "originAsset": "nep141:base-0x833589fcd6edb6e08f4c7c32d4f71b54bda02913.omft.near",
+      "depositType": "ORIGIN_CHAIN",
+      "destinationAsset": "nep141:arb-0xaf88d065e77c8cc2239327c5edb3a432268e5831.omft.near",
+      "amount": "10000000000000",
+      "refundTo": "0x1111111111111111111111111111111111111111",
+      "refundType": "ORIGIN_CHAIN",
+      "recipient": "0x1111111111111111111111111111111111111111",
+      "recipientType": "DESTINATION_CHAIN",
+      "deadline": "2026-11-13T13:08:46.492Z"
+    },
+    "fetchedAtUtc": "2026-11-13T12:08:46.492Z",
+    "latencyMs": 3448,
+    "httpStatus": 400
+  },
+  "body": {
+    "message": "No liquidity available",
+    "correlationId": "a06f1db0-1647-4b05-8b0b-ca070d49c990",
+    "timestamp": "2026-11-13T12:08:49.710Z",
+    "path": "/v0/quote"
+  }
+}
