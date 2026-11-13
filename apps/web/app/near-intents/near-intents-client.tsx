@@ -464,6 +464,24 @@ function PathCard({
   );
 }
 
+/** Where a mint on each hub chain can be inspected. */
+const HUB_TX: Record<string, string> = {
+  base: "https://basescan.org/tx/",
+  arbitrum: "https://arbiscan.io/tx/",
+  solana: "https://solscan.io/tx/",
+};
+
+/**
+ * NEAR Intents sometimes reports a delivery with an empty explorer link. Its swaps settle on NEAR,
+ * so a hash without an explorer link that is not an EVM hash is a NEAR transaction.
+ */
+function deliveryUrl(out: { hash: string; explorerUrl: string }): string {
+  if (out.explorerUrl) return out.explorerUrl;
+  return out.hash.startsWith("0x")
+    ? `https://blockscan.com/tx/${out.hash}`
+    : `https://nearblocks.io/txns/${out.hash}`;
+}
+
 const XEBRA_DONE = new Set(["delivered"]);
 const INTENTS_DONE = new Set(["SUCCESS", "REFUNDED", "FAILED"]);
 
@@ -514,15 +532,25 @@ function Tracker({ tracked, onReset }: { tracked: Tracked; onReset: () => void }
                 ? `Circle minted the USDC into the NEAR Intents deposit address on ${hub}.`
                 : `Burned on Stellar. Circle attests it and mints on ${hub}, usually within a minute.`
             }
-            link={{
-              href: `https://stellar.expert/explorer/public/tx/${tracked.tx}`,
-              label: "Stellar transaction",
-            }}
+            links={[
+              {
+                href: `https://stellar.expert/explorer/public/tx/${tracked.tx}`,
+                label: "Burn on Stellar",
+              },
+              ...(status?.xebra?.deliveryTx && HUB_TX[tracked.hub]
+                ? [
+                    {
+                      href: `${HUB_TX[tracked.hub]}${status.xebra.deliveryTx}`,
+                      label: `Mint on ${hub}`,
+                    },
+                  ]
+                : []),
+            ]}
           />
           <Leg
             done={intentsState === "SUCCESS"}
             active={xebraDone && !finished}
-            title={`NEAR Intents: USDC to ${tracked.symbol}`}
+            title={`NEAR Intents: swap and deliver ${tracked.symbol}`}
             detail={
               intentsState === "SUCCESS"
                 ? `Delivered ${status?.intents?.swapDetails?.amountOutFormatted ?? tracked.expectOut} ${tracked.symbol}.`
@@ -532,7 +560,7 @@ function Tracker({ tracked, onReset }: { tracked: Tracked; onReset: () => void }
                     ? "NEAR Intents reports the swap failed. Funds are refunded to your Intents account."
                     : `Waiting for the deposit, then a solver fills about ${tracked.expectOut} ${tracked.symbol}. (${intentsState.toLowerCase().replaceAll("_", " ")})`
             }
-            link={out ? { href: out.explorerUrl, label: "Delivery transaction" } : null}
+            links={out ? [{ href: deliveryUrl(out), label: "Delivery transaction" }] : []}
           />
         </ol>
         <p className="text-xs text-bone/35">
@@ -553,13 +581,13 @@ function Leg({
   active,
   title,
   detail,
-  link,
+  links,
 }: {
   done: boolean;
   active: boolean;
   title: string;
   detail: string;
-  link: { href: string; label: string } | null;
+  links: { href: string; label: string }[];
 }) {
   return (
     <li className="flex gap-4">
@@ -585,15 +613,20 @@ function Leg({
           {title}
         </p>
         <p className="mt-1 text-sm leading-relaxed text-bone/50">{detail}</p>
-        {link && (
-          <a
-            href={link.href}
-            target="_blank"
-            rel="noreferrer"
-            className="mt-1.5 inline-flex items-center gap-1 text-xs text-bone/60 underline-offset-4 hover:text-bone hover:underline"
-          >
-            {link.label} <ArrowUpRight className="h-3 w-3" />
-          </a>
+        {links.length > 0 && (
+          <p className="mt-1.5 flex flex-wrap gap-x-4 gap-y-1">
+            {links.map((l) => (
+              <a
+                key={l.href}
+                href={l.href}
+                target="_blank"
+                rel="noreferrer"
+                className="inline-flex items-center gap-1 text-xs text-bone/60 underline-offset-4 hover:text-bone hover:underline"
+              >
+                {l.label} <ArrowUpRight className="h-3 w-3" />
+              </a>
+            ))}
+          </p>
         )}
       </div>
     </li>
