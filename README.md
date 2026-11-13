@@ -35,7 +35,7 @@ the same transaction, or the whole transaction reverts and the user keeps every 
 wrapper does hold it, within one transaction, because Circle's EVM messenger burns from the caller;
 see [`SECURITY.md`](./SECURITY.md).)
 
-## NEAR HACKATHON: Stellar USDC into NEAR Intents
+## NEAR HACKATHON: USDC into NEAR Intents from chains it cannot reach
 
 Built for [NEAR HACKATHON](https://nearhackathon.com) (tracks: Unstoppable DeFi, Open Innovation).
 
@@ -58,6 +58,14 @@ about 24.90 USDC on NEAR in a live quote. Nothing changes on the NEAR Intents si
   live quotes, asks for one Stellar signature, and follows both legs to delivery.
 - [Integration guide](apps/docs/content/docs/guides/near-intents.mdx) for NEAR Intents teams, live at
   [docs.xebra.exchange/docs/guides/near-intents](https://docs.xebra.exchange/docs/guides/near-intents).
+
+**Then from every Circle chain Intents does not reach (2026-11-13).** 1Click lists no Circle USDC on
+Arc, Sonic, Ink, XDC, Sei, Unichain, World Chain or Codex, and refuses every quote from Stellar USDC.
+Circle counts about **2.05 billion USDC** on those nine chains. The same path now starts from any of
+them: the planner takes a source chain, `/v1` prices and builds EVM sends (through Xebra's fee wrapper
+on Arc), EVM chains can send to each other (`NEXT_PUBLIC_EVM_MESH`), and the page signs on the user's
+own chain. 25 USDC on Arc quoted as 7.05 wNEAR on NEAR. Every figure, with its raw API response:
+[The numbers](apps/docs/content/docs/concepts/evidence.mdx) and [`evidence/2026-11-13`](evidence/2026-11-13).
 
 **Proven on mainnet.** The first swap, 2026-11-12, USDC on Stellar to USDC on `that-guy.near`, took 36
 seconds from burn to wallet:
