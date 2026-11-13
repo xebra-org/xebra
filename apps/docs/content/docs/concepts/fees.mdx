@@ -26,9 +26,9 @@ minute after it was made.
 ## Out of Stellar
 
 Transfers out of Stellar go through Xebra's fee contract on Stellar. Its rule, as set on the
-contract on 2026-09-24 and unchanged as of 2026-11-12:
+contract on 2026-11-13 (it was 0.10%, at least 0.30 USDC, from 2026-09-24):
 
-- Xebra's base fee is **0.10% of the amount, at least 0.30 USDC**.
+- Xebra's base fee is **0.05% of the amount, at least 0.10 USDC**.
 - Circle's delivery fee is paid **out of** that base fee, not added to it.
 - If Circle's delivery fee is larger than the base fee, the sender pays Circle's fee and Xebra keeps
   nothing on that transfer.
@@ -36,14 +36,15 @@ contract on 2026-09-24 and unchanged as of 2026-11-12:
 In the quote's terms:
 
 ```text
-total    = max(0.10% × amount, 0.30, delivery)
+total    = max(0.05% × amount, 0.10, delivery)
 xebra    = total − delivery
 received = amount − total
 ```
 
-For example, with a delivery fee of 0.0215 USDC (a figure Circle quoted for Arc on 2026-09-21):
-10 USDC costs 0.30 in total, of which Xebra keeps 0.2785, and 9.70 arrives. 1,000 USDC would cost
-1.00 in total, but see the limits below.
+For example, with a delivery fee of 0.0538 USDC (Circle's quote for Base on 2026-11-13): 10 USDC
+costs 0.10 in total, of which Xebra keeps 0.0462, and 9.90 arrives. 1,000 USDC would cost 0.50 in
+total, but see the limits below. Where Circle's delivery fee is above 0.10 (Solana, about 0.13), the
+sender pays only that and Xebra keeps nothing.
 
 Stellar USDC has seven decimal places and CCTP has six. A transfer never burns a fraction of the
 seventh place: anything below one six-decimal unit stays in the sender's wallet, and Xebra's share

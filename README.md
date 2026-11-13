@@ -46,8 +46,8 @@ NEAR through bridges; nothing in it moves USDC from one chain to another.
 
 **What we built.** Xebra carries the USDC part of the swap over Circle's CCTP (burn on Stellar, Circle
 mints native USDC on Base) straight into the deposit address 1Click issues, and NEAR Intents takes it
-from there. One signature on Stellar, 36 seconds on the first mainnet run, and 25 USDC on Stellar became
-24.697 USDC on NEAR in a live quote. Nothing changes on the NEAR Intents side.
+from there. One signature on Stellar, 36 seconds on the first mainnet run, and 25 USDC on Stellar becomes
+about 24.90 USDC on NEAR in a live quote. Nothing changes on the NEAR Intents side.
 
 - [`@xebra/sdk/intents`](packages/sdk/src/intents/index.ts): `isRouteAvailable(from, to)` so NEAR
   Intents asks Xebra first and keeps its usual path when the answer is no (new CCTP routes are picked
@@ -151,7 +151,7 @@ today, so the bounds a wrapper would enforce are applied in the page before sign
 (`packages/sdk/src/core/fees/evm.ts`), and every constant is pinned in
 `packages/network-config/src/evm-chains.ts` and re-read from the chains by `pnpm check:evm`.
 
-`contracts/arc-evm/src/XebraCctpWrapper.sol` changes that: Stellar's fee (0.10%, 0.30 USDC floor,
+`contracts/arc-evm/src/XebraCctpWrapper.sol` changes that: Stellar's fee (0.05%, 0.10 USDC floor,
 Circle's delivery fee paid out of it), the same caps and the same 48-hour governance, enforced on
 chain. It is deployed on Arc mainnet and pinned in `XEBRA_WRAPPERS`; with
 `NEXT_PUBLIC_ARC_USE_WRAPPER=1` the page approves and calls it instead of Circle.

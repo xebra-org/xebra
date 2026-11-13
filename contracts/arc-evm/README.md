@@ -19,7 +19,7 @@ being its own repo, which is what `forge install`'s default submodule flow expec
 ## XebraCctpWrapper
 
 The Solidity counterpart of `contracts/stellar-cctp-wrapper-v2`: the sender approves it and calls
-`bridge`; it keeps Xebra's fee (the larger of 0.10%, the 0.30 USDC floor and Circle's own fee, which
+`bridge`; it keeps Xebra's fee (the larger of 0.05%, the 0.10 USDC floor and Circle's own fee, which
 is paid out of it) and burns the rest through Circle's `TokenMessengerV2` with the forwarding hook it
 builds itself. Same compile-time ceilings, per-destination caps, sender's fee ceiling and deadline,
 and governance as the Soroban wrapper ([`docs/GOVERNANCE.md`](../../docs/GOVERNANCE.md)). The

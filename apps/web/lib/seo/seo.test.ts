@@ -128,7 +128,7 @@ describe("the written pages", () => {
     const wrapped = buildDocs(offeredRoutes(LIVE, { ...PRODUCTION, useWrapper: true }), true).find(
       (d) => d.path === "/bridge/arc-to-base",
     );
-    expect(wrapped?.markdown).toContain("0.1% of the amount, at least 0.30 USDC");
+    expect(wrapped?.markdown).toContain("0.05% of the amount, at least 0.10 USDC");
   });
 
   it("are all listed in llms.txt, and all in llms-full.txt", () => {

@@ -10,7 +10,7 @@
     "feeRecipient": "0x32e95718A4D9B60F2e4Fb1d371189ac5DD28211A",
     "gitCommit": "c0b897e691cc9ca68f6625f7cefebeb186ef25d9",
     "gitDirty": false,
-    "params": "(10,300000,1000000,100000000,5)",
+    "params": "(5,100000,1000000,100000000,5)",
     "pauser": "0xc9504Cb8b56db0C1398B2aabCaABFc817189DF33",
     "runtimeCodeKeccak": "0x2f4e924b1f3c049c330c7ebadefa53b4cac36c05b8af90af09d96c334246bc1b",
     "tokenMessenger": "0x28b5a0e9C621a5BadaA536219b3a228C8168cf5d",
@@ -62,10 +62,10 @@
     "gitDirty": true,
     "params": {
       "account_fee": "0",
-      "fee_bps": 10,
+      "fee_bps": 5,
       "max_cctp_fee_bps": 20,
       "max_transfer": "1000000000",
-      "min_fee": "3000000",
+      "min_fee": "1000000",
       "min_transfer": "10000000"
     },
     "pauser": "GBZWUXOTGHAAWMFNG262QPRIJJ77XI44VHZ4GAO4XYGPL43TDKAQVF42",

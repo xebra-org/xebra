@@ -136,7 +136,7 @@ function fees(routes: RouteInfo[], arcViaWrapper: boolean): Doc {
     breadcrumb: crumbs("Fees", "/fees"),
     markdown: `# Fees for bridging USDC with Xebra
 
-The bridge always shows exactly what the recipient will get before you sign, read live from the contracts and from Circle. This page explains how that figure is made. Figures are as set on the contracts on ${FEES.asOf}; they can only change after a public 48-hour wait.
+The bridge always shows exactly what the recipient will get before you sign, read live from the contracts and from Circle. This page explains how that figure is made. Figures are as set on the contracts on ${FEES.asOf}. A fee can only rise after a public 48-hour wait; a cut takes effect at once.
 
 ## From Stellar
 
@@ -144,9 +144,9 @@ Xebra's fee is **${xebraFeeRule}**. Circle's delivery fee is paid **out of** Xeb
 
 | You send | Fee | Recipient gets |
 |---|---|---|
-| 10 USDC | 0.30 USDC | 9.70 USDC |
-| 50 USDC | 0.30 USDC | 49.70 USDC |
-| 100 USDC | 0.30 USDC | 99.70 USDC |
+| 10 USDC | 0.10 USDC | 9.90 USDC |
+| 50 USDC | 0.10 USDC | 49.90 USDC |
+| 100 USDC | 0.10 USDC | 99.90 USDC |
 
 The only other cost is the Stellar network fee, a fraction of a cent in XLM. Each transfer is ${FEES.minTransferUsdc} to ${FEES.maxTransferUsdc} USDC.
 

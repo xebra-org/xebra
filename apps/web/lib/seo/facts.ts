@@ -5,17 +5,17 @@ import { EVM_CHAINS, XEBRA_WRAPPERS } from "@xebra/sdk/core";
  *
  * The bridge itself always reads the live fee from the contract before anyone signs; these are what
  * the pages *say*. They are the parameters both wrappers were deployed with (`deployments/
- * mainnet.json`, held to it by `facts.test.ts`), and they change only through a contract's 48-hour
- * timelock, which is when this file changes too.
+ * mainnet.json`, held to it by `facts.test.ts`). A raise waits out a contract's 48-hour timelock and a
+ * cut is instant; this file changes when either lands.
  */
 export const FEES = {
-  /** Xebra's percentage, in basis points of the amount: 10 is 0.10%. */
-  bps: 10,
+  /** Xebra's percentage, in basis points of the amount: 5 is 0.05%. */
+  bps: 5,
   /** The least Xebra's fee can be, in USDC. Circle's delivery fee is paid out of it. */
-  minFeeUsdc: "0.30",
+  minFeeUsdc: "0.10",
   minTransferUsdc: "1",
   maxTransferUsdc: "100",
-  asOf: "2026-10-15",
+  asOf: "2026-11-13",
 } as const;
 
 /** Contracts the pages name, with where to inspect them. */
