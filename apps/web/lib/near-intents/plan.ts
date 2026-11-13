@@ -147,8 +147,9 @@ function request(
 function validate(r: PlanRequest): Source {
   const from = sourceOf(r);
   if (parseUsdcAmount(r.amount) === null) throw new Error("Enter an amount of USDC, e.g. 25.");
-  if (from === "stellar") intentsAccountFor(r.sender); // throws on anything but a Stellar account
-  else {
+  if (from === "stellar") {
+    intentsAccountFor(r.sender); // throws on anything but a Stellar account
+  } else {
     const check = checkAddressOn(EVM_CHAINS[from], r.sender);
     if (!check.ok) throw new Error(check.error ?? `Not an address on ${chainName(from)}.`);
   }

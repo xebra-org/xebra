@@ -374,9 +374,7 @@ function meshOf(routes: EnabledRoutes): readonly EvmPeerId[] {
 
 export function hasEvmRoutes(routes: EnabledRoutes): boolean {
   return (
-    routes.arcSendsTo.length > 0 ||
-    routes.arcReceivesFrom.length > 0 ||
-    meshOf(routes).length > 0
+    routes.arcSendsTo.length > 0 || routes.arcReceivesFrom.length > 0 || meshOf(routes).length > 0
   );
 }
 
