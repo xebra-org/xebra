@@ -1,0 +1,8 @@
+[package]
+name = "xebra_fee"
+edition = "2024.beta"
+
+[dependencies]
+
+[addresses]
+xebra_fee = "0x0"
