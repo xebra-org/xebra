@@ -35,13 +35,13 @@ const STORAGE_KEY = "xebra.sui-stellar.digest";
 const POLL_MS = 4000;
 const DIGEST = /^[1-9A-HJ-NP-Za-km-z]{32,64}$/;
 
-type Delivery =
+export type Delivery =
   | { kind: "idle" }
   | { kind: "completing" }
   | { kind: "done"; hash: string | null }
   | { kind: "stuck"; message: string };
 
-type Attest = "unknown" | "pending" | "complete";
+export type Attest = "unknown" | "pending" | "complete";
 
 function remember(digest: string | null) {
   try {
@@ -606,8 +606,14 @@ function WalletSection({
   );
 }
 
-function Progress({
+/**
+ * A burn into Stellar on its way: burned, attested, minted. Shared with transfers that start on
+ * Solana (`components/bridge/solana-bridge-form.tsx`), which name their own chain and explorer.
+ */
+export function Progress({
   digest,
+  sourceName = "Sui",
+  burnUrl,
   attest,
   delivery,
   relayerEnabled,
@@ -621,6 +627,9 @@ function Progress({
   onReset,
 }: {
   digest: string;
+  sourceName?: string;
+  /** Where the burn is shown; Suivision for a Sui digest when omitted. */
+  burnUrl?: string;
   attest: Attest;
   delivery: Delivery;
   relayerEnabled: boolean;
@@ -651,11 +660,11 @@ function Progress({
         <ol className="flex flex-col gap-4">
           <Row
             state="done"
-            title="Burned on Sui"
+            title={`Burned on ${sourceName}`}
             detail={
               <a
                 className="font-mono text-xs underline decoration-bone/20 underline-offset-4 hover:decoration-bone/60"
-                href={`https://suivision.xyz/txblock/${digest}`}
+                href={burnUrl ?? `https://suivision.xyz/txblock/${digest}`}
                 target="_blank"
                 rel="noreferrer"
               >

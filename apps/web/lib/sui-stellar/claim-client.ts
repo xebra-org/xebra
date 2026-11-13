@@ -4,7 +4,7 @@ import { describeRejectedTransaction } from "../cctp-bridge";
 import { env } from "../env";
 
 /**
- * Finish a Sui to Stellar transfer from the user's own Stellar wallet. The server prepares the
+ * Finish a transfer into Stellar (from Sui, or from Solana) from the user's own Stellar wallet. The server prepares the
  * `mint_and_forward` call with the user as the source account (`/api/sui-stellar/claim`); the wallet
  * signs it; this sends it and waits for Horizon to confirm. The user pays the network fee, a few
  * hundredths of an XLM, and no relayer is involved.
@@ -13,8 +13,10 @@ export async function claimOnStellar(
   kit: StellarWalletsKit,
   payer: string,
   digest: string,
+  /** The route that prepares the mint: Sui burns by default, `/api/solana-source/claim` for Solana. */
+  endpoint = "/api/sui-stellar/claim",
 ): Promise<{ hash: string; delivered: boolean }> {
-  const res = await fetch("/api/sui-stellar/claim", {
+  const res = await fetch(endpoint, {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({ digest, payer }),

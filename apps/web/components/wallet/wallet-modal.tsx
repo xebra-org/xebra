@@ -18,6 +18,22 @@ import { cn } from "../ui/cn";
  */
 const EVM_SENDS = hasEvmRoutes(env.evmRoutes);
 
+/**
+ * Whether this deployment lets Solana pay is a server setting (`SOLANA_SENDS_TO`), so the modal
+ * asks once, the first time it opens, and says "recipient" until it knows.
+ */
+let solanaPays: Promise<boolean> | null = null;
+function askSolanaPays(): Promise<boolean> {
+  solanaPays ??= fetch("/api/solana-source/config", { cache: "no-store" })
+    .then((r) => (r.ok ? r.json() : null))
+    .then((c: { enabled?: boolean } | null) => c?.enabled === true)
+    .catch(() => false);
+  return solanaPays;
+}
+
+const SOLANA_PAYS_BLURB =
+  "Pays for and signs a transfer that starts on Solana, and fills in your Solana address as the recipient.";
+
 const BLURB: Record<Family, string> = {
   stellar: EVM_SENDS
     ? "Pays for and signs a transfer that starts on Stellar."
@@ -57,6 +73,17 @@ export function WalletModal({
 }) {
   const ref = useRef<HTMLDialogElement>(null);
   const [tab, setTab] = useState<Family>("stellar");
+  const [solanaSends, setSolanaSends] = useState(false);
+  useEffect(() => {
+    if (!families?.includes("solana")) return;
+    let live = true;
+    void askSolanaPays().then((v) => {
+      if (live) setSolanaSends(v);
+    });
+    return () => {
+      live = false;
+    };
+  }, [families]);
 
   useEffect(() => {
     const d = ref.current;
@@ -131,7 +158,9 @@ export function WalletModal({
       ) : null}
 
       <div className="px-5 pb-5 pt-4">
-        <p className="text-[0.8125rem] leading-relaxed text-bone/45">{BLURB[tab]}</p>
+        <p className="text-[0.8125rem] leading-relaxed text-bone/45">
+          {tab === "solana" && solanaSends ? SOLANA_PAYS_BLURB : BLURB[tab]}
+        </p>
 
         {conn ? (
           <div className="mt-4 flex items-center justify-between gap-3 rounded-2xl bg-bone/[0.05] p-3 ring-1 ring-inset ring-bone/10">
