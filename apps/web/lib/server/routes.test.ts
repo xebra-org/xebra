@@ -164,3 +164,40 @@ describe("Sui as a source", () => {
     }
   });
 });
+
+describe("Solana as a source", () => {
+  const SIG =
+    "3uY8BdRmijxsnuAqxx5sy12qLBf1QvdoxxJdJgDaveyiHHEMDAwbjBimteY49piuvBoTYhmXu3hELvcyp6AjCSX6";
+
+  it("is refused while SOLANA_SENDS_TO is unset", () => {
+    vi.stubEnv("SOLANA_SENDS_TO", undefined as unknown as string);
+    expect(readSource("5", STELLAR)).toBeNull();
+    for (const dst of [6, 26, 27]) expect(isOfferedRoute(5, dst, STELLAR)).toBe(false);
+  });
+
+  it("offers what the switch names: chains by id, Stellar only by name", () => {
+    vi.stubEnv("SOLANA_SENDS_TO", "base,arc");
+    expect(readSource("5", STELLAR)).toEqual({ domain: 5, kind: "solana" });
+    expect(isOfferedRoute(5, 6, STELLAR)).toBe(true);
+    expect(isOfferedRoute(5, 26, STELLAR)).toBe(true);
+    expect(isOfferedRoute(5, 3, STELLAR)).toBe(false);
+    expect(isOfferedRoute(5, 27, STELLAR)).toBe(false);
+    vi.stubEnv("SOLANA_SENDS_TO", "all");
+    for (const dst of [1, 2, 3, 6, 7, 10, 12, 13, 14, 15, 16, 18, 19, 21, 26]) {
+      expect(isOfferedRoute(5, dst, STELLAR), String(dst)).toBe(true);
+    }
+    expect(isOfferedRoute(5, 27, STELLAR)).toBe(false);
+    // Neither Solana itself nor chains outside the table.
+    expect(isOfferedRoute(5, 5, STELLAR)).toBe(false);
+    expect(isOfferedRoute(5, 8, STELLAR)).toBe(false);
+    vi.stubEnv("SOLANA_SENDS_TO", "all,stellar");
+    expect(isOfferedRoute(5, 27, STELLAR)).toBe(true);
+  });
+
+  it("keeps a signature's case, and refuses hex hashes and Sui digests", () => {
+    expect(normaliseTxHash("solana", ` ${SIG} `)).toBe(SIG);
+    for (const bad of [null, "", `0x${HEX}`, SUI_TX, `${SIG}!`, "0OIl".repeat(20)]) {
+      expect(normaliseTxHash("solana", bad), String(bad)).toBeNull();
+    }
+  });
+});

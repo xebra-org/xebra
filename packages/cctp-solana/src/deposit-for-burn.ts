@@ -290,7 +290,7 @@ export async function buildSolanaBurnTransaction(
 export function describeSimulationError(err: unknown, logs: readonly string[]): string {
   const text = logs.join("\n");
   if (/insufficient lamports|InsufficientFundsForRent|insufficient funds for rent/i.test(text)) {
-    return "The wallet does not hold enough SOL for the network fee and the burn's message account (about 0.004 SOL).";
+    return "The wallet does not hold enough SOL for the network fee and the burn's message account (about 0.0035 SOL).";
   }
   if (JSON.stringify(err ?? "").includes("InsufficientFundsForFee")) {
     return "The wallet does not hold enough SOL for the network fee.";

@@ -3,7 +3,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const completeBurn = vi.fn();
 let secret: string | null = null;
 vi.mock("../../../../lib/sui-stellar/stellar-side", () => ({
-  STELLAR_INBOUND_SOURCES: [8, 6, 26],
+  STELLAR_INBOUND_SOURCES: [8, 5, 6, 26],
   completeBurn: (...a: unknown[]) => completeBurn(...a),
 }));
 vi.mock("../../../../lib/sui-stellar/config", () => ({
@@ -33,6 +33,7 @@ describe("POST /api/stellar-inbound/complete", () => {
   });
 
   it("refuses a chain it does not complete from, and a hash of the wrong kind", async () => {
+    expect((await post({ src: 9, tx: EVM_TX })).status).toBe(400);
     expect((await post({ src: 5, tx: EVM_TX })).status).toBe(400);
     expect((await post({ src: 6, tx: "not-a-hash" })).status).toBe(400);
     expect((await post({ src: 8, tx: EVM_TX })).status).toBe(400);
@@ -47,6 +48,17 @@ describe("POST /api/stellar-inbound/complete", () => {
     const digest = "8JD7n6LKxQWj3sR5gYVd4XcFz2pNhT9mUeAbCqKoLiPs";
     expect((await post({ src: 8, tx: digest })).status).toBe(200);
     expect(completeBurn).toHaveBeenLastCalledWith(digest, "S-secret", 8, {});
+  });
+
+  it("completes a Solana burn by its signature, unchanged in case, with the 1 USDC floor", async () => {
+    const sig =
+      "2bDXTMyLLYac1jMjqxZSqkpkCvypk54TqGGzCQYQVRBUWKWGDDeuGbs1pCq4QnWCgkL2mh34678XKQ98fB48Z1UM";
+    expect((await post({ src: 5, tx: sig })).status).toBe(200);
+    expect(completeBurn).toHaveBeenLastCalledWith(sig, "S-secret", 5, { minAmount: 1_000_000n });
+    // A Sui digest is too short to be a Solana signature.
+    expect(
+      (await post({ src: 5, tx: "8JD7n6LKxQWj3sR5gYVd4XcFz2pNhT9mUeAbCqKoLiPs" })).status,
+    ).toBe(400);
   });
 
   it("answers 422 for a refusal", async () => {

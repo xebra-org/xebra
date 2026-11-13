@@ -1,19 +1,21 @@
 import { EVM_CHAINS, SUI_DOMAIN } from "@xebra/sdk/core";
+import { SOLANA_CCTP_DOMAIN, SOLANA_SIGNATURE } from "../../../../lib/solana-source/config";
 import { SUI_DIGEST } from "../../../../lib/sui-stellar/attestation";
 import { relayerSecret } from "../../../../lib/sui-stellar/config";
 import { STELLAR_INBOUND_SOURCES, completeBurn } from "../../../../lib/sui-stellar/stellar-side";
 
 /**
- * Completes an attested burn into Stellar from any chain we list (Sui, or an EVM chain), paying the
+ * Completes an attested burn into Stellar from any chain we list (Sui, Solana, or an EVM chain), paying the
  * XLM fee from the relayer account. Circle's Forwarding Service delivers to Stellar from no chain, so
  * this is how every transfer into Stellar lands unless its owner claims it.
  *
- * `POST {"src": <CCTP domain>, "tx": <burn transaction>}`. Anyone may call it for any burn, and that
+ * `POST {"src": <CCTP domain>, "tx": <burn transaction>}`: a Sui digest, a Solana signature (both
+ * base58, never lower-cased), or an EVM hash. Anyone may call it for any burn, and that
  * is safe by construction: the recipient is read from the burn's own hook, never from the request;
  * the message must be a USDC burn to Stellar minting to Circle's forwarder; and the recipient must
  * hold a trustline. A caller can only make us finish a transfer someone already burned for.
  *
- * Burns under 1 USDC from chains other than Sui are refused until the relayer checks Xebra's fee:
+ * Burns under 1 USDC from chains other than Sui (Solana included) are refused until the relayer checks Xebra's fee:
  * each completion costs XLM, and a free relay for dust would be a way to drain it.
  */
 export const dynamic = "force-dynamic";
@@ -43,6 +45,7 @@ export async function POST(request: Request): Promise<Response> {
   if (!Number.isInteger(src) || !STELLAR_INBOUND_SOURCES.includes(src)) {
     const names = [
       "Sui (8)",
+      "Solana (5)",
       ...Object.values(EVM_CHAINS).map((c) => `${c.name} (${c.cctpDomainId})`),
     ];
     return Response.json(
@@ -51,19 +54,23 @@ export async function POST(request: Request): Promise<Response> {
     );
   }
   const sui = src === SUI_DOMAIN;
-  if (!(sui ? SUI_DIGEST : EVM_TX).test(tx)) {
+  const solana = src === SOLANA_CCTP_DOMAIN;
+  if (!(sui ? SUI_DIGEST : solana ? SOLANA_SIGNATURE : EVM_TX).test(tx)) {
     return Response.json(
       {
         error: sui
           ? "tx must be a Sui transaction digest."
-          : "tx must be 0x and 64 hex characters.",
+          : solana
+            ? "tx must be a Solana transaction signature."
+            : "tx must be 0x and 64 hex characters.",
       },
       { status: 400 },
     );
   }
 
   try {
-    const result = await completeBurn(sui ? tx : tx.toLowerCase(), secret, src, {
+    // Base58 (Sui, Solana) is case-sensitive; only an EVM hash is normalised.
+    const result = await completeBurn(sui || solana ? tx : tx.toLowerCase(), secret, src, {
       ...(sui ? {} : { minAmount: MIN_RELAYED_UNITS }),
     });
     const code = result.status === "refused" ? 422 : result.status === "failed" ? 502 : 200;
