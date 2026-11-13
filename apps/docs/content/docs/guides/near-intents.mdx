@@ -19,6 +19,9 @@ Two things follow from that, both visible from the public API:
 - **Some chains get no quotes.** On 12 November 2026, 1Click answered `Quoting for this pair is not
   available` for Stellar USDC into USDC on Base, NEAR and Solana, at every amount we tried. Stellar
   USDC enters NEAR Intents through the HOT bridge, and no solver quotes it.
+- **Some chains are not listed at all.** 1Click has no Circle USDC on Arc, Sonic, Ink, XDC, Sei,
+  Unichain, World Chain or Codex. With Stellar, Circle counts about 2.05 billion USDC on those nine
+  chains ([the numbers](/docs/concepts/evidence)).
 - **USDC is split by bridge.** The same USDC on Base is a different asset in NEAR Intents depending on
   which bridge brought it in, and solvers convert between them by withdrawing and depositing again
   ([Move HOT liquidity to Omni tokens](https://docs.near-intents.org/integration/market-makers/hot-to-omni)).
