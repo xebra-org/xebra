@@ -2,10 +2,11 @@ import { Connection, type Transaction } from "@solana/web3.js";
 import { rpc } from "@stellar/stellar-sdk";
 import type { CircleHealth } from "@xebra/cctp-client";
 import { buildSuiBurn } from "@xebra/sdk/build";
-import { type FeeParams, stellarDestinations } from "@xebra/sdk/core";
+import { type FeeParams, stellarDestinations, wrapperFor } from "@xebra/sdk/core";
 import { GET as attestation } from "../../app/api/attestation/route";
 import { GET as circleHealth } from "../../app/api/circle-health/route";
 import { GET as delivery } from "../../app/api/delivery/route";
+import { GET as evmWrapper } from "../../app/api/evm-wrapper/route";
 import { GET as recipient } from "../../app/api/recipient/route";
 import { GET as suiStatus } from "../../app/api/sui-stellar/status/route";
 import { getWrapperDomains, getWrapperFeeParams } from "../cctp-bridge";
@@ -13,6 +14,7 @@ import { buildMintTransaction, prepareClaim } from "../claim";
 import { env } from "../env";
 import { getAllowance, getUsdcBalance6 } from "../evm-bridge";
 import { checkClaim, isAlreadyMinted } from "../evm-claim";
+import { type WrapperState, parseWrapperState } from "../evm-wrapper";
 import { createTtlCache } from "../server/ttl-cache";
 import { suiClient } from "../sui-stellar/client";
 import { maxUsdcBase, suiStellarEnabled } from "../sui-stellar/config";
@@ -74,6 +76,19 @@ export const liveDeps: Deps = {
   suiStellar: { enabled: suiStellarEnabled(), maxUnits: maxUsdcBase() },
   evmRoutes: env.evmRoutes,
   stellarRoutes,
+  evmWrapperAddress: (chain) => wrapperFor(chain, env.arcUseWrapper),
+  async evmWrapperSettings(chain) {
+    // The same read the page makes, which refuses a wrapper not pointed at Circle's contracts.
+    const body = await readJson(
+      await evmWrapper(new Request(`${ORIGIN}/api/evm-wrapper?src=${chain.cctpDomainId}`)),
+    );
+    if (!body || typeof body.address !== "string") return null;
+    try {
+      return parseWrapperState(body as unknown as WrapperState);
+    } catch {
+      return null;
+    }
+  },
   async circle(src, dst, newAccount) {
     const q = `src=${src}&dst=${dst}${newAccount ? "&newAccount=1" : ""}`;
     const body = await readJson(

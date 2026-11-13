@@ -160,6 +160,48 @@ signer's account after its ed25519 public key in hex. `intentsAccountFor("G...")
 account. Refunds sent there belong to the user, who withdraws them by signing with the same Stellar
 wallet. Nothing has to be created first.
 
+## Start from Arc or another EVM chain
+
+NEAR Intents does not list Circle's USDC on Arc, Unichain, Sonic, World Chain, Sei, XDC, Ink or
+Codex (1Click token list, 13 November 2026). Xebra reaches Base from those chains over CCTP, so the
+same three steps work with an EVM sender. Only two things change:
+
+- **`from`** names the EVM chain (`"arc"`, `"unichain"`, ...), and `steps` holds up to two EVM
+  transactions on it: an approval for exactly the amount, when the allowance is short, then the burn.
+  Send them in order and wait for the approval's receipt before the burn.
+- **The refund** goes back to the user's own address on the hub chain: an EVM account is the same
+  address on every EVM chain, so set `refundTo: sender` and `refundType: "ORIGIN_CHAIN"`. A smart
+  contract wallet may not exist at that address on the hub; refund those users to `INTENTS` instead.
+
+```ts twoslash
+import { createXebraClient } from "@xebra/sdk";
+import { createIntentsRouter } from "@xebra/sdk/intents";
+
+declare const sender: `0x${string}`; // the user's address on Arc
+declare const depositAddress: string; // from a non-dry 1Click quote, refundTo: sender
+
+const xebra = createXebraClient();
+const router = createIntentsRouter({ client: xebra });
+
+const hub = await router.pickHub("arc"); // "base" today
+if (hub) {
+  const leg = await xebra.quote({ from: "arc", to: "base", amount: "25" });
+  const { steps } = await router.buildDeposit({
+    from: "arc",
+    depositChain: hub,
+    depositAddress,
+    sender,
+    amount: "25",
+    maxTotalFee: leg.fees.total,
+  });
+  // steps: [approve?, burn], each { tx: { kind: "evm", chainId, to, data, value: "0" } }
+}
+```
+
+If the user's chain is one NEAR Intents already lists (Base, Arbitrum, Solana...), price both paths
+and let the better one win: depositing straight into Intents usually pays more there, and Xebra
+adds nothing. [xebra.exchange/near-intents](https://xebra.exchange/near-intents) does exactly this.
+
 ## Proven on mainnet
 
 The first swap through this path ran on 12 November 2026: USDC on Stellar into USDC on NEAR, delivered

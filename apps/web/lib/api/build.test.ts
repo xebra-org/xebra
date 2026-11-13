@@ -27,6 +27,7 @@ import {
   SUI_STEP,
   TOKEN_ACCOUNT,
   WRAPPER,
+  WRAPPER_SETTINGS,
   buildDeps,
   cfg,
   deps,
@@ -283,17 +284,67 @@ describe("buildTransfer: what gets signed", () => {
     expect(err.code).toBe("transaction_rejected");
   });
 
-  it("does not build EVM sends while the fee wrapper is on, rather than misprice them", async () => {
-    const err = await refusal(
-      svc({ evmWrapperOn: true }).buildTransfer({
-        from: "arc",
-        to: "base",
-        amount: 25_000_000n,
-        sender: EVM_SENDER,
-        recipient: RECIPIENT,
-      }),
+  it("builds EVM sends through the fee wrapper when the chain has one, priced by its terms", async () => {
+    const ARC_WRAPPER = "0x11b30470DAE40B2Fc27b7AA90dc58e6B4fE9f4c3";
+    const evmUsdc = vi.fn(async () => ({ balance: 1_000_000_000n, allowance: 0n }));
+    const s = svc(
+      { evmWrapperOn: true, evmUsdc },
+      {
+        evmWrapperAddress: (chain) => (chain.id === "arc" ? ARC_WRAPPER : null),
+        evmWrapperSettings: async () => WRAPPER_SETTINGS,
+      },
     );
-    expect(err.code).toBe("route_unavailable");
+    const { quote, steps } = await s.buildTransfer({
+      from: "arc",
+      to: "base",
+      amount: 25_000_000n,
+      sender: EVM_SENDER,
+      recipient: RECIPIENT,
+    });
+    // 0.05% of 25 is below the 0.10 floor, so Xebra's fee is the floor less Circle's delivery.
+    expect(quote.fees.xebra + quote.fees.circle + quote.fees.delivery).toBe(100_000n);
+    expect(quote.fees.xebra).toBeGreaterThan(0n);
+    expect(quote.recipientGets).toBe(25_000_000n - 100_000n);
+    expect(quote.maximum).toBe(100_000_000n);
+    // The approval and the burn both go to the wrapper, and the allowance is read against it.
+    expect(evmUsdc).toHaveBeenCalledWith(EVM_CHAINS.arc, EVM_SENDER, ARC_WRAPPER);
+    expect(steps.map((x) => x.id)).toEqual(["approve", "burn"]);
+    const burn = steps[1]?.tx;
+    if (burn?.kind !== "evm") throw new Error("not an EVM step");
+    expect(burn.to.toLowerCase()).toBe(ARC_WRAPPER.toLowerCase());
+  });
+
+  it("refuses to price a wrapper send when the wrapper cannot be read", async () => {
+    const s = svc(
+      { evmWrapperOn: true },
+      {
+        evmWrapperAddress: () => "0x11b30470DAE40B2Fc27b7AA90dc58e6B4fE9f4c3",
+        evmWrapperSettings: async () => null,
+      },
+    );
+    const err = await refusal(s.quote({ from: "arc", to: "base", amount: 25_000_000n }));
+    expect(err.code).toBe("upstream_unavailable");
+  });
+
+  it("sends straight to Circle from a chain with no wrapper, even with the wrapper switched on", async () => {
+    const s = svc(
+      { evmWrapperOn: true },
+      {
+        evmRoutes: { arcSendsTo: [], arcReceivesFrom: [], evmMesh: ["unichain", "base"] },
+        evmWrapperAddress: () => null,
+      },
+    );
+    const { quote, steps } = await s.buildTransfer({
+      from: "unichain",
+      to: "base",
+      amount: 25_000_000n,
+      sender: EVM_SENDER,
+      recipient: RECIPIENT,
+    });
+    expect(quote.fees.xebra).toBe(0n);
+    const burn = steps.at(-1)?.tx;
+    if (burn?.kind !== "evm") throw new Error("not an EVM step");
+    expect(burn.to.toLowerCase()).toBe(EVM_CHAINS.unichain.tokenMessengerAddress.toLowerCase());
   });
 
   it("hands back the Sui burn as built", async () => {

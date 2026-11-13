@@ -1,6 +1,13 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import {
+  EVM_CHAINS,
+  type EvmChainId,
+  evmDestinationsFrom,
+  evmSources,
+  explorerTxUrl,
+} from "@xebra/sdk/core";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Badge } from "../../components/ui/badge";
 import { Button } from "../../components/ui/button";
 import { cn } from "../../components/ui/cn";
@@ -12,15 +19,18 @@ import { Notice } from "../../components/ui/notice";
 import { Skeleton } from "../../components/ui/skeleton";
 import { useWallets } from "../../components/wallet/wallet-provider";
 import { env } from "../../lib/env";
+import { ensureChain, readChainId, sendTransaction, waitForReceipt } from "../../lib/evm-rpc";
 import { reportError } from "../../lib/format-error";
 
 /**
- * Stellar USDC into anything NEAR Intents delivers, with Xebra carrying the USDC.
+ * USDC from a chain NEAR Intents does not reach into anything Intents delivers, with Xebra carrying
+ * the USDC.
  *
- * NEAR Intents' solvers do not quote Stellar USDC today, so a Stellar wallet cannot swap through
- * Intents directly. Xebra moves the USDC over Circle's CCTP to Base, straight into the deposit
- * address NEAR Intents issues, and Intents does the rest. The page prices both paths side by side
- * from live quotes, then asks for one signature on Stellar.
+ * NEAR Intents' solvers do not quote Stellar USDC, and Intents does not list USDC on Arc, Unichain,
+ * Sonic, World Chain, Sei, XDC, Ink or Codex at all. Xebra moves the USDC over Circle's CCTP to
+ * Base, straight into the deposit address NEAR Intents issues, and Intents does the rest. The page
+ * prices both paths side by side from live quotes, then asks the user's own wallet to sign on their
+ * own chain: one Stellar transaction, or an approval and a burn on an EVM chain.
  */
 
 interface Destination {
@@ -44,12 +54,24 @@ interface XebraQuote {
   fees: { xebra: string; circle: string; delivery: string; total: string };
 }
 
+/** The wallet-side half of the API's `UnsignedTx`: only the fields this page reads. */
+interface UnsignedTx {
+  kind: string;
+  xdr?: string;
+  networkPassphrase?: string;
+  chainId?: number;
+  to?: string;
+  data?: string;
+}
+
 interface Comparison {
   direct: PathPrice;
   viaXebra: PathPrice & { hub?: string; xebra?: XebraQuote };
 }
 
 interface Tracked {
+  /** The source chain; absent on swaps saved before other chains existed, which were Stellar. */
+  from?: Source;
   depositAddress: string;
   tx: string;
   hub: string;
@@ -71,6 +93,28 @@ interface Status {
 
 const STORAGE_KEY = "xebra.near-intents.tracked";
 const HUB_NAME: Record<string, string> = { base: "Base", arbitrum: "Arbitrum", solana: "Solana" };
+const HUBS = ["base", "arbitrum"] as const;
+
+type Source = "stellar" | EvmChainId;
+
+/** Stands in for the sender while pricing, before a wallet is connected. */
+const PLACEHOLDER_SENDER = {
+  stellar: "GBXFXNDLV4LSWA4VB7YIL5GBD7BVNR22SGBTDKMO2SBZZHDXSKZYCP7L",
+  evm: "0x1111111111111111111111111111111111111111",
+};
+
+/**
+ * Stellar, then each EVM chain this build lets send to a NEAR Intents hub, in the table's order.
+ * A chain with no route to a hub has nothing to offer here.
+ */
+function swapSources(): Source[] {
+  const evm = evmSources(env.evmRoutes).filter((id) =>
+    evmDestinationsFrom(id, env.evmRoutes).some((d) => (HUBS as readonly string[]).includes(d)),
+  );
+  return ["stellar", ...evm];
+}
+
+const chainName = (s: Source) => (s === "stellar" ? "Stellar" : EVM_CHAINS[s].name);
 
 function remember(t: Tracked | null) {
   try {
@@ -121,8 +165,11 @@ const minutes = (s: number | undefined) =>
   s === undefined ? "-" : s < 90 ? `about ${Math.round(s)} s` : `about ${Math.round(s / 60)} min`;
 
 export function NearIntentsClient() {
-  const { connections, stellarKit: kit, open } = useWallets();
-  const sender = connections.stellar?.address ?? null;
+  const { connections, stellarKit: kit, open, syncEvmChain } = useWallets();
+  const sources = useMemo(swapSources, []);
+  const [from, setFrom] = useState<Source>("stellar");
+  const isStellar = from === "stellar";
+  const sender = (isStellar ? connections.stellar?.address : connections.evm?.address) ?? null;
 
   const [destinations, setDestinations] = useState<Destination[] | null>(null);
   const [destError, setDestError] = useState<string | null>(null);
@@ -132,7 +179,9 @@ export function NearIntentsClient() {
   const [comparison, setComparison] = useState<Comparison | null>(null);
   const [pricing, setPricing] = useState(false);
   const [priceError, setPriceError] = useState<string | null>(null);
-  const [step, setStep] = useState<"idle" | "preparing" | "signing" | "submitting">("idle");
+  const [step, setStep] = useState<"idle" | "preparing" | "signing" | "burning" | "submitting">(
+    "idle",
+  );
   const [sendError, setSendError] = useState<string | null>(null);
   const [tracked, setTracked] = useState<Tracked | null>(null);
 
@@ -161,8 +210,9 @@ export function NearIntentsClient() {
     const t = setTimeout(() => {
       setPricing(true);
       post<Comparison>("/api/near-intents/compare", {
+        from,
         amount: amount.trim(),
-        sender: sender ?? "GBXFXNDLV4LSWA4VB7YIL5GBD7BVNR22SGBTDKMO2SBZZHDXSKZYCP7L",
+        sender: sender ?? PLACEHOLDER_SENDER[from === "stellar" ? "stellar" : "evm"],
         destinationAsset: destination.assetId,
         recipient: recipient.trim(),
       })
@@ -171,7 +221,7 @@ export function NearIntentsClient() {
         .finally(() => id === ticket.current && setPricing(false));
     }, 600);
     return () => clearTimeout(t);
-  }, [amount, recipient, destination, sender]);
+  }, [from, amount, recipient, destination, sender]);
 
   // Each press gets a number. Cancelling bumps it, so a wallet or network answer that arrives
   // after the person gave up is ignored instead of yanking the page into a transfer they left.
@@ -180,11 +230,16 @@ export function NearIntentsClient() {
   const cancel = useCallback(() => {
     attempt.current += 1;
     setStep("idle");
-    setSendError("Cancelled. Nothing was sent: no transaction reached Stellar.");
-  }, []);
+    setSendError(
+      isStellar
+        ? "Cancelled. Nothing was sent: no transaction reached Stellar."
+        : `Cancelled. Nothing was burned on ${chainName(from)}. If you had already approved, the approval stays and covers exactly this amount; the next attempt reuses it.`,
+    );
+  }, [isStellar, from]);
 
   const send = useCallback(async () => {
-    if (!kit || !sender || !destination) return;
+    if (!sender || !destination) return;
+    if (isStellar && !kit) return;
     const mine = ++attempt.current;
     const live = () => mine === attempt.current;
     setSendError(null);
@@ -196,8 +251,9 @@ export function NearIntentsClient() {
           hub: string;
           depositAddress: string;
           intents: { amountOutFormatted: string };
-          build: { steps: { tx: { kind: string; xdr?: string; networkPassphrase?: string } }[] };
+          build: { steps: { id: string; tx: UnsignedTx }[] };
         }>("/api/near-intents/prepare", {
+          from,
           amount: amount.trim(),
           sender,
           destinationAsset: destination.assetId,
@@ -207,32 +263,15 @@ export function NearIntentsClient() {
         "NEAR Intents took too long to issue a deposit address. Nothing was sent; try again.",
       );
       if (!live()) return;
-      const tx = prepared.build.steps[0]?.tx;
-      if (prepared.build.steps.length !== 1 || tx?.kind !== "stellar" || !tx.xdr) {
-        throw new Error("Expected a single Stellar transaction to sign.");
-      }
       console.info("[xebra] near-intents: deposit address", prepared.depositAddress);
 
-      setStep("signing");
-      const passphrase = tx.networkPassphrase ?? env.stellarNetworkPassphrase;
-      const { signedTxXdr } = await kit.signTransaction(tx.xdr, {
-        networkPassphrase: passphrase,
-        address: sender,
-      });
-      if (!live()) return;
-      console.info("[xebra] near-intents: signed, submitting to Stellar");
-
-      setStep("submitting");
-      // Submitted by our server, which retries a failed connection; the browser's own link to
-      // Stellar's RPC is the part that dropped signed transfers with "Network Error".
-      const { txHash } = await withTimeout(
-        post<{ txHash: string }>("/api/near-intents/submit", { xdr: signedTxXdr }),
-        90_000,
-        "Stellar's network did not answer in time. Check your wallet's activity before trying again: if the transaction shows there, it went through.",
-      );
-      if (!live()) return;
+      const txHash = isStellar
+        ? await signOnStellar(prepared.build.steps, live)
+        : await signOnEvm(prepared.build.steps, live);
+      if (!txHash || !live()) return;
       console.info("[xebra] near-intents: submitted", txHash);
       const t: Tracked = {
+        from,
         depositAddress: prepared.depositAddress,
         tx: txHash,
         hub: prepared.hub,
@@ -246,21 +285,96 @@ export function NearIntentsClient() {
     } finally {
       if (live()) setStep("idle");
     }
-  }, [kit, sender, destination, amount, recipient]);
+
+    /** One Stellar transaction: signed in the wallet, submitted by our server. */
+    async function signOnStellar(steps: { tx: UnsignedTx }[], live: () => boolean) {
+      const tx = steps[0]?.tx;
+      if (steps.length !== 1 || tx?.kind !== "stellar" || !tx.xdr || !kit || !sender) {
+        throw new Error("Expected a single Stellar transaction to sign.");
+      }
+      setStep("signing");
+      const passphrase = tx.networkPassphrase ?? env.stellarNetworkPassphrase;
+      const { signedTxXdr } = await kit.signTransaction(tx.xdr, {
+        networkPassphrase: passphrase,
+        address: sender,
+      });
+      if (!live()) return null;
+      console.info("[xebra] near-intents: signed, submitting to Stellar");
+      setStep("submitting");
+      // Submitted by our server, which retries a failed connection; the browser's own link to
+      // Stellar's RPC is the part that dropped signed transfers with "Network Error".
+      const { txHash } = await withTimeout(
+        post<{ txHash: string }>("/api/near-intents/submit", { xdr: signedTxXdr }),
+        90_000,
+        "Stellar's network did not answer in time. Check your wallet's activity before trying again: if the transaction shows there, it went through.",
+      );
+      return txHash;
+    }
+
+    /**
+     * An exact-amount approval (when the allowance is short) and the burn, on the source chain, in
+     * order, each confirmed before the next. Returns the burn's hash.
+     */
+    async function signOnEvm(steps: { id: string; tx: UnsignedTx }[], live: () => boolean) {
+      const provider = connections.evm?.provider;
+      if (from === "stellar" || !provider || !sender) throw new Error("Connect an EVM wallet.");
+      const chain = EVM_CHAINS[from];
+      const ok =
+        steps.length > 0 &&
+        steps.at(-1)?.id === "burn" &&
+        steps.every(
+          (s) => s.tx.kind === "evm" && s.tx.chainId === chain.chainId && s.tx.to && s.tx.data,
+        );
+      if (!ok) throw new Error(`Expected an approval and a burn on ${chain.name}.`);
+      setStep("signing");
+      await ensureChain(provider, chain);
+      await syncEvmChain();
+      if ((await readChainId(provider)) !== chain.chainId) {
+        throw new Error(`Switch your wallet to ${chain.name} and try again.`);
+      }
+      let burn: string | null = null;
+      for (const s of steps) {
+        if (!live()) return null;
+        setStep(s.id === "approve" ? "signing" : "burning");
+        const hash = await sendTransaction(provider, {
+          from: sender,
+          to: s.tx.to as string,
+          data: s.tx.data as `0x${string}`,
+          chainId: chain.chainId,
+        });
+        setStep("submitting");
+        const result = await waitForReceipt(provider, hash, { timeoutMs: 180_000 });
+        if (result !== "success") {
+          throw new Error(
+            `${s.id === "approve" ? "The approval" : "The burn"} reverted on ${chain.name}: ${explorerTxUrl(chain, hash)}`,
+          );
+        }
+        if (s.id === "burn") burn = hash;
+      }
+      return burn;
+    }
+  }, [kit, sender, destination, amount, recipient, from, isStellar, connections.evm, syncEvmChain]);
 
   const busy = step !== "idle";
   const via = comparison?.viaXebra;
+  const direct = comparison?.direct;
+  // Xebra adds nothing when NEAR Intents already takes this chain's USDC and pays more for it.
+  const directWins =
+    direct?.available &&
+    via?.available &&
+    Number(direct.amountOut ?? 0) >= Number(via.amountOut ?? 0);
 
   return (
     <main className="mx-auto flex w-full max-w-4xl flex-col gap-8 px-4 py-14 sm:px-5 sm:py-20">
       <header className="max-w-2xl px-1">
         <h1 className="text-2xl font-semibold tracking-tight text-bone [text-wrap:balance] sm:text-3xl">
-          Stellar USDC into NEAR Intents
+          USDC into NEAR Intents, from chains it does not reach
         </h1>
         <p className="mt-3 text-[0.9375rem] leading-relaxed text-bone/55">
           NEAR Intents can swap into almost anything, but its solvers do not quote USDC that starts
-          on Stellar. Xebra carries it across with Circle&rsquo;s CCTP, straight into the deposit
-          address NEAR Intents hands out, and Intents takes it from there.
+          on Stellar, and it does not list USDC on Arc, Unichain, Sonic, World Chain and other
+          Circle chains at all. Xebra carries it across with Circle&rsquo;s CCTP, straight into the
+          deposit address NEAR Intents hands out, and Intents takes it from there.
         </p>
       </header>
 
@@ -276,10 +390,28 @@ export function NearIntentsClient() {
         <div className="grid items-start gap-6 lg:grid-cols-[minmax(0,5fr)_minmax(0,6fr)]">
           <GlassCard spotlight={false}>
             <div className="flex flex-col gap-6 p-5 sm:p-6">
+              {sources.length > 1 && (
+                <Field id="ni-from" label="From">
+                  <select
+                    id="ni-from"
+                    value={from}
+                    disabled={busy}
+                    onChange={(e) => setFrom(e.target.value as Source)}
+                    className="h-12 w-full rounded-tray bg-obsidian-sunken/80 px-4 text-bone ring-1 ring-inset ring-bone/[0.07] transition-shadow duration-200 hover:ring-bone/[0.16] focus:ring-bone/25 disabled:opacity-60"
+                  >
+                    {sources.map((s) => (
+                      <option key={s} value={s}>
+                        {chainName(s)}
+                      </option>
+                    ))}
+                  </select>
+                </Field>
+              )}
+
               <Field
                 id="ni-amount"
                 label="You send"
-                trailing={<span className="text-xs text-bone/40">USDC on Stellar</span>}
+                trailing={<span className="text-xs text-bone/40">USDC on {chainName(from)}</span>}
               >
                 <Input
                   id="ni-amount"
@@ -326,14 +458,18 @@ export function NearIntentsClient() {
               </Field>
 
               {!sender ? (
-                <Button size="lg" className="w-full" onClick={() => open(["stellar"])}>
-                  Connect a Stellar wallet
+                <Button
+                  size="lg"
+                  className="w-full"
+                  onClick={() => open([isStellar ? "stellar" : "evm"])}
+                >
+                  {isStellar ? "Connect a Stellar wallet" : "Connect an EVM wallet"}
                 </Button>
               ) : (
                 <Button
                   size="lg"
                   className="w-full"
-                  disabled={busy || !via?.available}
+                  disabled={busy || !via?.available || Boolean(directWins)}
                   onClick={send}
                   trailing={<ArrowRight className="h-4 w-4" />}
                 >
@@ -341,9 +477,11 @@ export function NearIntentsClient() {
                     ? "Getting a deposit address"
                     : step === "signing"
                       ? "Approve in your wallet"
-                      : step === "submitting"
-                        ? "Sending"
-                        : "Send through Xebra"}
+                      : step === "burning"
+                        ? "Confirm the transfer in your wallet"
+                        : step === "submitting"
+                          ? "Sending"
+                          : "Send through Xebra"}
                 </Button>
               )}
               {step === "signing" && (
@@ -369,14 +507,18 @@ export function NearIntentsClient() {
           <section aria-label="Two ways to get there" className="flex flex-col gap-4">
             <PathCard
               title="Straight into NEAR Intents"
-              detail="Deposit Stellar USDC through the HOT bridge and wait for a solver."
+              detail={
+                isStellar
+                  ? "Deposit Stellar USDC through the HOT bridge and wait for a solver."
+                  : `Deposit ${chainName(from)} USDC into NEAR Intents and wait for a solver.`
+              }
               price={comparison?.direct ?? null}
               loading={pricing}
               symbol={destination?.symbol}
             />
             <PathCard
               title="Through Xebra, then NEAR Intents"
-              detail={`Circle burns on Stellar and mints on ${HUB_NAME[via?.hub ?? "base"] ?? via?.hub}, into the deposit address. A solver fills from there.`}
+              detail={`Circle burns on ${chainName(from)} and mints on ${HUB_NAME[via?.hub ?? "base"] ?? via?.hub}, into the deposit address. A solver fills from there.`}
               price={via ?? null}
               loading={pricing}
               symbol={destination?.symbol}
@@ -394,6 +536,12 @@ export function NearIntentsClient() {
                 </dl>
               )}
             </PathCard>
+            {directWins && (
+              <Notice tone="info" title="Go direct for this one">
+                NEAR Intents already takes {chainName(from)} USDC and pays more for this swap than
+                the route through Xebra. Use NEAR Intents&rsquo; own app: Xebra adds nothing here.
+              </Notice>
+            )}
             {priceError && (
               <Notice tone="alarm" title="No quote">
                 {priceError}
@@ -404,9 +552,11 @@ export function NearIntentsClient() {
       )}
 
       <Notice tone="info" title="Real money on mainnet">
-        This moves real USDC. Xebra never holds it: you sign one Stellar transaction, Circle mints
-        on the other side, and if NEAR Intents cannot fill the swap it refunds to the Intents
-        account your Stellar key already owns.
+        This moves real USDC. Xebra never holds it: you sign on {chainName(from)}, Circle mints on
+        the other side, and if NEAR Intents cannot fill the swap it refunds{" "}
+        {isStellar
+          ? "to the Intents account your Stellar key already owns."
+          : `the USDC to your same address on ${HUB_NAME[via?.hub ?? "base"] ?? "the hub chain"}.`}
       </Notice>
     </main>
   );
@@ -492,7 +642,11 @@ function Tracker({ tracked, onReset }: { tracked: Tracked; onReset: () => void }
     let stop = false;
     const tick = async () => {
       try {
-        const q = new URLSearchParams({ depositAddress: tracked.depositAddress, tx: tracked.tx });
+        const q = new URLSearchParams({
+          depositAddress: tracked.depositAddress,
+          tx: tracked.tx,
+          from: tracked.from ?? "stellar",
+        });
         const res = await fetch(`/api/near-intents/status?${q}`);
         if (res.ok && !stop) setStatus((await res.json()) as Status);
       } catch {
@@ -518,6 +672,15 @@ function Tracker({ tracked, onReset }: { tracked: Tracked; onReset: () => void }
   const finished = INTENTS_DONE.has(intentsState);
   const out = status?.intents?.swapDetails?.destinationChainTxHashes?.[0];
   const hub = HUB_NAME[tracked.hub] ?? tracked.hub;
+  const source = tracked.from ?? "stellar";
+  const sourceName = chainName(source);
+  const burnUrl =
+    source === "stellar"
+      ? `https://stellar.expert/explorer/public/tx/${tracked.tx}`
+      : explorerTxUrl(EVM_CHAINS[source], tracked.tx);
+  const eta = source === "stellar" ? "within a minute" : EVM_CHAINS[source].standardEta;
+  const refundTo =
+    source === "stellar" ? "your NEAR Intents account" : `your own address on ${hub}`;
 
   return (
     <GlassCard spotlight={false}>
@@ -526,17 +689,14 @@ function Tracker({ tracked, onReset }: { tracked: Tracked; onReset: () => void }
           <Leg
             done={xebraDone}
             active={!xebraDone}
-            title={`Xebra: Stellar to ${hub}`}
+            title={`Xebra: ${sourceName} to ${hub}`}
             detail={
               xebraDone
                 ? `Circle minted the USDC into the NEAR Intents deposit address on ${hub}.`
-                : `Burned on Stellar. Circle attests it and mints on ${hub}, usually within a minute.`
+                : `Burned on ${sourceName}. Circle attests it and mints on ${hub}, usually ${eta}.`
             }
             links={[
-              {
-                href: `https://stellar.expert/explorer/public/tx/${tracked.tx}`,
-                label: "Burn on Stellar",
-              },
+              { href: burnUrl, label: `Burn on ${sourceName}` },
               ...(status?.xebra?.deliveryTx && HUB_TX[tracked.hub]
                 ? [
                     {
@@ -555,9 +715,9 @@ function Tracker({ tracked, onReset }: { tracked: Tracked; onReset: () => void }
               intentsState === "SUCCESS"
                 ? `Delivered ${status?.intents?.swapDetails?.amountOutFormatted ?? tracked.expectOut} ${tracked.symbol}.`
                 : intentsState === "REFUNDED"
-                  ? `Refunded ${status?.intents?.swapDetails?.refundedAmountFormatted ?? ""} USDC to your NEAR Intents account.`
+                  ? `Refunded ${status?.intents?.swapDetails?.refundedAmountFormatted ?? ""} USDC to ${refundTo}.`
                   : intentsState === "FAILED"
-                    ? "NEAR Intents reports the swap failed. Funds are refunded to your Intents account."
+                    ? `NEAR Intents reports the swap failed. Funds are refunded to ${refundTo}.`
                     : `Waiting for the deposit, then a solver fills about ${tracked.expectOut} ${tracked.symbol}. (${intentsState.toLowerCase().replaceAll("_", " ")})`
             }
             links={out ? [{ href: deliveryUrl(out), label: "Delivery transaction" }] : []}

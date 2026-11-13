@@ -2,6 +2,7 @@ import { Account, Keypair, Networks } from "@stellar/stellar-sdk";
 import type { CircleHealth } from "@xebra/cctp-client";
 import type { TransferStep } from "@xebra/sdk/build";
 import { type DomainForwardConfig, stellarDestination } from "@xebra/sdk/core";
+import type { WrapperSettings } from "../evm-wrapper";
 import type { BuildDeps, Deps } from "./deps";
 
 /** Fakes shared by the service and MCP tests: one route table, one Circle answer, no network. */
@@ -58,6 +59,20 @@ export function deps(over: Partial<Deps> = {}): Deps {
 }
 
 export const WRAPPER = "CCPVTWII2TW6VVSVA4JQ2KFHICGBG4QVAHPIGUPSIW3E4VNPUI4Y2WQR";
+
+/** An EVM fee wrapper at 0.05%, at least 0.10 USDC, 1 to 100 USDC, sending to Base (6). */
+export const WRAPPER_SETTINGS: WrapperSettings = {
+  address: "0x11b30470DAE40B2Fc27b7AA90dc58e6B4fE9f4c3",
+  paused: false,
+  feeBps: 5,
+  minFee: 100_000n,
+  minTransfer: 1_000_000n,
+  maxTransfer: 100_000_000n,
+  maxFastFeeBps: 5,
+  domains: new Map([
+    [6, { maxForwardFee: 100_000n, accountCreation: false, maxForwardFeeNewAccount: 0n }],
+  ]),
+};
 export const SENDER = Keypair.random().publicKey();
 export const STELLAR_RECIPIENT = Keypair.random().publicKey();
 export const EVM_SENDER = "0x3333333333333333333333333333333333333333";

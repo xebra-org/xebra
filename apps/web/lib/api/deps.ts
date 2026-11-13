@@ -7,6 +7,7 @@ import type {
   EvmChain,
   FeeParams,
 } from "@xebra/sdk/core";
+import type { WrapperSettings } from "../evm-wrapper";
 
 /**
  * Everything the service layer reads from the outside world. The real wiring is
@@ -28,6 +29,13 @@ export interface Deps {
   circle(src: number, dst: number, newAccount?: boolean): Promise<CircleHealth | null>;
   /** The wrapper's fee and floor. Null if unreadable. */
   feeParams(): Promise<FeeParams | null>;
+  /**
+   * Xebra's fee wrapper on an EVM chain, when this build sends through it there: its address, or
+   * null to call Circle directly. Absent means no EVM wrapper anywhere.
+   */
+  evmWrapperAddress?(chain: EvmChain): string | null;
+  /** That wrapper's live settings, read from the chain. Null when they could not be read. */
+  evmWrapperSettings?(chain: EvmChain): Promise<WrapperSettings | null>;
   /** Circle's account of a burn, as `/api/delivery` answers it. */
   delivery(tx: string, srcDomain: number): Promise<Record<string, unknown> | null>;
   /** Sui to Stellar: switched on, and the per-transfer cap in 6-decimal units (null: none). */
@@ -56,7 +64,10 @@ export interface BuildDeps {
     owner: string,
     spender: string,
   ): Promise<{ balance: bigint; allowance: bigint }>;
-  /** Whether EVM sources send through Xebra's wrapper (the page's `NEXT_PUBLIC_ARC_USE_WRAPPER`). */
+  /**
+   * Whether EVM sources send through Xebra's wrapper (the page's `NEXT_PUBLIC_ARC_USE_WRAPPER`).
+   * Informational: which chains have one, and its terms, come from `Deps.evmWrapperAddress`.
+   */
   evmWrapperOn: boolean;
   /** The Sui burn, built against the Sui node. Throws `InsufficientUsdcError` when short. */
   suiBurn(p: { sender: string; amount: bigint; stellarRecipient: string }): Promise<TransferStep>;

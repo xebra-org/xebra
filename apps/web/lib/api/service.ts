@@ -14,6 +14,7 @@ import {
   type FeePlan,
   type FeeTier,
   STELLAR_CCTP_DOMAIN,
+  type WrapperTerms,
   bytesToHex,
   checkAddressOn,
   checkSolanaAddress,
@@ -28,6 +29,7 @@ import {
   minimumEvmAmount,
   minimumForwardedAmount,
   planEvmFee,
+  planWrapperFee,
   solanaAddressToBytes32,
   stellarDestination,
   suggestedEvmMinimum,
@@ -36,6 +38,7 @@ import {
 } from "@xebra/sdk/core";
 import { humanizeContractError } from "../cctp-bridge";
 import { ARC_GAS_RESERVE_UNITS, spendableUsdc } from "../evm-bridge";
+import { termsFor } from "../evm-wrapper";
 import { formatError } from "../format-error";
 import { feeDestination, routeDestination } from "../route-destination";
 import { SUI_CCTP_DOMAIN } from "../sui-stellar/config";
@@ -90,6 +93,8 @@ export interface PricedQuote {
   /** Stellar sources: the contract's own figures, in stroops. */
   stellar: { amount: bigint; fee: bigint; deliveryFee: bigint; received: bigint } | null;
   evm: Extract<FeePlan, { ok: true }> | null;
+  /** EVM sources through Xebra's wrapper: where to send, and the most it may take in all. */
+  evmVia?: { address: string; maxWrapperFee: bigint } | null;
 }
 
 export type QuoteOption =
@@ -181,6 +186,9 @@ export function isDestId(v: string): v is DestId {
 
 const ceilToUnits = (stroops: bigint) => (stroops + STROOPS_PER_UNIT - 1n) / STROOPS_PER_UNIT;
 const floorToUnits = (stroops: bigint) => stroops / STROOPS_PER_UNIT;
+
+/** How long a wrapper request stays good once built. The contract allows at most 3,600 s. */
+const WRAPPER_DEADLINE_SECS = 1_800;
 
 export function createService(deps: Deps, now: () => number = Date.now) {
   async function routes(): Promise<{ routes: RouteGroup[]; stellarContractRead: boolean }> {
@@ -401,15 +409,24 @@ export function createService(deps: Deps, now: () => number = Date.now) {
     tier: FeeTier,
     health: CircleHealth,
     opensAccount: boolean,
+    wrapper: { address: string; terms: WrapperTerms } | null,
   ): QuoteOption {
     const dest = routeDestination(to as Exclude<DestId, "stellar">);
-    const plan = planEvmFee({
-      amount: units,
-      tier,
-      destination: feeDestination(dest, opensAccount),
-    });
+    const destination = feeDestination(dest, opensAccount);
+    const plan = wrapper
+      ? planWrapperFee({
+          amount: units,
+          tier,
+          destination,
+          terms: wrapper.terms,
+          opensAccount,
+          sourceName: SOURCE_NAME(from),
+        })
+      : planEvmFee({ amount: units, tier, destination });
+    const floor = suggestedEvmMinimum(minimumEvmAmount(tier));
+    const minimum =
+      wrapper && wrapper.terms.minTransfer > floor ? wrapper.terms.minTransfer : floor;
     if (!plan.ok) {
-      const minimum = suggestedEvmMinimum(minimumEvmAmount(tier));
       const code =
         plan.kind === "minimum"
           ? "amount_below_minimum"
@@ -432,15 +449,38 @@ export function createService(deps: Deps, now: () => number = Date.now) {
           {
             recipientGets: plan.received,
             fees: { xebra: plan.xebraFee, circle: plan.speedFee, delivery: plan.deliveryFee },
-            minimum: suggestedEvmMinimum(minimumEvmAmount(tier)),
-            maximum: null,
+            minimum,
+            maximum: wrapper ? wrapper.terms.maxTransfer : null,
           },
           health,
         ),
         stellar: null,
         evm: plan,
+        evmVia: wrapper ? { address: wrapper.address, maxWrapperFee: plan.fee } : null,
       },
     };
+  }
+
+  /**
+   * Xebra's wrapper on `from`, narrowed to the destination, when this build sends through one there.
+   * Unreadable settings stop the quote: an unpriced fee is not a zero fee.
+   */
+  async function evmWrapperFor(
+    from: EvmChainId,
+    to: DestId,
+  ): Promise<{ address: string; terms: WrapperTerms } | null> {
+    const chain = EVM_CHAINS[from];
+    const address = deps.evmWrapperAddress?.(chain) ?? null;
+    if (!address) return null;
+    const settings = await deps.evmWrapperSettings?.(chain);
+    if (!settings) {
+      throw new ApiError(
+        "upstream_unavailable",
+        `Xebra's contract on ${chain.name} could not be read just now, so no price can be given. Try again shortly.`,
+      );
+    }
+    const dest = routeDestination(to as Exclude<DestId, "stellar">);
+    return { address, terms: termsFor(settings, dest.cctpDomainId) };
   }
 
   /**
@@ -492,13 +532,16 @@ export function createService(deps: Deps, now: () => number = Date.now) {
       return { health, options: [await stellarOption(q.to, q.amount, health, opensAccount)] };
     }
     const from = q.from;
+    const wrapper = await evmWrapperFor(from, q.to);
     const tiers: Array<[Speed, FeeTier | null]> = [
       ["standard", health.tiers.standard],
       ["fast", EVM_CHAINS[from].fast ? health.tiers.fast : null],
     ];
     const options = tiers
       .filter((t): t is [Speed, FeeTier] => t[1] !== null)
-      .map(([speed, tier]) => evmOption(from, q.to, q.amount, speed, tier, health, opensAccount));
+      .map(([speed, tier]) =>
+        evmOption(from, q.to, q.amount, speed, tier, health, opensAccount, wrapper),
+      );
     return { health, options };
   }
 
@@ -758,16 +801,9 @@ export function createService(deps: Deps, now: () => number = Date.now) {
       }
     }
 
-    // An EVM source.
-    if (b.evmWrapperOn) {
-      // The page prices wrapper sends with the wrapper's own terms, which this does not read yet.
-      // Refusing beats building a transaction whose fee differs from the page's.
-      throw new ApiError(
-        "route_unavailable",
-        "Sending from EVM chains through the API is paused while the fee wrapper is on.",
-      );
-    }
+    // An EVM source: through Xebra's wrapper where the quote priced one, else straight to Circle.
     const source = EVM_CHAINS[r.from];
+    const via = priced.evmVia ?? null;
     const plan = priced.evm;
     if (!plan) throw new Error("an EVM quote without its fee plan");
     const burnRecipient: BurnRecipient = solana
@@ -778,7 +814,7 @@ export function createService(deps: Deps, now: () => number = Date.now) {
         }
       : recipient;
     const { balance, allowance } = await upstream(`The sender's USDC on ${source.name}`, () =>
-      b.evmUsdc(source, sender, source.tokenMessengerAddress),
+      b.evmUsdc(source, sender, via ? via.address : source.tokenMessengerAddress),
     );
     if (balance < r.amount) throw short(balance, r.amount, source.name);
     if (spendableUsdc(source, balance) < r.amount) {
@@ -798,9 +834,11 @@ export function createService(deps: Deps, now: () => number = Date.now) {
       amount: r.amount,
       maxFee: plan.maxFee,
       finality: priced.quote.speed === "fast" ? FINALITY.fast : FINALITY.standard,
-      via: null,
+      via,
       allowance,
-      deadline: 0n,
+      // The wrapper refuses a request past its deadline, and one more than an hour out. Half an
+      // hour leaves room for an approval to confirm first.
+      deadline: via ? BigInt(Math.floor(now() / 1000) + WRAPPER_DEADLINE_SECS) : 0n,
     }).map((step) =>
       // Circle's fee is fixed into the burn when it is built. If an approval comes first and takes
       // longer than the quote lasts, build again: the approval stands, and the burn is re-priced.
