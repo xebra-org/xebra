@@ -1,2 +1,2 @@
 /** This package's version; a test holds it to package.json. */
-export const SDK_VERSION = "0.1.0";
+export const SDK_VERSION = "0.2.0";
