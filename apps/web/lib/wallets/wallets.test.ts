@@ -1,5 +1,6 @@
+import { PublicKey } from "@solana/web3.js";
 import type { Wallet, WalletAccount } from "@wallet-standard/base";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   applyEvmEvent,
   connectEvm,
@@ -8,7 +9,14 @@ import {
   reduceAnnouncements,
   safeIcon,
 } from "./evm";
-import { isSolanaWallet, pickSolanaAccount, solanaEntries } from "./solana";
+import {
+  base58Encode,
+  canSignSolana,
+  isSolanaWallet,
+  pickSolanaAccount,
+  sendSolanaTransaction,
+  solanaEntries,
+} from "./solana";
 import { keepDetected, stellarEntries } from "./stellar";
 import type { Connection, Eip1193Provider, WalletEntry } from "./types";
 
@@ -192,5 +200,62 @@ describe("Stellar detection", () => {
   it("marks a newly detected wallet", () => {
     const out = keepDetected([entry("lobstr", false)], [entry("lobstr", true)]);
     expect(out[0]?.installed).toBe(true);
+  });
+});
+
+describe("Solana signing", () => {
+  it("writes base58 as Solana does, leading zeros included", () => {
+    for (const key of [
+      "11111111111111111111111111111111",
+      "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+      "CCTPV2vPZJS2u2BBsUoscuikbYjnpFmbFsvVuJdgUMQe",
+    ]) {
+      expect(base58Encode(new PublicKey(key).toBytes())).toBe(key);
+    }
+    expect(base58Encode(new Uint8Array([0, 0, 1]))).toBe("112");
+  });
+
+  const account = { address: "Addr", chains: ["solana:mainnet"] } as unknown as WalletAccount;
+  const wallet = (features: Record<string, unknown>) =>
+    ({ name: "W", accounts: [account], chains: ["solana:mainnet"], features }) as unknown as Wallet;
+
+  it("lets a wallet that sends do so, and reports its signature in base58", async () => {
+    const signAndSendTransaction = vi.fn(async () => [{ signature: new Uint8Array([0, 1]) }]);
+    const send = vi.fn();
+    const sig = await sendSolanaTransaction(
+      wallet({ "solana:signAndSendTransaction": { signAndSendTransaction } }),
+      "Addr",
+      new Uint8Array([9]),
+      send,
+    );
+    expect(sig).toBe("12");
+    expect(send).not.toHaveBeenCalled();
+    expect(signAndSendTransaction).toHaveBeenCalledWith(
+      expect.objectContaining({
+        account,
+        chain: "solana:mainnet",
+        transaction: new Uint8Array([9]),
+      }),
+    );
+  });
+
+  it("signs then broadcasts itself when the wallet only signs", async () => {
+    const signTransaction = vi.fn(async () => [{ signedTransaction: new Uint8Array([7]) }]);
+    const send = vi.fn(async () => "SIG");
+    const w = wallet({ "solana:signTransaction": { signTransaction } });
+    expect(canSignSolana(w)).toBe(true);
+    expect(await sendSolanaTransaction(w, "Addr", new Uint8Array([9]), send)).toBe("SIG");
+    expect(send).toHaveBeenCalledWith(new Uint8Array([7]));
+  });
+
+  it("refuses a wallet that cannot sign, or an account it no longer holds", async () => {
+    const w = wallet({ "standard:connect": {} });
+    expect(canSignSolana(w)).toBe(false);
+    await expect(sendSolanaTransaction(w, "Addr", new Uint8Array(), vi.fn())).rejects.toThrow(
+      /cannot sign/,
+    );
+    await expect(sendSolanaTransaction(w, "Other", new Uint8Array(), vi.fn())).rejects.toThrow(
+      /no longer connected/,
+    );
   });
 });

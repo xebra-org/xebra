@@ -18,12 +18,15 @@ import {
 import { env } from "../env";
 import { readAttestation } from "./attestation";
 
+/** Solana's CCTP domain, a source of burns into Stellar like Sui. */
+const SOLANA_DOMAIN = 5;
+
 /**
  * The Stellar half: check a recipient can receive, read Circle's attestation of a burn into Stellar,
  * and complete the transfer with `mint_and_forward` from the relayer account.
  *
  * Circle's Forwarding Service delivers to Stellar from no chain at all, so every transfer into
- * Stellar is finished this way: from Sui, and from every EVM chain in the table.
+ * Stellar is finished this way: from Sui, from Solana, and from every EVM chain in the table.
  *
  * Every refusal here happens before a fee is spent. `prepareTransaction` simulates the call first,
  * so a message that was already minted, or a forwarder that would revert, fails there for free.
@@ -66,9 +69,14 @@ export async function recipientStatus(recipient: string): Promise<RecipientStatu
   return { exists: true, hasTrustline: true, balance: BigInt(held as bigint | number | string) };
 }
 
-/** The chains whose burns into Stellar this relayer completes: Sui and every EVM chain we list. */
+/**
+ * The chains whose burns into Stellar this relayer completes: Sui, Solana and every EVM chain we
+ * list. Solana (5) is here whether or not this deployment builds Solana burns (`SOLANA_SENDS_TO`):
+ * anyone can burn on Solana toward Stellar, and the completion is safe for any burn that verifies.
+ */
 export const STELLAR_INBOUND_SOURCES: readonly number[] = [
   SUI_DOMAIN,
+  SOLANA_DOMAIN,
   ...Object.values(EVM_CHAINS).map((c) => c.cctpDomainId),
 ];
 

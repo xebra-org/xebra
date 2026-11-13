@@ -7,8 +7,9 @@ import type { Connection, WalletEntry } from "./types";
  * rest all implement. Wallets register themselves; nothing here knows their names in advance, so a
  * new wallet appears in the list without a release.
  *
- * Only the read side is used today: connect and take the account's address, to fill a recipient
- * field and to identify who is on the page. Signing arrives with the source-chain flows.
+ * Connecting takes the account's address, to fill a recipient field and to identify who is on the
+ * page. Signing is for transfers that start on Solana (`sendSolanaTransaction`): the server builds
+ * the burn and the wallet adds the one signature it is missing.
  */
 
 const CONNECT = "standard:connect";
@@ -67,4 +68,93 @@ export async function connectSolana(entry: WalletEntry, wallet: Wallet): Promise
     walletName: entry.name,
     address: account.address,
   };
+}
+
+const SIGN_AND_SEND = "solana:signAndSendTransaction";
+const SIGN = "solana:signTransaction";
+export const SOLANA_MAINNET = "solana:mainnet";
+
+/** Whether a wallet can sign a Solana transaction, by either Wallet Standard feature. Pure. */
+export function canSignSolana(w: Pick<Wallet, "features">): boolean {
+  const has = (f: string) => Object.prototype.hasOwnProperty.call(w.features, f);
+  return has(SIGN_AND_SEND) || has(SIGN);
+}
+
+const ALPHABET = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
+
+/** Base58, as Solana writes signatures and addresses. Pure, and free of Buffer. */
+export function base58Encode(bytes: Uint8Array): string {
+  let zeros = 0;
+  while (zeros < bytes.length && bytes[zeros] === 0) zeros++;
+  const digits: number[] = [];
+  for (const byte of bytes) {
+    let carry = byte;
+    for (let i = 0; i < digits.length; i++) {
+      carry += (digits[i] as number) << 8;
+      digits[i] = carry % 58;
+      carry = Math.floor(carry / 58);
+    }
+    while (carry > 0) {
+      digits.push(carry % 58);
+      carry = Math.floor(carry / 58);
+    }
+  }
+  let out = "1".repeat(zeros);
+  for (let i = digits.length - 1; i >= 0; i--) out += ALPHABET[digits[i] as number];
+  return out;
+}
+
+type SignAndSendFeature = {
+  signAndSendTransaction(
+    ...inputs: Array<{
+      account: WalletAccount;
+      transaction: Uint8Array;
+      chain: string;
+      options?: { commitment?: string; skipPreflight?: boolean };
+    }>
+  ): Promise<ReadonlyArray<{ signature: Uint8Array }>>;
+};
+type SignFeature = {
+  signTransaction(
+    ...inputs: Array<{
+      account: WalletAccount;
+      transaction: Uint8Array;
+      chain?: string;
+    }>
+  ): Promise<ReadonlyArray<{ signedTransaction: Uint8Array }>>;
+};
+
+/**
+ * Has the wallet sign a transaction the server built (already carrying any other signature it needs)
+ * and gets it onto the network, returning the signature. Wallets that send for themselves are asked
+ * to; the others only sign, and `send` broadcasts the signed bytes (through our RPC proxy, since
+ * Solana's public RPC refuses browsers). Declining in the wallet throws.
+ *
+ * The returned signature is the transaction's id, not a confirmation: the caller waits for it.
+ */
+export async function sendSolanaTransaction(
+  wallet: Wallet,
+  address: string,
+  transaction: Uint8Array,
+  send: (signed: Uint8Array) => Promise<string>,
+): Promise<string> {
+  const account = wallet.accounts.find((a) => a.address === address);
+  if (!account)
+    throw new Error(`${wallet.name} is no longer connected to ${address}. Reconnect it.`);
+  const signAndSend = wallet.features[SIGN_AND_SEND] as SignAndSendFeature | undefined;
+  if (signAndSend) {
+    const [result] = await signAndSend.signAndSendTransaction({
+      account,
+      transaction,
+      chain: SOLANA_MAINNET,
+      options: { commitment: "confirmed" },
+    });
+    if (!result) throw new Error(`${wallet.name} did not return a signature.`);
+    return base58Encode(result.signature);
+  }
+  const sign = wallet.features[SIGN] as SignFeature | undefined;
+  if (!sign) throw new Error(`${wallet.name} cannot sign Solana transactions.`);
+  const [signed] = await sign.signTransaction({ account, transaction, chain: SOLANA_MAINNET });
+  if (!signed) throw new Error(`${wallet.name} did not return the signed transaction.`);
+  return send(signed.signedTransaction);
 }

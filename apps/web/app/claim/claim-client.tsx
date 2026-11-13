@@ -91,10 +91,17 @@ type Source = string;
 const STELLAR: Source = "stellar";
 /** Sui's CCTP domain. A Sui burn to an EVM chain is claimed there like any EVM-bound one. */
 const SUI: Source = "8";
+/**
+ * Solana as the chain burned on (domain 5, as a source). A Solana burn to an EVM chain is claimed
+ * there like any EVM-bound one; its transaction is a base58 signature, never lower-cased.
+ */
+const SOLANA: Source = "5";
+const SOLANA_SIGNATURE = /^[1-9A-HJ-NP-Za-km-z]{64,88}$/;
 
 const SOURCES: Array<{ value: Source; label: string }> = [
   { value: STELLAR, label: "Stellar" },
   { value: SUI, label: "Sui" },
+  { value: SOLANA, label: "Solana" },
   ...Object.values(EVM_CHAINS).map((c) => ({ value: String(c.cctpDomainId), label: c.name })),
 ];
 
@@ -134,6 +141,11 @@ export function ClaimClient() {
       if (raw && SUI_DIGEST.test(raw)) setTxHash(raw);
       return;
     }
+    if (src === SOLANA) {
+      setSource(SOLANA);
+      if (raw && SOLANA_SIGNATURE.test(raw)) setTxHash(raw);
+      return;
+    }
     const chain = src !== null && /^\d+$/.test(src) ? evmChainForDomain(Number(src)) : null;
     if (chain) {
       setSource(String(chain.cctpDomainId));
@@ -156,13 +168,18 @@ export function ClaimClient() {
 
   async function lookUp() {
     const onSui = source === SUI;
-    const hash = onSui ? txHash.trim() : txHash.trim().toLowerCase();
+    const onSolana = source === SOLANA;
+    const hash = onSui || onSolana ? txHash.trim() : txHash.trim().toLowerCase();
     const onStellar = source === STELLAR;
     if (onSui && !SUI_DIGEST.test(hash)) {
       setError("That is not a Sui transaction digest. Copy it from your wallet or a Sui explorer.");
       return;
     }
-    if (!onSui && !(onStellar ? STELLAR_HASH : EVM_HASH).test(hash)) {
+    if (onSolana && !SOLANA_SIGNATURE.test(hash)) {
+      setError("That is not a Solana transaction signature. Copy it from your wallet or Solscan.");
+      return;
+    }
+    if (!onSui && !onSolana && !(onStellar ? STELLAR_HASH : EVM_HASH).test(hash)) {
       setError(
         onStellar
           ? EVM_HASH.test(hash)
@@ -291,7 +308,9 @@ export function ClaimClient() {
                 ? "64 hex characters"
                 : source === SUI
                   ? "Sui transaction digest"
-                  : "0x and 64 hex characters"
+                  : source === SOLANA
+                    ? "Solana transaction signature"
+                    : "0x and 64 hex characters"
             }
             className="tabular min-w-0 flex-1 rounded-tray bg-obsidian-sunken px-3 py-2.5 font-mono text-xs text-bone/80 ring-1 ring-inset ring-bone/10 transition-colors duration-200 placeholder:font-sans placeholder:text-bone/25 focus:outline-none focus:ring-bone/30"
           />

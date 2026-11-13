@@ -23,7 +23,12 @@ import {
   parseChainId,
   watchEvmWallets,
 } from "../../lib/wallets/evm";
-import { connectSolana, solanaEntries, watchSolanaWallets } from "../../lib/wallets/solana";
+import {
+  connectSolana,
+  sendSolanaTransaction,
+  solanaEntries,
+  watchSolanaWallets,
+} from "../../lib/wallets/solana";
 import { connectStellar, keepDetected, stellarEntries } from "../../lib/wallets/stellar";
 import {
   type SuiWalletEntry,
@@ -39,8 +44,8 @@ import { WalletModal } from "./wallet-modal";
  * One place that knows which wallets exist and which are connected, across Stellar, Solana, EVM
  * and Sui.
  *
- * A person can hold several at once (a Stellar or EVM wallet to pay, a Solana or EVM wallet to
- * name the recipient), so connections are per family and independent; connecting one never
+ * A person can hold several at once (any of them to pay where its chain is a source, a Solana or
+ * EVM wallet to name the recipient), so connections are per family and independent; connecting one never
  * disturbs another.
  * Nothing reconnects on load: a wallet prompt the user did not ask for is worse than one extra tap.
  */
@@ -61,6 +66,34 @@ interface WalletContextValue {
    * themselves; this is for after asking one to switch, since not every wallet announces.
    */
   syncEvmChain: () => Promise<void>;
+  /**
+   * Has the connected Solana wallet sign a transaction the server built (base64) and puts it on the
+   * network. Resolves with its signature once sent, not once confirmed. Throws when no Solana wallet
+   * is connected or the person declines.
+   */
+  sendSolana: (transactionBase64: string) => Promise<string>;
+}
+
+/**
+ * Broadcasts signed bytes through our RPC proxy (`/api/solana-rpc`): Solana's public RPC refuses
+ * browsers. A plain fetch, so the wallet layer loads no Solana SDK.
+ */
+async function broadcastSolana(signed: Uint8Array): Promise<string> {
+  let binary = "";
+  for (const b of signed) binary += String.fromCharCode(b);
+  const res = await fetch("/api/solana-rpc", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      jsonrpc: "2.0",
+      id: 1,
+      method: "sendTransaction",
+      params: [btoa(binary), { encoding: "base64", preflightCommitment: "confirmed" }],
+    }),
+  });
+  const body = (await res.json()) as { result?: string; error?: { message?: string } };
+  if (typeof body.result === "string") return body.result;
+  throw new Error(body.error?.message ?? `Solana refused the transaction (${res.status}).`);
 }
 
 export interface SuiSigner {
@@ -245,9 +278,29 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
     if (parseChainId(chainId) !== undefined) applyEvm({ type: "chainChanged", chainId });
   }, [evmProvider, applyEvm]);
 
+  const solanaConn = connections.solana;
+  const sendSolana = useCallback(
+    async (transactionBase64: string) => {
+      if (!solanaConn) throw new Error("Connect a Solana wallet first.");
+      const w = solWallets.find((x) => `solana:${x.name}` === solanaConn.walletKey);
+      if (!w) throw new Error("That wallet is no longer available. Reconnect it.");
+      const bytes = Uint8Array.from(atob(transactionBase64), (c) => c.charCodeAt(0));
+      return sendSolanaTransaction(w, solanaConn.address, bytes, broadcastSolana);
+    },
+    [solanaConn, solWallets],
+  );
+
   const value = useMemo<WalletContextValue>(
-    () => ({ connections, stellarKit: kit, sui: suiSigner, open, disconnect, syncEvmChain }),
-    [connections, kit, suiSigner, open, disconnect, syncEvmChain],
+    () => ({
+      connections,
+      stellarKit: kit,
+      sui: suiSigner,
+      open,
+      disconnect,
+      syncEvmChain,
+      sendSolana,
+    }),
+    [connections, kit, suiSigner, open, disconnect, syncEvmChain, sendSolana],
   );
 
   return (

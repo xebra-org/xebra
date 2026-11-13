@@ -24,6 +24,11 @@ import { useWallets } from "../wallet/wallet-provider";
 import { CHAIN_NAMES, type Chain } from "./chain-glyph";
 import { ChainPicker, PickerLabel } from "./chain-picker";
 import { EvmBridgeForm } from "./evm-bridge-form";
+import {
+  SolanaBridgeForm,
+  type SolanaSourceConfig,
+  recallSolanaTransfer,
+} from "./solana-bridge-form";
 import { StellarBridgeForm } from "./stellar-bridge-form";
 
 /**
@@ -37,8 +42,11 @@ import { StellarBridgeForm } from "./stellar-bridge-form";
  * from `window.location` after mounting rather than through `useSearchParams`, which would turn the
  * whole page into client-only rendering and leave crawlers an empty shell.
  */
-/** Where a transfer can start: Stellar, through the wrapper, or an EVM chain, straight to Circle. */
-type SourceId = "stellar" | "sui" | EvmChainId;
+/**
+ * Where a transfer can start: Stellar, through the wrapper; Sui or Solana, when the server switches
+ * them on; or an EVM chain, straight to Circle.
+ */
+type SourceId = "stellar" | "sui" | "solana" | EvmChainId;
 
 /** What `/api/sui-stellar/config` says about the Sui source: absent until it answers, and when it is off. */
 interface SuiSource {
@@ -96,6 +104,49 @@ export function HomeClient({ children }: { children?: React.ReactNode }) {
     };
   }, []);
 
+  // Solana is switched on by `SOLANA_SENDS_TO`, asked for the same way as Sui.
+  const [solana, setSolana] = useState<SolanaSourceConfig | null>(null);
+  useEffect(() => {
+    let live = true;
+    fetch("/api/solana-source/config", { cache: "no-store" })
+      .then((r) => (r.ok ? r.json() : null))
+      .then(
+        (
+          c: {
+            enabled?: boolean;
+            evm?: unknown;
+            stellar?: boolean;
+            relayer?: boolean;
+            maxUsdc?: string | null;
+            stellarMinUsdc?: string;
+          } | null,
+        ) => {
+          if (!live || !c?.enabled) return;
+          // Only names this build knows: a newer server cannot make the page render a chain it lacks.
+          const evm = Array.isArray(c.evm)
+            ? c.evm.filter((id): id is EvmChainId => typeof id === "string" && isEvmChainId(id))
+            : [];
+          if (evm.length === 0 && c.stellar !== true) return;
+          setSolana({
+            evm,
+            stellar: c.stellar === true,
+            relayer: c.relayer === true,
+            maxUsdc: c.maxUsdc ?? null,
+            stellarMinUsdc: c.stellarMinUsdc ?? "1",
+          });
+          // A transfer this browser was following comes back on screen.
+          if (recallSolanaTransfer() && !parseDeepLink(window.location.search).from) {
+            setFrom("solana");
+          }
+        },
+      )
+      .catch(() => {
+        // Off, or offline: the Solana source simply is not offered.
+      });
+    return () => {
+      live = false;
+    };
+  }, []);
   // The top bar's wallet modal: a Sui tab too once Sui is a source here.
   const connect = useCallback(
     () => openWallets(sui ? ["stellar", "solana", "evm", "sui"] : ["stellar", "solana", "evm"]),
@@ -103,8 +154,13 @@ export function HomeClient({ children }: { children?: React.ReactNode }) {
   );
 
   const sources = useMemo<SourceId[]>(
-    () => ["stellar", ...(sui ? (["sui"] as const) : []), ...evmSources(env.evmRoutes)],
-    [sui],
+    () => [
+      "stellar",
+      ...(sui ? (["sui"] as const) : []),
+      ...(solana ? (["solana"] as const) : []),
+      ...evmSources(env.evmRoutes),
+    ],
+    [sui, solana],
   );
   const manyRoutes = sources.length > 1;
   const [from, setFrom] = useState<SourceId>("stellar");
@@ -210,7 +266,13 @@ export function HomeClient({ children }: { children?: React.ReactNode }) {
                 sourcePicker={sourcePicker}
                 onBusyChange={setBusy}
               />
-            ) : from === "sui" ? null : (
+            ) : from === "sui" ? null : from === "solana" && solana ? (
+              <SolanaBridgeForm
+                config={solana}
+                sourcePicker={sourcePicker}
+                onBusyChange={setBusy}
+              />
+            ) : from === "solana" ? null : (
               // Keyed by source: a different chain is a different transfer, and nothing typed for
               // one (least of all a receipt) should survive into another.
               <EvmBridgeForm
