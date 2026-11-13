@@ -37,7 +37,7 @@ see [`SECURITY.md`](./SECURITY.md).)
 
 ## NEAR HACKATHON: USDC into NEAR Intents from chains it cannot reach
 
-Built for [NEAR HACKATHON](https://nearhackathon.com) (tracks: Unstoppable DeFi, Open Innovation).
+Built for [NEAR HACKATHON](https://nearhackathon.com) (tracks: Real-World Money, Unstoppable DeFi).
 
 **The problem.** NEAR Intents can swap into almost anything, but its solvers do not quote USDC that
 starts on Stellar: on 2026-11-12, 1Click answered `Quoting for this pair is not available` for Stellar
