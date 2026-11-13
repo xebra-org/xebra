@@ -46,11 +46,12 @@ interface SuiSource {
   maxUsdc: string | null;
   /** EVM chains Sui also sends to. */
   evm: EvmChainId[];
+  /** Sui also sends to Solana. */
+  solana: boolean;
 }
 
 export function HomeClient({ children }: { children?: React.ReactNode }) {
   const { connections, stellarKit: kit, open: openWallets } = useWallets();
-  const connect = useCallback(() => openWallets(["stellar", "solana", "evm"]), [openWallets]);
 
   // Stellar always; an EVM chain only once this build lets it send. With none on, there is one
   // source, no picker, and the screen is exactly the Stellar one.
@@ -68,6 +69,7 @@ export function HomeClient({ children }: { children?: React.ReactNode }) {
             relayer?: boolean;
             maxUsdc?: string | null;
             evm?: unknown;
+            solana?: unknown;
           } | null,
         ) => {
           if (!live || !c?.enabled) return;
@@ -78,6 +80,7 @@ export function HomeClient({ children }: { children?: React.ReactNode }) {
             evm: Array.isArray(c.evm)
               ? c.evm.filter((id): id is EvmChainId => typeof id === "string" && isEvmChainId(id))
               : [],
+            solana: c.solana === true,
           });
           // A transfer this browser was following comes back on screen, as it does on /sui.
           if (hasRememberedSuiTransfer() && !parseDeepLink(window.location.search).from) {
@@ -92,6 +95,12 @@ export function HomeClient({ children }: { children?: React.ReactNode }) {
       live = false;
     };
   }, []);
+
+  // The top bar's wallet modal: a Sui tab too once Sui is a source here.
+  const connect = useCallback(
+    () => openWallets(sui ? ["stellar", "solana", "evm", "sui"] : ["stellar", "solana", "evm"]),
+    [openWallets, sui],
+  );
 
   const sources = useMemo<SourceId[]>(
     () => ["stellar", ...(sui ? (["sui"] as const) : []), ...evmSources(env.evmRoutes)],
@@ -197,6 +206,7 @@ export function HomeClient({ children }: { children?: React.ReactNode }) {
                 maxUsdc={sui.maxUsdc}
                 relayerEnabled={sui.relayer}
                 evmDestinations={sui.evm}
+                solana={sui.solana}
                 sourcePicker={sourcePicker}
                 onBusyChange={setBusy}
               />

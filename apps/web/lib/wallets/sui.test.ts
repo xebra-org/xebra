@@ -1,6 +1,6 @@
 import type { Wallet, WalletAccount } from "@wallet-standard/base";
 import { describe, expect, it } from "vitest";
-import { isSuiWallet, pickSuiAccount, suiEntries } from "./sui";
+import { isSuiWallet, pickSuiAccount, suiEntries, suiModalEntries } from "./sui";
 
 const feats = (...names: string[]) => Object.fromEntries(names.map((n) => [n, {}]));
 
@@ -74,5 +74,23 @@ describe("pickSuiAccount", () => {
   it("falls back to any Sui account, and returns null for none", () => {
     expect(pickSuiAccount([account("0xa", ["sui:testnet"])])?.address).toBe("0xa");
     expect(pickSuiAccount([account("S", ["solana:mainnet"])])).toBeNull();
+  });
+});
+
+describe("suiModalEntries", () => {
+  it("lists each Sui wallet for the wallet modal under its own key", () => {
+    const sui = suiEntries([
+      wallet("Slush", ["sui:mainnet"], ["standard:connect", "sui:signAndExecuteTransaction"]),
+      wallet("Phantom", ["solana:mainnet"], ["standard:connect"]),
+    ]);
+    expect(suiModalEntries(sui)).toEqual([
+      {
+        key: "sui:Slush",
+        family: "sui",
+        name: "Slush",
+        icon: "data:image/png;base64,AA",
+        installed: true,
+      },
+    ]);
   });
 });

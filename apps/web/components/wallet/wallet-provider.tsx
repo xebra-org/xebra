@@ -1,7 +1,7 @@
 "use client";
 
 import type { StellarWalletsKit } from "@creit.tech/stellar-wallets-kit";
-import type { Wallet } from "@wallet-standard/base";
+import type { Wallet, WalletAccount } from "@wallet-standard/base";
 import {
   createContext,
   useCallback,
@@ -25,13 +25,21 @@ import {
 } from "../../lib/wallets/evm";
 import { connectSolana, solanaEntries, watchSolanaWallets } from "../../lib/wallets/solana";
 import { connectStellar, keepDetected, stellarEntries } from "../../lib/wallets/stellar";
+import {
+  type SuiWalletEntry,
+  connectSuiFromModal,
+  disconnectSui,
+  suiModalEntries,
+  watchSuiWallets,
+} from "../../lib/wallets/sui";
 import type { Connection, Eip1193Provider, Family, WalletEntry } from "../../lib/wallets/types";
 import { WalletModal } from "./wallet-modal";
 
 /**
- * One place that knows which wallets exist and which are connected, across Stellar, Solana and EVM.
+ * One place that knows which wallets exist and which are connected, across Stellar, Solana, EVM
+ * and Sui.
  *
- * A person can hold all three at once (a Stellar or EVM wallet to pay, a Solana or EVM wallet to
+ * A person can hold several at once (a Stellar or EVM wallet to pay, a Solana or EVM wallet to
  * name the recipient), so connections are per family and independent; connecting one never
  * disturbs another.
  * Nothing reconnects on load: a wallet prompt the user did not ask for is worse than one extra tap.
@@ -40,7 +48,12 @@ interface WalletContextValue {
   connections: Partial<Record<Family, Connection>>;
   /** Stellar signing goes through the kit; null until the client has mounted. */
   stellarKit: StellarWalletsKit | null;
-  /** Opens the modal on the given families (all three when omitted). */
+  /**
+   * The connected Sui wallet and the account it shared, for signing a Sui transfer. Null while no
+   * Sui wallet is connected; `connections.sui` is the same connection as everywhere else.
+   */
+  sui: SuiSigner | null;
+  /** Opens the modal on the given families (all of them when omitted). */
   open: (families?: readonly Family[]) => void;
   disconnect: (family: Family) => Promise<void>;
   /**
@@ -48,6 +61,11 @@ interface WalletContextValue {
    * themselves; this is for after asking one to switch, since not every wallet announces.
    */
   syncEvmChain: () => Promise<void>;
+}
+
+export interface SuiSigner {
+  wallet: SuiWalletEntry;
+  account: WalletAccount;
 }
 
 const Ctx = createContext<WalletContextValue | null>(null);
@@ -63,6 +81,8 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
   const [stellar, setStellar] = useState<WalletEntry[]>([]);
   const [evmMap, setEvmMap] = useState<Map<string, Eip6963Detail>>(new Map());
   const [solWallets, setSolWallets] = useState<Wallet[]>([]);
+  const [suiWallets, setSuiWallets] = useState<SuiWalletEntry[]>([]);
+  const [suiSigner, setSuiSigner] = useState<SuiSigner | null>(null);
   const [connections, setConnections] = useState<Partial<Record<Family, Connection>>>({});
   const [families, setFamilies] = useState<readonly Family[] | null>(null);
   const [pending, setPending] = useState<string | null>(null);
@@ -106,14 +126,16 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
   }, [kit, refreshStellar]);
   useEffect(() => watchEvmWallets(setEvmMap), []);
   useEffect(() => watchSolanaWallets(setSolWallets), []);
+  useEffect(() => watchSuiWallets(setSuiWallets), []);
 
   const entries = useMemo<Record<Family, WalletEntry[]>>(
     () => ({
       stellar,
       solana: solanaEntries(solWallets),
       evm: evmEntries(evmMap, legacyProvider()),
+      sui: suiModalEntries(suiWallets),
     }),
-    [stellar, solWallets, evmMap],
+    [stellar, solWallets, evmMap, suiWallets],
   );
 
   const setConn = useCallback((c: Connection | null, family: Family) => {
@@ -147,6 +169,12 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
           const w = solWallets.find((x) => `solana:${x.name}` === entry.key);
           if (!w) throw new Error("That wallet is no longer available.");
           conn = await connectSolana(entry, w);
+        } else if (entry.family === "sui") {
+          const w = suiWallets.find((x) => `sui:${x.name}` === entry.key);
+          if (!w) throw new Error("That wallet is no longer available.");
+          const { connection, account } = await connectSuiFromModal(entry, w);
+          conn = connection;
+          setSuiSigner({ wallet: w, account });
         } else {
           const provider: Eip1193Provider | null =
             entry.key === "evm:injected"
@@ -175,7 +203,7 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
         setPending(null);
       }
     },
-    [kit, solWallets, evmMap, setConn, applyEvm],
+    [kit, solWallets, suiWallets, evmMap, setConn, applyEvm],
   );
 
   const disconnect = useCallback(
@@ -192,15 +220,19 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
           | undefined;
         await off?.disconnect().catch(() => undefined);
       }
+      if (family === "sui") {
+        if (suiSigner) await disconnectSui(suiSigner.wallet);
+        setSuiSigner(null);
+      }
       setConn(null, family);
     },
-    [connections.solana?.walletKey, solWallets, setConn],
+    [connections.solana?.walletKey, solWallets, suiSigner, setConn],
   );
 
   const open = useCallback(
     (f?: readonly Family[]) => {
       setError(null);
-      setFamilies(f ?? ["stellar", "solana", "evm"]);
+      setFamilies(f ?? ["stellar", "solana", "evm", "sui"]);
       void refreshStellar();
     },
     [refreshStellar],
@@ -214,8 +246,8 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
   }, [evmProvider, applyEvm]);
 
   const value = useMemo<WalletContextValue>(
-    () => ({ connections, stellarKit: kit, open, disconnect, syncEvmChain }),
-    [connections, kit, open, disconnect, syncEvmChain],
+    () => ({ connections, stellarKit: kit, sui: suiSigner, open, disconnect, syncEvmChain }),
+    [connections, kit, suiSigner, open, disconnect, syncEvmChain],
   );
 
   return (

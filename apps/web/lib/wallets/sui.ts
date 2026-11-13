@@ -1,5 +1,6 @@
 import { getWallets } from "@wallet-standard/app";
 import type { Wallet, WalletAccount } from "@wallet-standard/base";
+import type { Connection, WalletEntry } from "./types";
 
 /**
  * Sui wallet discovery and signing through the Wallet Standard, the same mechanism as the Solana
@@ -36,6 +37,17 @@ export function suiEntries(wallets: readonly Wallet[]): SuiWalletEntry[] {
     .sort((a, b) => a.name.localeCompare(b.name));
 }
 
+/** Sui wallets as the wallet modal lists them, keyed `sui:<name>`. Pure. */
+export function suiModalEntries(wallets: readonly SuiWalletEntry[]): WalletEntry[] {
+  return wallets.map((w) => ({
+    key: `sui:${w.name}`,
+    family: "sui" as const,
+    name: w.name,
+    icon: w.icon,
+    installed: true,
+  }));
+}
+
 /** The first account usable on Sui mainnet. Pure. */
 export function pickSuiAccount(accounts: readonly WalletAccount[]): WalletAccount | null {
   return (
@@ -68,6 +80,34 @@ export async function connectSui(entry: SuiWalletEntry): Promise<WalletAccount> 
   const account = pickSuiAccount(accounts.length ? accounts : entry.wallet.accounts);
   if (!account) throw new Error(`${entry.name} did not share a Sui account.`);
   return account;
+}
+
+/**
+ * Connects a wallet chosen in the wallet modal. The account is returned alongside the connection,
+ * because signing needs the Wallet Standard account, not only its address.
+ */
+export async function connectSuiFromModal(
+  entry: WalletEntry,
+  wallet: SuiWalletEntry,
+): Promise<{ connection: Connection; account: WalletAccount }> {
+  const account = await connectSui(wallet);
+  return {
+    account,
+    connection: {
+      family: "sui",
+      walletKey: entry.key,
+      walletName: entry.name,
+      address: account.address,
+    },
+  };
+}
+
+/** Asks the wallet to forget this site, where it supports that. Never throws. */
+export async function disconnectSui(wallet: SuiWalletEntry): Promise<void> {
+  const off = wallet.wallet.features["standard:disconnect"] as
+    | { disconnect(): Promise<void> }
+    | undefined;
+  await off?.disconnect().catch(() => undefined);
 }
 
 type SignAndExecuteFeature = {
