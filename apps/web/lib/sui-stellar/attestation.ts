@@ -10,10 +10,16 @@ export type AttestationState =
   | { state: "pending" }
   | { state: "complete"; message: string; attestation: string };
 
-/** Circle's view of a Sui burn. 404 and "no message" are "not yet", never an error. */
-export async function readAttestation(digest: string): Promise<AttestationState> {
+/**
+ * Circle's view of a burn, by the chain it was made on (Sui unless told otherwise) and its
+ * transaction. 404 and "no message" are "not yet", never an error.
+ */
+export async function readAttestation(
+  digest: string,
+  sourceDomain: number = SUI_DOMAIN,
+): Promise<AttestationState> {
   const res = await irisFetch(
-    `${irisBaseUrl()}/v2/messages/${SUI_DOMAIN}?transactionHash=${encodeURIComponent(digest)}`,
+    `${irisBaseUrl()}/v2/messages/${sourceDomain}?transactionHash=${encodeURIComponent(digest)}`,
     { cache: "no-store" },
   );
   if (res.status === 404)

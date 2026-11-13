@@ -96,22 +96,32 @@ export function parseMessage(message: Uint8Array): ParsedMessage {
 
 export interface VerifiedBurn {
   amount: bigint;
+  /** The chain the USDC was burned on, as Circle's domain. */
+  sourceDomain: number;
   /** The Stellar address the forwarder will pay, read from the hook data and nowhere else. */
   recipient: string;
 }
 
 /**
- * Refuses anything that is not a USDC burn from Sui, aimed at Stellar's token messenger, minting to
- * our forwarder, with a well-formed hook. Returns the recipient the forwarder will actually pay.
+ * Refuses anything that is not a USDC burn from an allowed chain (`sources`, Sui unless told
+ * otherwise), aimed at Stellar's token messenger, minting to our forwarder, with a well-formed hook.
+ * Returns the recipient the forwarder will actually pay.
  */
 export function verifyMessage(
   message: Uint8Array,
-  opts: { tokenMessenger: string; forwarder?: string },
+  opts: { tokenMessenger: string; forwarder?: string; sources?: readonly number[] },
 ): VerifiedBurn {
   const p = parseMessage(message);
   const forwarder = opts.forwarder ?? STELLAR_CCTP_FORWARDER;
+  const sources = opts.sources ?? [SUI_DOMAIN];
 
-  if (p.sourceDomain !== SUI_DOMAIN) throw new Error("not a burn from Sui");
+  if (!sources.includes(p.sourceDomain)) {
+    throw new Error(
+      sources.length === 1 && sources[0] === SUI_DOMAIN
+        ? "not a burn from Sui"
+        : "not a burn from an allowed chain",
+    );
+  }
   if (p.destinationDomain !== STELLAR_DOMAIN) throw new Error("not a burn to Stellar");
   if (
     !p.destinationTokenMessenger.equals(Buffer.from(StrKey.decodeContract(opts.tokenMessenger)))
@@ -121,12 +131,13 @@ export function verifyMessage(
   if (!p.mintRecipient.equals(Buffer.from(StrKey.decodeContract(forwarder)))) {
     throw new Error("does not mint to the CctpForwarder");
   }
-  // The forwarder (every burn since the fix) or zero (burns made before it, still finishable).
-  // Anything else and mint_and_forward would fail after we had paid for the attempt.
+  // The forwarder (every burn since the fix) or, from Sui only, zero (burns made before the fix,
+  // still finishable). Anything else and mint_and_forward would fail after we had paid for it.
   const forwarderCaller = Buffer.from(StrKey.decodeContract(forwarder));
+  const openAllowed = p.sourceDomain === SUI_DOMAIN;
   if (
     !p.destinationCaller.equals(forwarderCaller) &&
-    !p.destinationCaller.equals(Buffer.alloc(32))
+    !(openAllowed && p.destinationCaller.equals(Buffer.alloc(32)))
   ) {
     throw new Error("destinationCaller is neither the CctpForwarder nor open");
   }
@@ -139,5 +150,5 @@ export function verifyMessage(
   const recipient = hook.subarray(HOOK_HEADER).toString("utf8");
   if (!isStellarRecipient(recipient)) throw new Error("hook does not name a Stellar address");
 
-  return { amount: p.amount, recipient };
+  return { amount: p.amount, recipient, sourceDomain: p.sourceDomain };
 }

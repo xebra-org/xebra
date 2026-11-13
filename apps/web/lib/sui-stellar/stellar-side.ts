@@ -9,6 +9,7 @@ import {
   scValToNative,
 } from "@stellar/stellar-sdk";
 import {
+  EVM_CHAINS,
   STELLAR_CCTP_FORWARDER,
   SUI_DOMAIN,
   type VerifiedBurn,
@@ -18,8 +19,11 @@ import { env } from "../env";
 import { readAttestation } from "./attestation";
 
 /**
- * The Stellar half: check a recipient can receive, read Circle's attestation of a Sui burn, and
- * complete the transfer with `mint_and_forward` from the relayer account.
+ * The Stellar half: check a recipient can receive, read Circle's attestation of a burn into Stellar,
+ * and complete the transfer with `mint_and_forward` from the relayer account.
+ *
+ * Circle's Forwarding Service delivers to Stellar from no chain at all, so every transfer into
+ * Stellar is finished this way: from Sui, and from every EVM chain in the table.
  *
  * Every refusal here happens before a fee is spent. `prepareTransaction` simulates the call first,
  * so a message that was already minted, or a forwarder that would revert, fails there for free.
@@ -60,6 +64,19 @@ export async function recipientStatus(recipient: string): Promise<RecipientStatu
   }
   const held = sim.result ? scValToNative(sim.result.retval) : 0n;
   return { exists: true, hasTrustline: true, balance: BigInt(held as bigint | number | string) };
+}
+
+/** The chains whose burns into Stellar this relayer completes: Sui and every EVM chain we list. */
+export const STELLAR_INBOUND_SOURCES: readonly number[] = [
+  SUI_DOMAIN,
+  ...Object.values(EVM_CHAINS).map((c) => c.cctpDomainId),
+];
+
+function verify(message: string): VerifiedBurn {
+  return verifyMessage(hexBytes(message), {
+    tokenMessenger: env.cctpTokenMessengerId,
+    sources: STELLAR_INBOUND_SOURCES,
+  });
 }
 
 export type CompleteResult =
@@ -128,8 +145,12 @@ export type ClaimPlan =
  * wallet to sign. The same checks as `completeBurn`, and the same freebie: a mint that would revert
  * fails in simulation here, before anyone is asked to sign.
  */
-export async function planClaim(digest: string, payer: string): Promise<ClaimPlan> {
-  const att = await readAttestation(digest);
+export async function planClaim(
+  digest: string,
+  payer: string,
+  sourceDomain: number = SUI_DOMAIN,
+): Promise<ClaimPlan> {
+  const att = await readAttestation(digest, sourceDomain);
   if (att.state !== "complete") {
     return {
       ok: false,
@@ -141,7 +162,7 @@ export async function planClaim(digest: string, payer: string): Promise<ClaimPla
   }
   let burn: VerifiedBurn;
   try {
-    burn = verifyMessage(hexBytes(att.message), { tokenMessenger: env.cctpTokenMessengerId });
+    burn = verify(att.message);
   } catch (err) {
     return { ok: false, reason: err instanceof Error ? err.message : "invalid message" };
   }
@@ -175,11 +196,17 @@ export async function planClaim(digest: string, payer: string): Promise<ClaimPla
   }
 }
 
-export async function completeBurn(digest: string, relayerSecret: string): Promise<CompleteResult> {
-  if (inFlight.has(digest)) return { status: "pending", reason: "already being completed" };
-  inFlight.add(digest);
+export async function completeBurn(
+  digest: string,
+  relayerSecret: string,
+  sourceDomain: number = SUI_DOMAIN,
+  opts: { minAmount?: bigint } = {},
+): Promise<CompleteResult> {
+  const key = `${sourceDomain}:${digest}`;
+  if (inFlight.has(key)) return { status: "pending", reason: "already being completed" };
+  inFlight.add(key);
   try {
-    const att = await readAttestation(digest);
+    const att = await readAttestation(digest, sourceDomain);
     if (att.state !== "complete") {
       return att.state === "pending"
         ? { status: "pending" }
@@ -188,9 +215,17 @@ export async function completeBurn(digest: string, relayerSecret: string): Promi
 
     let burn: VerifiedBurn;
     try {
-      burn = verifyMessage(hexBytes(att.message), { tokenMessenger: env.cctpTokenMessengerId });
+      burn = verify(att.message);
     } catch (err) {
       return { status: "refused", reason: err instanceof Error ? err.message : "invalid message" };
+    }
+
+    // The relayer pays XLM for every completion; a floor keeps dust burns from draining it.
+    if (opts.minAmount !== undefined && burn.amount < opts.minAmount) {
+      return {
+        status: "refused",
+        reason: `Xebra completes transfers of at least ${Number(opts.minAmount) / 1e6} USDC. Smaller ones can be claimed by anyone who pays the Stellar fee.`,
+      };
     }
 
     // A mint to an account without a trustline cannot land, and the USDC would sit at the forwarder.
@@ -239,7 +274,7 @@ export async function completeBurn(digest: string, relayerSecret: string): Promi
       ? { status: "submitted", hash: sent.hash, ledger: confirmed.ledger }
       : { status: "failed", hash: sent.hash, ledger: confirmed.ledger };
   } finally {
-    inFlight.delete(digest);
+    inFlight.delete(key);
   }
 }
 

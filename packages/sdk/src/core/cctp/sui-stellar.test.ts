@@ -87,7 +87,7 @@ describe("parseMessage", () => {
 describe("verifyMessage", () => {
   it("accepts the real burn and returns the recipient from the hook", () => {
     const v = verifyMessage(REAL_MESSAGE, { tokenMessenger: TOKEN_MESSENGER });
-    expect(v).toEqual({ amount: 1_000_000n, recipient: RECIPIENT });
+    expect(v).toEqual({ amount: 1_000_000n, recipient: RECIPIENT, sourceDomain: 8 });
   });
 
   it("refuses a burn from another source chain", () => {
@@ -117,7 +117,7 @@ describe("verifyMessage", () => {
 
   it("accepts a burn whose destinationCaller is the forwarder (every burn built since the fix)", () => {
     const v = verifyMessage(withCaller(forwarderBytes()), { tokenMessenger: TOKEN_MESSENGER });
-    expect(v).toEqual({ amount: 1_000_000n, recipient: RECIPIENT });
+    expect(v).toEqual({ amount: 1_000_000n, recipient: RECIPIENT, sourceDomain: 8 });
   });
 
   it("still accepts a zero destinationCaller, so burns made before the fix can be finished", () => {
@@ -128,6 +128,28 @@ describe("verifyMessage", () => {
   it("refuses any other destinationCaller: mint_and_forward could not complete it", () => {
     expect(() =>
       verifyMessage(withCaller(Buffer.alloc(32, 0xab)), { tokenMessenger: TOKEN_MESSENGER }),
+    ).toThrow(/destinationCaller/);
+  });
+
+  it("accepts another source chain once it is allowed, with the forwarder as caller", () => {
+    // Byte 7 is the low byte of the source domain: 6 is Base.
+    const fromBase = Buffer.from(withCaller(forwarderBytes()));
+    fromBase[7] = 6;
+    expect(() => verifyMessage(fromBase, { tokenMessenger: TOKEN_MESSENGER })).toThrow(
+      "not a burn from Sui",
+    );
+    expect(() =>
+      verifyMessage(fromBase, { tokenMessenger: TOKEN_MESSENGER, sources: [8, 3] }),
+    ).toThrow("not a burn from an allowed chain");
+    const v = verifyMessage(fromBase, { tokenMessenger: TOKEN_MESSENGER, sources: [8, 6] });
+    expect(v).toEqual({ amount: 1_000_000n, recipient: RECIPIENT, sourceDomain: 6 });
+  });
+
+  it("keeps the open destinationCaller for Sui's old burns only", () => {
+    const openFromBase = Buffer.from(withCaller(Buffer.alloc(32)));
+    openFromBase[7] = 6;
+    expect(() =>
+      verifyMessage(openFromBase, { tokenMessenger: TOKEN_MESSENGER, sources: [6] }),
     ).toThrow(/destinationCaller/);
   });
 
