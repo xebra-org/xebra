@@ -191,10 +191,58 @@ describe("transferStatus: Sui", () => {
   ];
   for (const [answer, state] of cases) {
     it(`reads ${JSON.stringify(answer)} as ${state}`, async () => {
-      const s = svc({}, { ...on, suiStatus: async () => answer });
+      const s = svc(
+        {},
+        {
+          ...on,
+          suiStatus: async () => answer,
+          // Circle has no forward for these burns: they were meant for Stellar.
+          delivery: async () => ({ status: "known", state: "claimable", forwardTxHash: null }),
+        },
+      );
       expect((await s.transferStatus({ chain: "sui", tx: DIGEST })).state).toBe(state);
     });
   }
+
+  it("reads a Sui burn to an EVM chain from Circle's forwarding record, not as failed", async () => {
+    // The first Sui to Monad transfer: not a burn to Stellar, so the Stellar check refuses it,
+    // but Circle forwarded it and minted on Monad.
+    const asked: Array<[string, number]> = [];
+    const s = svc(
+      {},
+      {
+        ...on,
+        suiStatus: async () => ({
+          state: "complete",
+          delivered: false,
+          refusal: "not a burn to Stellar",
+        }),
+        delivery: async (tx, src) => {
+          asked.push([tx, src]);
+          return { status: "known", state: "delivered", forwardTxHash: "0xc059", reason: null };
+        },
+      },
+    );
+    const status = await s.transferStatus({ chain: "sui", tx: DIGEST });
+    expect(status.state).toBe("delivered");
+    expect(status.deliveryTx).toBe("0xc059");
+    expect(status.reason).toBeNull();
+    expect(asked).toEqual([[DIGEST, 8]]);
+  });
+
+  it("keeps a refused Sui burn failed when Circle has no forward for it either", async () => {
+    const s = svc(
+      {},
+      {
+        ...on,
+        suiStatus: async () => ({ state: "complete", delivered: false, refusal: "bad hook" }),
+        delivery: async () => ({ status: "known", state: "claimable", forwardTxHash: null }),
+      },
+    );
+    const status = await s.transferStatus({ chain: "sui", tx: DIGEST });
+    expect(status.state).toBe("failed");
+    expect(status.reason).toBe("bad hook");
+  });
 
   it("is unavailable while Sui to Stellar is off", async () => {
     const err = await refusal(

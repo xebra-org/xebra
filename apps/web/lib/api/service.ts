@@ -38,6 +38,7 @@ import { humanizeContractError } from "../cctp-bridge";
 import { ARC_GAS_RESERVE_UNITS, spendableUsdc } from "../evm-bridge";
 import { formatError } from "../format-error";
 import { feeDestination, routeDestination } from "../route-destination";
+import { SUI_CCTP_DOMAIN } from "../sui-stellar/config";
 import type { Deps } from "./deps";
 import { ApiError } from "./errors";
 
@@ -830,6 +831,12 @@ export function createService(deps: Deps, now: () => number = Date.now) {
     }
     const circleState = String(answer.state ?? "unknown");
     const refusal = typeof answer.refusal === "string" ? answer.refusal.slice(0, 200) : null;
+    if (circleState === "complete" && answer.delivered !== true && refusal) {
+      // Not a burn the Stellar side would complete. A Sui burn to an EVM chain (Sui to Monad) is
+      // minted by Circle's Forwarding Service, so its record, not the Stellar check, is the answer.
+      const forwarded = await suiForwarded(digest);
+      if (forwarded) return forwarded;
+    }
     // Circle not having indexed the burn yet is "not yet", the same as waiting for attestation.
     const state: DeliveryState =
       circleState !== "complete"
@@ -846,6 +853,23 @@ export function createService(deps: Deps, now: () => number = Date.now) {
       deliveryTx: null,
       reason: refusal,
       // Finished through POST /v1/claims; the Sui page takes no link.
+      claimUrl: null,
+      circleState,
+    };
+  }
+
+  /** A Sui burn Circle forwarded (minted, or minting) on its destination, or null if it did not. */
+  async function suiForwarded(digest: string): Promise<TransferStatus | null> {
+    const answer = await deps.delivery(digest, SUI_CCTP_DOMAIN).catch(() => null);
+    if (!answer || answer.status !== "known") return null;
+    const circleState = String(answer.state ?? "unknown");
+    if (circleState !== "delivered" && circleState !== "forwarding") return null;
+    return {
+      state: circleState === "delivered" ? "delivered" : "delivering",
+      chain: "sui",
+      tx: digest,
+      deliveryTx: typeof answer.forwardTxHash === "string" ? answer.forwardTxHash : null,
+      reason: null,
       claimUrl: null,
       circleState,
     };

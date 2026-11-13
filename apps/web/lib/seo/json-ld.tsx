@@ -1,4 +1,5 @@
 import {
+  CONTACT_EMAIL,
   LOGO_PATH,
   SITE_DESCRIPTION,
   SITE_NAME,
@@ -37,6 +38,7 @@ export function organizationLd() {
     name: SITE_NAME,
     url: SITE_URL,
     logo: absoluteUrl(LOGO_PATH),
+    email: CONTACT_EMAIL,
     sameAs: [X_URL, SOURCE_URL],
   };
 }

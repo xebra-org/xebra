@@ -1,0 +1,59 @@
+---
+title: Mainnet transfers
+description: Real transfers through Xebra on mainnet, each linked to its transactions on both chains, and how to check any of them yourself.
+---
+
+Every row below is a real transfer of native USDC on mainnet, burned by Circle's CCTP on one chain
+and minted on the next. Each one links to its transactions on both chains' public explorers, so you
+can check them without trusting us.
+
+## Transfers
+
+| Route | Date (UTC) | Sent | Arrived | Burn to mint | Burn | Mint |
+|---|---|---|---|---|---|---|
+| Stellar → Base → NEAR Intents | 12 Nov 2026 | 0.7 USDC | 0.69558 USDC on NEAR | 36 s to the wallet | [Stellar](https://stellar.expert/explorer/public/tx/95efc874f62ed85b928c4886cdc943a0083594881e02c2916026b7bb4ced842b) | [Base](https://basescan.org/tx/0x8d16acc88b2b07634a907a1f685fad0b7b4052094896d01d0651f2144dc8940a), then [NEAR](https://nearblocks.io/txns/Hv1xrVs5PLQvLPBm2CwR3kzbPirW1hK4Xd9KuoVzVAg7) |
+| Sui → Monad | 11 Nov 2026 | 5 USDC | 4.948991 USDC | 5 s | [Sui](https://suivision.xyz/txblock/F7qiEMaT7q7pbfQ2H44SeV4URQQVfNpffmpt3J5yH8pD) | [Monad](https://monadscan.com/tx/0xc059d8bec6594bd8dcb29282e424d229895cbe30ffffb5e1247618096889f336) |
+| Sui → Stellar | 8 Nov 2026 | 30 USDC | 30 USDC | relayed | Sui | [Stellar](https://stellar.expert/explorer/public/tx/9d760579e059d0a33c71ee7d7b23ce509a4cb5c09dc996bbbc801eed4a5ac35c) |
+| Sui → Stellar | 6 Nov 2026 | 1 USDC | 1 USDC | relayed | [Sui](https://suivision.xyz/txblock/9hjSiHimU8nfpeWwFHau61czUBhVRqr7goiPxhvVUbR1) | [Stellar](https://stellar.expert/explorer/public/tx/f3c29b36ebcc86901794f8b11e650c57b005d965c4b827d1691a23b7f585edee) |
+| Sui → Stellar | 6 Nov 2026 | 1 USDC | 1 USDC | relayed | [Sui](https://suivision.xyz/txblock/37cRcRxVbwscXJAjLfqmXh19CDdKeHMBVJ1GMSqJKEE7) | [Stellar](https://stellar.expert/explorer/public/tx/6717506538f94e3bde364920991d2c7d9181635ddf4f6a4d3e466e45260e6f5d) |
+| Stellar → Solana | 12 Oct 2026 | 20 USDC | 19.7 USDC | 9 s | [Stellar](https://stellar.expert/explorer/public/tx/cb62845f4f53616aad06faebb262f6b9017e40b62d59b9a9c30dc916e92a4a12) | [Solana](https://solscan.io/tx/4Kz8t2SSJwVuZZbUA8ZJTVBxeqssUkKUvJ6gWU8Di9UMSjYjCaAyy83pvt319GJniqjT7Aizw1UqbpeGspZq3mWv) |
+| Stellar → Solana | 1 Oct 2026 | 100 USDC | 99.7 USDC | 10 s | [Stellar](https://stellar.expert/explorer/public/tx/a09a9d8340e92ff670598247d63261a3964531b0dc48693e1dc4733f5707e60e) | [Solana](https://solscan.io/tx/55dwz8T8bXsyQCPW4eWnBwM5ZkxchCjH7kwXhGCekdrcSY9CcUvSyG26DXH68jUobcrGsWSkCspTtVyeLWCyjcBg) |
+| Stellar → Solana, the first | 8 Sep 2026 | 1 USDC | 1.000001 USDC | 2 min 23 s | [Stellar](https://stellar.expert/explorer/public/tx/92421fa248da1b1d4418784d5bd91adc4238dae72120e8f740920db7381905a7) | [Solana](https://solscan.io/tx/58dVHAebBDVHWpjRYeGn52YJB8MFsLkgJHefcNgMBgkpYN7LxzdpGNE1tnGcPzGmwFLbDTqg7C7kHzCh4Ja6HZs5) |
+
+"Burn to mint" is the time between the two block timestamps. "Relayed" means Xebra's relayer
+completed the mint on Stellar after Circle signed the burn. The Sui digest of the 30 USDC transfer
+was not recorded, so that row links the Stellar mint only.
+
+The amounts that arrive are lower than the amounts sent by Xebra's fee and Circle's fee, both shown in
+the quote before anyone signs. See [Fees](/docs/concepts/fees).
+
+## Check one yourself
+
+Ask the API for any of them. It reads Circle's record and the destination chain; nothing here is
+stored by us.
+
+```sh
+curl https://api.xebra.exchange/v1/transfers/stellar/a09a9d8340e92ff670598247d63261a3964531b0dc48693e1dc4733f5707e60e
+curl https://api.xebra.exchange/v1/transfers/sui/F7qiEMaT7q7pbfQ2H44SeV4URQQVfNpffmpt3J5yH8pD
+```
+
+Each answers `"state": "delivered"` with the mint transaction in `deliveryTx`. The same lookup is
+`xebra.getTransfer(chain, tx)` in the [SDK](/docs/sdk), and [Track a transfer](/docs/guides/track-a-transfer)
+covers the states.
+
+You can also skip us entirely: Circle's own API reports every CCTP burn by its transaction hash.
+
+```sh
+curl "https://iris-api.circle.com/v2/messages/8?transactionHash=F7qiEMaT7q7pbfQ2H44SeV4URQQVfNpffmpt3J5yH8pD"
+```
+
+`8` is Sui's CCTP domain (Stellar is `27`). The answer shows `"status": "complete"` and, for a
+forwarded transfer, `"forwardState": "COMPLETE"` with the mint's hash.
+
+## Counted on chain
+
+The Stellar contract counts every transfer it sends. Its sequence number was **10** on 13 November
+2026 (`get_seq` on
+[`CCPVTWII…Y2WQR`](https://stellar.expert/explorer/public/contract/CCPVTWII2TW6VVSVA4JQ2KFHICGBG4QVAHPIGUPSIW3E4VNPUI4Y2WQR)).
+The table above lists the transfers we made or watched ourselves; the others belong to people we do
+not know, and their transactions are on the same contract.

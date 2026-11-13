@@ -5,6 +5,10 @@ transactions; your user's wallet signs them. Xebra never holds keys or funds.
 
 ```sh
 npm install @xebra/sdk
+# or
+pnpm add @xebra/sdk
+yarn add @xebra/sdk
+bun add @xebra/sdk
 ```
 
 ## Quickstart

@@ -16,6 +16,8 @@ export const SOURCE_URL = "https://github.com/xebra-org/xebra";
 /** Xebra on X. The handle is also what link previews name as the site's account. */
 export const X_HANDLE = "@xebra_exchange";
 export const X_URL = "https://x.com/xebra_exchange";
+/** Where partners, integrators and press reach us. A real mailbox someone reads. */
+export const CONTACT_EMAIL = "partners@xebra.exchange";
 export const LOGO_PATH = "/icon-512.png";
 /**
  * When the written pages last changed, for the sitemap and structured data. A date, not the build

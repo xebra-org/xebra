@@ -1,4 +1,4 @@
-import { SITE_DESCRIPTION, SITE_URL, SOURCE_URL, X_URL, absoluteUrl } from "../site";
+import { CONTACT_EMAIL, SITE_DESCRIPTION, SITE_URL, SOURCE_URL, X_URL, absoluteUrl } from "../site";
 import type { Doc } from "./docs";
 import { FEES } from "./facts";
 import { absoluteMarkdown } from "./markdown";
@@ -34,6 +34,7 @@ ${of("routes").join("\n")}
 - [Everything above in one file](${absoluteUrl("/llms-full.txt")})
 - [Source code](${SOURCE_URL})
 - [Xebra on X](${X_URL})
+- Partnerships and integrations: ${CONTACT_EMAIL}
 - [Security policy](${SOURCE_URL}/blob/main/SECURITY.md)
 `;
 }

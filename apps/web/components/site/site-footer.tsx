@@ -1,4 +1,4 @@
-import { SOURCE_URL, X_URL } from "../../lib/site";
+import { CONTACT_EMAIL, SOURCE_URL, X_URL } from "../../lib/site";
 import { cn } from "../ui/cn";
 import { ArrowUpRight } from "../ui/icons";
 import { StripeRule } from "../ui/stripe-rule";
@@ -34,7 +34,7 @@ export function SiteFooter({
           Xebra moves native USDC over Circle&apos;s Cross-Chain Transfer Protocol. It never issues
           a wrapped asset and never takes custody of your funds.
         </p>
-        <ul className="flex items-center gap-5">
+        <ul className="flex flex-wrap items-center gap-x-5 gap-y-2">
           <FooterLink href="https://developers.circle.com/stablecoins/cctp-getting-started">
             CCTP
           </FooterLink>
@@ -47,6 +47,7 @@ export function SiteFooter({
           )}
           <FooterLink href={SOURCE_URL}>Source</FooterLink>
           <FooterLink href={X_URL}>X</FooterLink>
+          <FooterLink href={`mailto:${CONTACT_EMAIL}`}>Contact</FooterLink>
         </ul>
       </div>
     </footer>
@@ -54,12 +55,13 @@ export function SiteFooter({
 }
 
 function FooterLink({ href, children }: { href: string; children: string }) {
+  // A mail link opens the mail app; only web links get a new tab.
+  const web = !href.startsWith("mailto:");
   return (
     <li>
       <a
         href={href}
-        target="_blank"
-        rel="noreferrer noopener"
+        {...(web ? { target: "_blank", rel: "noreferrer noopener" } : { title: href.slice(7) })}
         className={cn(
           "group/link flex items-center gap-1 text-xs font-medium text-bone/45",
           "transition-colors duration-400 ease-haptic hover:text-bone",
