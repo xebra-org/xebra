@@ -35,9 +35,15 @@ quotes in `raw/oneclick_stellar_*.json`. HyperEVM (6.1 billion USDC) is left out
 
 All nine are CCTP chains. Xebra moves USDC from each of them to Base over CCTP, straight into the
 deposit address 1Click issues, and NEAR Intents takes it from there
-([guide](/docs/guides/near-intents)). The Stellar path is proven on mainnet: burn on Stellar at
-23:24:27 UTC on 12 November, mint on Base at 23:24:38, USDC delivered on NEAR at 23:25:03, 36 seconds
-end to end.
+([guide](/docs/guides/near-intents)). Two of the nine are proven on mainnet, with every transaction
+in the [guide](/docs/guides/near-intents#proven-on-mainnet):
+
+| From | Burn | Mint on Base | Delivered on NEAR | Burn to NEAR |
+|---|---|---|---|---|
+| Stellar, 12 November | 23:24:27 UTC | 23:24:38 | 23:25:03 | 36 s |
+| Arc, 13 November | 21:37:06 UTC ([`0x1b5498de...5d95`](https://explorer.arc.io/tx/0x1b5498defbccd39bf8aeafa44bd4b6906e2e3e89f3b3fbc25bb1791794a55d95)) | 21:37:11 | 21:37:36 | 30 s |
+
+Arc holds the most USDC of the nine (1.42 billion), and 1Click does not list it at all.
 
 ## Size: CCTP has no pool to run dry
 

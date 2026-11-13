@@ -220,6 +220,20 @@ to `that-guy.near`. Every step is on chain.
 NEAR Intents to take the deposit and deliver. It also settled the one thing the code could not: NEAR
 Intents credits a deposit that arrives as a Circle mint, not only as an ordinary transfer.
 
+The same path from Arc, a chain 1Click does not list, ran on 13 November 2026: 2.80 USDC on Arc into
+USDC on NEAR, delivered to `that-guy.near`. It was the first transfer through Xebra's Arc contract.
+
+| Step | When (UTC) | Transaction |
+|---|---|---|
+| Burned on Arc: Xebra's contract took its fee and Circle burned the rest | 21:37:06 | [`0x1b5498de...5d95`](https://explorer.arc.io/tx/0x1b5498defbccd39bf8aeafa44bd4b6906e2e3e89f3b3fbc25bb1791794a55d95) |
+| Minted on Base by Circle, into the 1Click deposit address `0xF1Ac...E976` | 21:37:11 | [`0xb9fb6e35...c4f6`](https://basescan.org/tx/0xb9fb6e35e9300faa0a341a1f52d57de9102e313bc4f0d77f1238cd24a306c4f6) |
+| Delivered on NEAR by a NEAR Intents solver (1Click status `SUCCESS`) | 21:37:36 | [`F1kAhHaH...WQY`](https://nearblocks.io/txns/F1kAhHaHeLHKh7QBGJ77zvAfLrKohkRcR9XLrhGN3WQY) |
+
+**30 seconds from the burn on Arc to USDC in the NEAR wallet**: 5 for Circle to mint on Base, 25 for
+NEAR Intents. Of the 2.80 USDC sent, 0.10 went in fees (0.046 to Xebra, 0.054 to Circle for the
+mint on Base, the 0.10 minimum) and 2.699683 USDC arrived on NEAR. At this size the minimum is 3.6% of the
+amount; at 100 USDC the same 0.10 is 0.1%.
+
 ## Costs and timing
 
 Prices for 25 USDC from Stellar, from live quotes on 12 November 2026 with Xebra's fee as cut on 13 November:
