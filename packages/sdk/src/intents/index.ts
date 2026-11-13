@@ -87,6 +87,10 @@ export const SOLANA_USDC_MINT = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v";
 /** Circle's USDC on Sui (the coin type). */
 export const SUI_USDC_TYPE =
   "0xdba34672e30cb065b1f93e3ab55318768fd6fef66c15942c9f7cb846e2f900e7::usdc::USDC";
+/** Circle's USDC on Aptos (its fungible-asset metadata object). */
+export const APTOS_USDC_METADATA =
+  "0xbae207659db88bea0cbead6da0ed00aac12edcdda169e591cd41c94180b46f3b";
+
 /** Circle's USDC on Stellar (the classic asset's issuer). */
 export const STELLAR_USDC_ISSUER = "GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN";
 
@@ -98,6 +102,7 @@ export function circleUsdcAddress(chain: ChainId): string {
   if (chain === "solana") return SOLANA_USDC_MINT;
   if (chain === "sui") return SUI_USDC_TYPE;
   if (chain === "stellar") return STELLAR_USDC_ISSUER;
+  if (chain === "aptos") return APTOS_USDC_METADATA;
   return EVM_CHAINS[chain as EvmChainId].usdcAddress.toLowerCase();
 }
 

@@ -101,6 +101,21 @@ export const UnsignedTxSchema = z
       value: z.literal("0"),
     }),
     z.object({ kind: z.literal("sui"), json: z.string() }),
+    z.object({
+      kind: z.literal("aptos"),
+      chainId: z.number().int(),
+      bytecode: z.string().regex(/^0x[0-9a-f]+$/),
+      arguments: z.object({
+        amount: z.string().regex(/^\d+$/),
+        destinationDomain: z.number().int(),
+        mintRecipient: z.string().regex(/^0x[0-9a-f]{64}$/),
+        destinationCaller: z.string().regex(/^0x[0-9a-f]{64}$/),
+        burnToken: z.string().regex(/^0x[0-9a-f]{64}$/),
+        maxFee: z.string().regex(/^\d+$/),
+        minFinalityThreshold: z.number().int(),
+        hookData: z.string().regex(/^0x[0-9a-f]*$/),
+      }),
+    }),
     z.object({ kind: z.literal("solana"), transaction: z.string() }),
   ])
   .meta({ id: "UnsignedTx", description: "A transaction for the user's wallet to sign." });

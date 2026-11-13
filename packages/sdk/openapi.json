@@ -453,6 +453,7 @@
           "stellar",
           "solana",
           "sui",
+          "aptos",
           "avalanche",
           "optimism",
           "arbitrum",
@@ -911,6 +912,81 @@
             "required": [
               "kind",
               "json"
+            ],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "kind": {
+                "type": "string",
+                "const": "aptos"
+              },
+              "chainId": {
+                "type": "integer",
+                "minimum": -9007199254740991,
+                "maximum": 9007199254740991
+              },
+              "bytecode": {
+                "type": "string",
+                "pattern": "^0x[0-9a-f]+$"
+              },
+              "arguments": {
+                "type": "object",
+                "properties": {
+                  "amount": {
+                    "type": "string",
+                    "pattern": "^\\d+$"
+                  },
+                  "destinationDomain": {
+                    "type": "integer",
+                    "minimum": -9007199254740991,
+                    "maximum": 9007199254740991
+                  },
+                  "mintRecipient": {
+                    "type": "string",
+                    "pattern": "^0x[0-9a-f]{64}$"
+                  },
+                  "destinationCaller": {
+                    "type": "string",
+                    "pattern": "^0x[0-9a-f]{64}$"
+                  },
+                  "burnToken": {
+                    "type": "string",
+                    "pattern": "^0x[0-9a-f]{64}$"
+                  },
+                  "maxFee": {
+                    "type": "string",
+                    "pattern": "^\\d+$"
+                  },
+                  "minFinalityThreshold": {
+                    "type": "integer",
+                    "minimum": -9007199254740991,
+                    "maximum": 9007199254740991
+                  },
+                  "hookData": {
+                    "type": "string",
+                    "pattern": "^0x[0-9a-f]*$"
+                  }
+                },
+                "required": [
+                  "amount",
+                  "destinationDomain",
+                  "mintRecipient",
+                  "destinationCaller",
+                  "burnToken",
+                  "maxFee",
+                  "minFinalityThreshold",
+                  "hookData"
+                ],
+                "additionalProperties": false
+              }
+            },
+            "required": [
+              "kind",
+              "chainId",
+              "bytecode",
+              "arguments"
             ],
             "additionalProperties": false
           },
