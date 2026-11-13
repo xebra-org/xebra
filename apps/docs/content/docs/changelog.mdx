@@ -3,6 +3,25 @@ title: Changelog
 description: What changed in the Xebra API and SDK, newest first.
 ---
 
+## 0.3.0 (2026-11-13)
+
+**API**:
+
+- Transfers from Arc build again while Xebra's fee wrapper is on. `GET /v1/quote` from Arc now
+  prices with the wrapper's live terms (its fee, minimum and maximum); before, it showed no Xebra fee
+  and `POST /v1/transfers` refused. The approval and the burn go to the wrapper, and the burn is good
+  for 30 minutes.
+- EVM chains can send to each other, not only to and from Arc, wherever Xebra switches the pair on.
+  `GET /v1/routes` lists them.
+
+**SDK**, `@xebra/sdk` 0.3.0:
+
+- `EnabledRoutes.evmMesh` and `parseEvmMesh`: EVM chains that all send to each other.
+- [NEAR Intents](/docs/guides/near-intents): `pickHub` and `buildDeposit` work from Arc and the EVM
+  chains as they did from Stellar. The guide shows an EVM sender.
+
+Nothing in 0.2.0 changed.
+
 ## 0.2.0 (2026-11-13)
 
 **SDK**, `@xebra/sdk` 0.2.0:
