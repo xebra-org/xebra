@@ -356,12 +356,28 @@ export interface EnabledRoutes {
   arcSendsTo: readonly PeerId[];
   /** Which EVM chains may send into Arc. */
   arcReceivesFrom: readonly EvmPeerId[];
+  /**
+   * EVM chains other than Arc that send to each other: every chain here reaches every other chain
+   * here, over Circle's CCTP with its Forwarding Service. Arc keeps its own two switches. Absent
+   * (a build from before the mesh) means none.
+   */
+  evmMesh?: readonly EvmPeerId[];
 }
 
-export const NO_ROUTES: EnabledRoutes = { arcSendsTo: [], arcReceivesFrom: [] };
+export const NO_ROUTES: EnabledRoutes = { arcSendsTo: [], arcReceivesFrom: [], evmMesh: [] };
+
+/** The mesh's chains, if there are at least two of them; one chain alone reaches nothing. */
+function meshOf(routes: EnabledRoutes): readonly EvmPeerId[] {
+  const mesh = routes.evmMesh ?? [];
+  return mesh.length >= 2 ? mesh : [];
+}
 
 export function hasEvmRoutes(routes: EnabledRoutes): boolean {
-  return routes.arcSendsTo.length > 0 || routes.arcReceivesFrom.length > 0;
+  return (
+    routes.arcSendsTo.length > 0 ||
+    routes.arcReceivesFrom.length > 0 ||
+    meshOf(routes).length > 0
+  );
 }
 
 /** Where USDC can go from `source` in this build. Anything not switched on reaches nothing. */
@@ -370,7 +386,10 @@ export function evmDestinationsFrom(
   routes: EnabledRoutes,
 ): RouteDestinationId[] {
   if (source === "arc") return ARC_PEERS.filter((id) => routes.arcSendsTo.includes(id));
-  return routes.arcReceivesFrom.includes(source) ? ["arc"] : [];
+  const toArc: RouteDestinationId[] = routes.arcReceivesFrom.includes(source) ? ["arc"] : [];
+  const mesh = meshOf(routes);
+  const peers = mesh.includes(source) ? mesh.filter((id) => id !== source) : [];
+  return [...toArc, ...peers];
 }
 
 /**
@@ -378,7 +397,10 @@ export function evmDestinationsFrom(
  * and Arc itself when it may send anywhere. Solana is never a source here.
  */
 export function evmSources(routes: EnabledRoutes): EvmChainId[] {
-  const peers = EVM_ARC_PEERS.filter((id) => routes.arcReceivesFrom.includes(id));
+  const mesh = meshOf(routes);
+  const peers = EVM_ARC_PEERS.filter(
+    (id) => routes.arcReceivesFrom.includes(id) || mesh.includes(id),
+  );
   return routes.arcSendsTo.length > 0 ? [...peers, "arc"] : peers;
 }
 
@@ -405,6 +427,14 @@ function parseRouteList<T extends string>(
     }
   }
   return allowed.filter((id) => names.includes(id));
+}
+
+/**
+ * `NEXT_PUBLIC_EVM_MESH`: EVM chains other than Arc that send to each other, every one to every
+ * other. Arc and Solana have their own switches and are refused here.
+ */
+export function parseEvmMesh(raw: string | null | undefined): EvmPeerId[] {
+  return parseRouteList("NEXT_PUBLIC_EVM_MESH", raw, EVM_ARC_PEERS);
 }
 
 /** `NEXT_PUBLIC_ARC_SENDS_TO`: where Arc may send. EVM chains and `solana`. */

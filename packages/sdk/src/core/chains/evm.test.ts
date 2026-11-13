@@ -20,6 +20,7 @@ import {
   hasEvmRoutes,
   parseArcReceivesFrom,
   parseArcSendsTo,
+  parseEvmMesh,
   parseStellarSendsTo,
 } from "./evm.js";
 
@@ -73,6 +74,52 @@ describe("which routes a build offers", () => {
     for (const peer of EVM_ARC_PEERS) {
       expect(evmDestinationsFrom(peer, both)).toEqual(["arc"]);
     }
+  });
+});
+
+describe("the EVM mesh", () => {
+  const mesh = (evmMesh: EnabledRoutes["evmMesh"]): EnabledRoutes => ({
+    ...NO_ROUTES,
+    evmMesh,
+  });
+
+  it("sends from every chain in it to every other chain in it, never to itself", () => {
+    const r = mesh(["base", "unichain", "sonic"]);
+    expect(evmSources(r)).toEqual(["base", "unichain", "sonic"]);
+    expect(evmDestinationsFrom("unichain", r)).toEqual(["base", "sonic"]);
+    expect(evmDestinationsFrom("base", r)).toEqual(["unichain", "sonic"]);
+    expect(evmDestinationsFrom("arbitrum", r)).toEqual([]);
+    expect(hasEvmRoutes(r)).toBe(true);
+  });
+
+  it("offers nothing with one chain, since a chain never sends to itself", () => {
+    expect(evmSources(mesh(["base"]))).toEqual([]);
+    expect(hasEvmRoutes(mesh(["base"]))).toBe(false);
+  });
+
+  it("leaves Arc to its own switches, and adds to them without repeating a destination", () => {
+    const r: EnabledRoutes = {
+      arcSendsTo: ["base"],
+      arcReceivesFrom: ["unichain"],
+      evmMesh: ["base", "unichain"],
+    };
+    expect(evmSources(r)).toEqual(["base", "unichain", "arc"]);
+    expect(evmDestinationsFrom("unichain", r)).toEqual(["arc", "base"]);
+    expect(evmDestinationsFrom("base", r)).toEqual(["unichain"]);
+    expect(evmDestinationsFrom("arc", r)).toEqual(["base"]);
+  });
+
+  it("is read from NEXT_PUBLIC_EVM_MESH, a list or all, and refuses Arc and Solana", () => {
+    expect(parseEvmMesh(undefined)).toEqual([]);
+    expect(parseEvmMesh("sonic, base")).toEqual(["base", "sonic"]);
+    expect(parseEvmMesh("all")).toEqual(EVM_ARC_PEERS);
+    expect(() => parseEvmMesh("arc")).toThrow('NEXT_PUBLIC_EVM_MESH names "arc"');
+    expect(() => parseEvmMesh("solana")).toThrow('NEXT_PUBLIC_EVM_MESH names "solana"');
+  });
+
+  it("is off for a build that predates it (no evmMesh field)", () => {
+    const old = { arcSendsTo: [], arcReceivesFrom: [] } as EnabledRoutes;
+    expect(evmSources(old)).toEqual([]);
   });
 });
 

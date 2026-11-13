@@ -121,6 +121,19 @@ describe("quote", () => {
     expect(quote.recipientGets).toBe(25_500_000n - quote.fees.total);
   });
 
+  it("prices one EVM chain to another through the mesh, with no Arc in between", async () => {
+    const mesh = svc({
+      evmRoutes: { arcSendsTo: [], arcReceivesFrom: [], evmMesh: ["unichain", "base"] },
+    });
+    const { routes } = await mesh.routes();
+    expect(routes.find((g) => g.from === "unichain")?.to.map((d) => d.id)).toEqual(["base"]);
+    expect(routes.find((g) => g.from === "base")?.to.map((d) => d.id)).toEqual(["unichain"]);
+    const { quote } = await mesh.quote({ from: "unichain", to: "base", amount: 25_000_000n });
+    expect(quote.recipientGets).toBe(25_000_000n - quote.fees.total);
+    const err = await refusal(mesh.quote({ from: "unichain", to: "sonic", amount: 25_000_000n }));
+    expect(err.code).toBe("route_unavailable");
+  });
+
   it("refuses Fast from Stellar", async () => {
     const err = await refusal(
       svc().quote({ from: "stellar", to: "base", amount: 10_000_000n, speed: "fast" }),

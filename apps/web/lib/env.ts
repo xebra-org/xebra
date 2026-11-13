@@ -1,4 +1,9 @@
-import { parseArcReceivesFrom, parseArcSendsTo, parseStellarSendsTo } from "@xebra/sdk/core";
+import {
+  parseArcReceivesFrom,
+  parseArcSendsTo,
+  parseEvmMesh,
+  parseStellarSendsTo,
+} from "@xebra/sdk/core";
 
 /**
  * The frontend's single source of network truth.
@@ -60,6 +65,7 @@ const RAW = {
   NEXT_PUBLIC_ARC_ENABLED: process.env.NEXT_PUBLIC_ARC_ENABLED,
   NEXT_PUBLIC_ARC_SENDS_TO: process.env.NEXT_PUBLIC_ARC_SENDS_TO,
   NEXT_PUBLIC_ARC_RECEIVES_FROM: process.env.NEXT_PUBLIC_ARC_RECEIVES_FROM,
+  NEXT_PUBLIC_EVM_MESH: process.env.NEXT_PUBLIC_EVM_MESH,
   NEXT_PUBLIC_STELLAR_SENDS_TO: process.env.NEXT_PUBLIC_STELLAR_SENDS_TO,
   NEXT_PUBLIC_ARC_USE_WRAPPER: process.env.NEXT_PUBLIC_ARC_USE_WRAPPER,
   NEXT_PUBLIC_STELLAR_ESCROW_CONTRACT_ID: process.env.NEXT_PUBLIC_STELLAR_ESCROW_CONTRACT_ID,
@@ -146,6 +152,8 @@ export const env = {
    *
    *   - `NEXT_PUBLIC_ARC_SENDS_TO`: where Arc may send (EVM chains, and `solana`).
    *   - `NEXT_PUBLIC_ARC_RECEIVES_FROM`: which EVM chains may send into Arc.
+   *   - `NEXT_PUBLIC_EVM_MESH`: EVM chains other than Arc that send to each other, every one to
+   *     every other (any EVM chain to any EVM chain).
    *
    * Lists and not a yes/no because these routes have no contract of ours to refuse a bad one, so
    * a direction is meant to be switched on once a transfer has gone through it: Arc to all fifteen
@@ -158,6 +166,7 @@ export const env = {
   evmRoutes: {
     arcSendsTo: parseArcSendsTo(optional("NEXT_PUBLIC_ARC_SENDS_TO")),
     arcReceivesFrom: parseArcReceivesFrom(optional("NEXT_PUBLIC_ARC_RECEIVES_FROM")),
+    evmMesh: parseEvmMesh(optional("NEXT_PUBLIC_EVM_MESH")),
   },
   /**
    * The EVM chains other than Arc that Stellar may send to, through the wrapper: a comma-separated
