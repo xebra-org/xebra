@@ -77,14 +77,11 @@ terraform.rc
 # local media and private reports
 #
 # film/ holds launch videos, GIFs and source clips (some not ours to publish). The two files
-# already tracked there (xebra-film.mp4, .webp) stay tracked. Audit reports list open findings
-# and stay off the public repo until they are fixed.
+# already tracked there (xebra-film.mp4, .webp) stay tracked.
 film/
-reports/audit-*.md
 
-# Private working notes: partner outreach, strategy and raw research. Kept local, not published.
-reports/outreach/
-reports/reach-*
-reports/evidence-*/
+# Private working notes: audits with open findings, partner outreach, strategy and raw research.
+# Kept local, not published. Published evidence lives in evidence/.
+reports/
 research_notes/
 docs/moat-strategy.md
