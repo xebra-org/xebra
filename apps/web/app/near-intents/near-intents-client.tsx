@@ -111,7 +111,11 @@ function swapSources(): Source[] {
   const evm = evmSources(env.evmRoutes).filter((id) =>
     evmDestinationsFrom(id, env.evmRoutes).some((d) => (HUBS as readonly string[]).includes(d)),
   );
-  return ["stellar", ...evm];
+  // Arc first after Stellar: NEAR Intents does not list it at all, so it is the route people come for.
+  const arcFirst = evm.includes("arc")
+    ? ["arc" as const, ...evm.filter((id) => id !== "arc")]
+    : evm;
+  return ["stellar", ...arcFirst];
 }
 
 const chainName = (s: Source) => (s === "stellar" ? "Stellar" : EVM_CHAINS[s].name);

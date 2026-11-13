@@ -5,9 +5,9 @@ import { env } from "../../lib/env";
 import { NearIntentsClient } from "./near-intents-client";
 
 export const metadata: Metadata = {
-  title: "Stellar USDC into NEAR Intents",
+  title: "USDC into NEAR Intents from Stellar, Arc and more",
   description:
-    "Swap USDC on Stellar into anything NEAR Intents delivers. Xebra carries the USDC over Circle's CCTP into the NEAR Intents deposit address; one signature on Stellar.",
+    "Swap USDC on Stellar, Arc and other Circle chains NEAR Intents does not reach into anything it delivers. Xebra carries the USDC over Circle's CCTP into the NEAR Intents deposit address; you sign on your own chain.",
 };
 
 export default function NearIntentsPage() {
