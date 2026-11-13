@@ -2,12 +2,13 @@ import { Connection, type Transaction } from "@solana/web3.js";
 import { rpc } from "@stellar/stellar-sdk";
 import type { CircleHealth } from "@xebra/cctp-client";
 import { buildSuiBurn } from "@xebra/sdk/build";
-import { type FeeParams, stellarDestinations, wrapperFor } from "@xebra/sdk/core";
+import { EVM_CHAINS, type FeeParams, stellarDestinations, wrapperFor } from "@xebra/sdk/core";
 import { GET as attestation } from "../../app/api/attestation/route";
 import { GET as circleHealth } from "../../app/api/circle-health/route";
 import { GET as delivery } from "../../app/api/delivery/route";
 import { GET as evmWrapper } from "../../app/api/evm-wrapper/route";
 import { GET as recipient } from "../../app/api/recipient/route";
+import { GET as solanaStellarStatus } from "../../app/api/solana-source/status/route";
 import { GET as suiStatus } from "../../app/api/sui-stellar/status/route";
 import { getWrapperDomains, getWrapperFeeParams } from "../cctp-bridge";
 import { buildMintTransaction, prepareClaim } from "../claim";
@@ -16,11 +17,15 @@ import { getAllowance, getUsdcBalance6 } from "../evm-bridge";
 import { checkClaim, isAlreadyMinted } from "../evm-claim";
 import { type WrapperState, parseWrapperState } from "../evm-wrapper";
 import { createTtlCache } from "../server/ttl-cache";
+import { SolanaSourceError } from "../solana-source/checks";
+import { SOLANA_CCTP_DOMAIN, solanaMaxUsdcBase, solanaSends } from "../solana-source/config";
+import { buildSolanaSourceBurn, checkSolanaToStellar } from "../solana-source/server";
 import { suiClient } from "../sui-stellar/client";
 import { maxUsdcBase, suiStellarEnabled } from "../sui-stellar/config";
 import { planClaim, recipientStatus } from "../sui-stellar/stellar-side";
 import type { Eip1193Provider } from "../wallets/types";
 import type { Deps, StellarRoutes } from "./deps";
+import { ApiError } from "./errors";
 
 /**
  * The real dependencies of the service layer (`lib/api/service.ts`), shared by the public API and
@@ -74,6 +79,18 @@ async function readJson(res: Response): Promise<Record<string, unknown> | null> 
 export const liveDeps: Deps = {
   siteUrl: SITE_URL,
   suiStellar: { enabled: suiStellarEnabled(), maxUnits: maxUsdcBase() },
+  solanaSource: {
+    evm: solanaSends().evm.map((c) => c.id),
+    stellar: solanaSends().stellar,
+    maxUnits: solanaMaxUsdcBase(),
+  },
+  async solanaStellarStatus(tx) {
+    return readJsonAnyStatus(
+      await solanaStellarStatus(
+        new Request(`${ORIGIN}/api/solana-source/status?tx=${encodeURIComponent(tx)}`),
+      ),
+    );
+  },
   evmRoutes: env.evmRoutes,
   stellarRoutes,
   evmWrapperAddress: (chain) => wrapperFor(chain, env.arcUseWrapper),
@@ -182,6 +199,39 @@ export const liveDeps: Deps = {
       };
     },
     suiClaim: (digest, payer) => planClaim(digest, payer),
+    async solanaBurn(p) {
+      try {
+        let target: Parameters<typeof buildSolanaSourceBurn>[0]["target"];
+        if (p.to === "stellar") {
+          await checkSolanaToStellar(p.recipient, p.amount);
+          target = { kind: "stellar", recipient: p.recipient };
+        } else {
+          target = { kind: "evm", chain: EVM_CHAINS[p.to], recipient: p.recipient };
+        }
+        const built = await buildSolanaSourceBurn({
+          sender: p.sender,
+          amount: p.amount,
+          target,
+          maxFee: p.maxFee,
+        });
+        return {
+          id: "burn",
+          chain: "solana",
+          description:
+            p.to === "stellar"
+              ? "Burn USDC on Solana; Circle attests it, and its mint on Stellar is completed for the recipient. Already co-signed by a one-time message account: add the sender's signature only."
+              : `Burn USDC on Solana; Circle attests it and delivers it to ${EVM_CHAINS[p.to].name}. Already co-signed by a one-time message account: add the sender's signature only.`,
+          tx: { kind: "solana", transaction: built.transaction },
+          // A Solana transaction names a recent block; it stops being valid about a minute after it
+          // was built, well within the quote's own life.
+          expiresAt: new Date(Date.now() + 60_000).toISOString(),
+        };
+      } catch (err) {
+        if (err instanceof SolanaSourceError) throw new ApiError(err.code, err.message, err.extra);
+        throw err;
+      }
+    },
+    solanaStellarClaim: (tx, payer) => planClaim(tx, payer, SOLANA_CCTP_DOMAIN),
   },
 };
 

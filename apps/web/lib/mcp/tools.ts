@@ -115,9 +115,10 @@ export function buildTools(deps: Deps): Tool[] {
     async run() {
       const { routes: groups, stellarContractRead } = await service.routes();
       // These tools hand out links to the bridge page, which sends from Stellar and the EVM chains.
-      // Sui has a page of its own, so its route is not offered here.
+      // Sui has a page of its own, and a link cannot preselect Solana as the source, so neither is
+      // offered here.
       const routes = groups
-        .filter((g) => g.from !== "sui")
+        .filter((g) => g.from !== "sui" && g.from !== "solana")
         .map((g) => ({ from: g.from, to: g.to.map((d) => ({ id: d.id, name: d.name })) }));
       const lines = routes
         .filter((r) => r.to.length > 0)

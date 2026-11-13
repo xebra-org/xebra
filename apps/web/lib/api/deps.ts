@@ -5,6 +5,7 @@ import type {
   DomainForwardConfig,
   EnabledRoutes,
   EvmChain,
+  EvmChainId,
   FeeParams,
 } from "@xebra/sdk/core";
 import type { WrapperSettings } from "../evm-wrapper";
@@ -42,6 +43,13 @@ export interface Deps {
   suiStellar: { enabled: boolean; maxUnits: bigint | null };
   /** A Sui burn's progress, as `/api/sui-stellar/status` answers it. Null if unreadable. */
   suiStatus?(digest: string): Promise<Record<string, unknown> | null>;
+  /**
+   * Where Solana may send (`SOLANA_SENDS_TO`): EVM chains, delivered by Circle's Forwarding Service,
+   * and Stellar, completed by the relayer. Absent or empty: Solana is not a source.
+   */
+  solanaSource?: { evm: EvmChainId[]; stellar: boolean; maxUnits: bigint | null };
+  /** A Solana burn into Stellar, as `/api/solana-source/status` answers it. Null if unreadable. */
+  solanaStellarStatus?(tx: string): Promise<Record<string, unknown> | null>;
   /** What building a transaction reads. Absent where nothing is built (the MCP tools). */
   build?: BuildDeps;
 }
@@ -93,6 +101,22 @@ export interface BuildDeps {
     | { state: "needs-owner"; reason: string }
     | { state: "delivered" }
   >;
+  /**
+   * The Solana burn, built and simulated against Solana's RPC: to an EVM chain at the `maxFee`
+   * priced, or to Stellar with none. Throws `ApiError` for every refusal a person can act on.
+   */
+  solanaBurn?(p: {
+    sender: string;
+    amount: bigint;
+    to: "stellar" | EvmChainId;
+    recipient: string;
+    maxFee: bigint;
+  }): Promise<TransferStep>;
+  /** The Stellar mint of a Solana burn into Stellar, with `payer` paying the fee. */
+  solanaStellarClaim?(
+    tx: string,
+    payer: string,
+  ): Promise<{ ok: true; xdr: string } | { ok: false; reason: string; delivered?: boolean }>;
   /** The Stellar mint of a Sui burn, with `payer` paying the fee. */
   suiClaim(
     digest: string,

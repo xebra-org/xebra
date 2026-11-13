@@ -5,7 +5,10 @@ export type UnsignedTx =
   | { kind: "stellar"; xdr: string; networkPassphrase: string }
   | { kind: "evm"; chainId: number; to: `0x${string}`; data: `0x${string}`; value: "0" }
   | { kind: "sui"; json: string }
-  /** A legacy Solana transaction, serialized without signatures, base64. */
+  /**
+   * A legacy Solana transaction, serialized, base64. A claim carries no signatures; a burn from
+   * Solana already carries one, its one-time message account's, and needs only the sender's.
+   */
   | { kind: "solana"; transaction: string };
 
 /** One signature in a transfer, in the order the wallet should be asked. */
