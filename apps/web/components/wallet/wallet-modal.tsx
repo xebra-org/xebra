@@ -43,6 +43,7 @@ const BLURB: Record<Family, string> = {
     ? "Pays for and signs a transfer that starts on an EVM chain, fills in a recipient, and completes a claim."
     : "Fills in your Arc address as the recipient, and completes a claim.",
   sui: "Pays for and signs a transfer that starts on Sui.",
+  aptos: "Pays for and signs a transfer that starts on Aptos.",
 };
 
 /**

@@ -2,8 +2,9 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const completeBurn = vi.fn();
 let secret: string | null = null;
+let sources = [8, 5, 6, 26];
 vi.mock("../../../../lib/sui-stellar/stellar-side", () => ({
-  STELLAR_INBOUND_SOURCES: [8, 5, 6, 26],
+  stellarInboundSources: () => sources,
   completeBurn: (...a: unknown[]) => completeBurn(...a),
 }));
 vi.mock("../../../../lib/sui-stellar/config", () => ({
@@ -25,6 +26,7 @@ describe("POST /api/stellar-inbound/complete", () => {
   beforeEach(() => {
     completeBurn.mockReset().mockResolvedValue({ status: "submitted", hash: "h" });
     secret = "S-secret";
+    sources = [8, 5, 6, 26];
   });
 
   it("is off without a relayer key", async () => {
@@ -64,5 +66,22 @@ describe("POST /api/stellar-inbound/complete", () => {
   it("answers 422 for a refusal", async () => {
     completeBurn.mockResolvedValue({ status: "refused", reason: "no trustline" });
     expect((await post({ src: 26, tx: EVM_TX })).status).toBe(422);
+  });
+
+  it("completes an Aptos burn, with the 1 USDC floor, only while Aptos may send to Stellar", async () => {
+    const APTOS_TX = `0x${"cd".repeat(32)}`;
+    const refused = await post({ src: 9, tx: APTOS_TX });
+    expect(refused.status).toBe(400);
+    expect(((await refused.json()) as { error: string }).error).not.toContain("Aptos");
+    sources = [8, 5, 6, 26, 9];
+    const named = await post({ src: 9, tx: "not-a-hash" });
+    expect(named.status).toBe(400);
+    expect(((await named.json()) as { error: string }).error).toContain("Aptos");
+    expect((await post({ src: 9, tx: APTOS_TX.toUpperCase().replace("0X", "0x") })).status).toBe(
+      200,
+    );
+    expect(completeBurn).toHaveBeenLastCalledWith(APTOS_TX, "S-secret", 9, {
+      minAmount: 1_000_000n,
+    });
   });
 });

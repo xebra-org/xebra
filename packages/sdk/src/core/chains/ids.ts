@@ -1,9 +1,9 @@
 import { EVM_CHAIN_IDS, type EvmChainId, isEvmChainId } from "./evm.js";
 
 /** Every chain a transfer can start or end on, as the public API names it. */
-export type ChainId = "stellar" | "solana" | "sui" | EvmChainId;
+export type ChainId = "stellar" | "solana" | "sui" | "aptos" | EvmChainId;
 
-const NON_EVM = ["stellar", "solana", "sui"] as const;
+const NON_EVM = ["stellar", "solana", "sui", "aptos"] as const;
 
 export const CHAIN_IDS: readonly ChainId[] = [...NON_EVM, ...EVM_CHAIN_IDS];
 

@@ -8,6 +8,8 @@ import type {
   EvmChainId,
   FeeParams,
 } from "@xebra/sdk/core";
+import type { AptosBuildAnswer } from "../aptos/build";
+import type { AptosDestination } from "../aptos/config";
 import type { WrapperSettings } from "../evm-wrapper";
 
 /**
@@ -58,6 +60,13 @@ export interface Deps {
   solanaSource?: { evm: EvmChainId[]; stellar: boolean; maxUnits: bigint | null };
   /** A Solana burn into Stellar, as `/api/solana-source/status` answers it. Null if unreadable. */
   solanaStellarStatus?(tx: string): Promise<Record<string, unknown> | null>;
+  /**
+   * Aptos as a source: where it may send (`APTOS_SENDS_TO`) and the per-transfer cap. Absent or
+   * empty means Aptos is off.
+   */
+  aptos?: { destinations: readonly AptosDestination[]; maxUnits: bigint | null };
+  /** An Aptos burn to Stellar's progress, as `/api/aptos/status` answers it. Null if unreadable. */
+  aptosStatus?(tx: string): Promise<Record<string, unknown> | null>;
   /** What building a transaction reads. Absent where nothing is built (the MCP tools). */
   build?: BuildDeps;
 }
@@ -134,6 +143,22 @@ export interface BuildDeps {
   }): Promise<TransferStep>;
   /** The Stellar mint of a Solana burn into Stellar, with `payer` paying the fee. */
   solanaStellarClaim?(
+    tx: string,
+    payer: string,
+  ): Promise<{ ok: true; xdr: string } | { ok: false; reason: string; delivered?: boolean }>;
+  /**
+   * The Aptos burn, built and checked as `/api/aptos/build` builds it (the fee priced again; the
+   * burn simulated on mainnet). Absent where Aptos is off.
+   */
+  aptosBuild?(request: {
+    sender: string;
+    amount: string;
+    to: string;
+    recipient: string;
+    maxFee?: string;
+  }): Promise<AptosBuildAnswer>;
+  /** The Stellar mint of an Aptos burn to Stellar, with `payer` paying the fee. */
+  aptosClaim?(
     tx: string,
     payer: string,
   ): Promise<{ ok: true; xdr: string } | { ok: false; reason: string; delivered?: boolean }>;

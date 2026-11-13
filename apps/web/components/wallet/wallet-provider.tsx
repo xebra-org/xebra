@@ -14,6 +14,12 @@ import {
 import { formatError } from "../../lib/format-error";
 import { createStellarWalletKit, probeStellarWallet } from "../../lib/stellar-wallet";
 import {
+  aptosEntries,
+  connectAptos,
+  disconnectAptos,
+  isAptosWallet,
+} from "../../lib/wallets/aptos";
+import {
   type Eip6963Detail,
   type EvmEvent,
   applyEvmEvent,
@@ -41,8 +47,8 @@ import type { Connection, Eip1193Provider, Family, WalletEntry } from "../../lib
 import { WalletModal } from "./wallet-modal";
 
 /**
- * One place that knows which wallets exist and which are connected, across Stellar, Solana, EVM
- * and Sui.
+ * One place that knows which wallets exist and which are connected, across Stellar, Solana, EVM,
+ * Sui and Aptos.
  *
  * A person can hold several at once (any of them to pay where its chain is a source, a Solana or
  * EVM wallet to name the recipient), so connections are per family and independent; connecting one never
@@ -58,7 +64,10 @@ interface WalletContextValue {
    * Sui wallet is connected; `connections.sui` is the same connection as everywhere else.
    */
   sui: SuiSigner | null;
-  /** Opens the modal on the given families (all of them when omitted). */
+  /**
+   * Opens the modal on the given families (Stellar, Solana, EVM and Sui when omitted; Aptos only
+   * when the page asks for it, since the server decides whether Aptos is on).
+   */
   open: (families?: readonly Family[]) => void;
   disconnect: (family: Family) => Promise<void>;
   /**
@@ -113,6 +122,7 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
   const [kit, setKit] = useState<StellarWalletsKit | null>(null);
   const [stellar, setStellar] = useState<WalletEntry[]>([]);
   const [evmMap, setEvmMap] = useState<Map<string, Eip6963Detail>>(new Map());
+  // Every Wallet Standard wallet: Solana and Aptos wallets register on the same registry.
   const [solWallets, setSolWallets] = useState<Wallet[]>([]);
   const [suiWallets, setSuiWallets] = useState<SuiWalletEntry[]>([]);
   const [suiSigner, setSuiSigner] = useState<SuiSigner | null>(null);
@@ -167,6 +177,7 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
       solana: solanaEntries(solWallets),
       evm: evmEntries(evmMap, legacyProvider()),
       sui: suiModalEntries(suiWallets),
+      aptos: aptosEntries(solWallets),
     }),
     [stellar, solWallets, evmMap, suiWallets],
   );
@@ -208,6 +219,10 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
           const { connection, account } = await connectSuiFromModal(entry, w);
           conn = connection;
           setSuiSigner({ wallet: w, account });
+        } else if (entry.family === "aptos") {
+          const w = solWallets.find((x) => isAptosWallet(x) && `aptos:${x.name}` === entry.key);
+          if (!w) throw new Error("That wallet is no longer available.");
+          conn = await connectAptos(entry, w);
         } else {
           const provider: Eip1193Provider | null =
             entry.key === "evm:injected"
@@ -257,9 +272,14 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
         if (suiSigner) await disconnectSui(suiSigner.wallet);
         setSuiSigner(null);
       }
+      if (family === "aptos") {
+        const key = connections.aptos?.walletKey;
+        const w = solWallets.find((x) => isAptosWallet(x) && `aptos:${x.name}` === key);
+        if (w) await disconnectAptos(w);
+      }
       setConn(null, family);
     },
-    [connections.solana?.walletKey, solWallets, suiSigner, setConn],
+    [connections.solana?.walletKey, connections.aptos?.walletKey, solWallets, suiSigner, setConn],
   );
 
   const open = useCallback(

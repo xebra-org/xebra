@@ -7,6 +7,7 @@ import {
   type TransferStep,
   buildEvmBridge,
   buildStellarBridge,
+  normaliseAptosAddress,
 } from "@xebra/sdk/build";
 import {
   EVM_CHAINS,
@@ -36,6 +37,7 @@ import {
   suggestedMinimum,
   withTableCeiling,
 } from "@xebra/sdk/core";
+import { APTOS_CCTP_DOMAIN } from "../aptos/config";
 import { humanizeContractError } from "../cctp-bridge";
 import { ARC_GAS_RESERVE_UNITS, spendableUsdc } from "../evm-bridge";
 import { termsFor } from "../evm-wrapper";
@@ -52,7 +54,7 @@ import { ApiError } from "./errors";
  */
 
 export type Speed = "standard" | "fast";
-export type SourceId = "stellar" | "sui" | "solana" | EvmChainId;
+export type SourceId = "stellar" | "sui" | "solana" | "aptos" | EvmChainId;
 export type DestId = "stellar" | "solana" | EvmChainId;
 
 export interface RouteGroup {
@@ -139,12 +141,21 @@ function checkSender(from: SourceId, sender: string): void {
         ? SUI_ADDRESS.test(sender)
         : from === "solana"
           ? checkSolanaAddress(sender).ok
-          : checkAddressOn(EVM_CHAINS[from], sender).ok;
+          : from === "aptos"
+            ? normaliseAptosAddress(sender) !== null
+            : checkAddressOn(EVM_CHAINS[from], sender).ok;
   if (!ok) {
-    throw new ApiError(
-      "invalid_request",
-      `sender must be the ${from === "stellar" ? "Stellar account (G...)" : from === "sui" ? "Sui address (0x + 64 hex)" : from === "solana" ? "Solana wallet address" : `${EVM_CHAINS[from].name} address`} that will sign.`,
-    );
+    const who =
+      from === "stellar"
+        ? "Stellar account (G...)"
+        : from === "sui"
+          ? "Sui address (0x + 64 hex)"
+          : from === "solana"
+            ? "Solana wallet address"
+            : from === "aptos"
+              ? "Aptos address (0x + hex)"
+              : `${EVM_CHAINS[from].name} address`;
+    throw new ApiError("invalid_request", `sender must be the ${who} that will sign.`);
   }
 }
 
@@ -186,12 +197,14 @@ const SOURCE_NAME = (id: SourceId): string =>
       ? "Sui"
       : id === "solana"
         ? "Solana"
-        : EVM_CHAINS[id].name;
+        : id === "aptos"
+          ? "Aptos"
+          : EVM_CHAINS[id].name;
 const DEST_NAME = (id: DestId): string =>
   id === "stellar" ? "Stellar" : id === "solana" ? "Solana" : EVM_CHAINS[id].name;
 
 export function isSourceId(v: string): v is SourceId {
-  return v === "stellar" || v === "sui" || v === "solana" || isEvmChainId(v);
+  return v === "stellar" || v === "sui" || v === "solana" || v === "aptos" || isEvmChainId(v);
 }
 export function isDestId(v: string): v is DestId {
   return v === "stellar" || v === "solana" || isEvmChainId(v);
@@ -251,6 +264,16 @@ export function createService(deps: Deps, now: () => number = Date.now) {
         to: to.map((id) => ({ id, name: DEST_NAME(id), speeds: ["standard"] })),
       });
     }
+    // Aptos, to the chains `APTOS_SENDS_TO` names. Standard only: Aptos finalises in about a
+    // second, so Fast would buy nothing.
+    const aptos = deps.aptos?.destinations ?? [];
+    if (aptos.length > 0) {
+      groups.push({
+        from: "aptos",
+        name: "Aptos",
+        to: aptos.map((id) => ({ id, name: DEST_NAME(id), speeds: ["standard"] })),
+      });
+    }
     return { routes: groups, stellarContractRead: stellar.domains !== null };
   }
 
@@ -303,7 +326,9 @@ export function createService(deps: Deps, now: () => number = Date.now) {
           ? SUI_CCTP_DOMAIN
           : from === "solana"
             ? SOLANA_DOMAIN
-            : EVM_CHAINS[from as EvmChainId].cctpDomainId;
+            : from === "aptos"
+              ? APTOS_CCTP_DOMAIN
+              : EVM_CHAINS[from as EvmChainId].cctpDomainId;
     const dst =
       to === "solana"
         ? stellarDestination("solana").domain
@@ -536,6 +561,50 @@ export function createService(deps: Deps, now: () => number = Date.now) {
     if (q.amount <= 0n) throw new ApiError("invalid_amount", "The amount must be more than zero.");
     await checkRoute(q.from, q.to);
 
+    if (q.from === "aptos") {
+      const cap = deps.aptos?.maxUnits ?? null;
+      if (cap !== null && q.amount > cap) {
+        throw new ApiError(
+          "amount_above_maximum",
+          `Aptos takes at most ${formatUsdcAmount(cap)} USDC per transfer.`,
+          { maximum: cap },
+        );
+      }
+      if (q.to === "stellar") {
+        // Nothing forwards into Stellar, so Circle is paid nothing, and Xebra takes nothing yet.
+        const quote = quoteOf(
+          "aptos",
+          "stellar",
+          "standard",
+          q.amount,
+          {
+            recipientGets: q.amount,
+            fees: { xebra: 0n, circle: 0n, delivery: 0n },
+            minimum: 1n,
+            maximum: cap,
+          },
+          null,
+        );
+        return {
+          health: null,
+          options: [{ speed: "standard", ok: true, priced: { quote, stellar: null, evm: null } }],
+        };
+      }
+      // Circle's Forwarding Service delivers, priced as every direct route is; no wrapper.
+      const health = await circleFor("aptos", q.to, opensAccount);
+      const tier = health.tiers.standard;
+      if (!tier) {
+        throw new ApiError(
+          "upstream_unavailable",
+          "Circle's delivery fee could not be read just now, so no price can be given. Try again shortly.",
+        );
+      }
+      return {
+        health,
+        options: [evmOption("aptos", q.to, q.amount, "standard", tier, health, opensAccount, null)],
+      };
+    }
+
     if (q.from === "sui") {
       const cap = deps.suiStellar.maxUnits;
       if (cap !== null && q.amount > cap) {
@@ -727,6 +796,10 @@ export function createService(deps: Deps, now: () => number = Date.now) {
   async function transferStatus(r: { chain: SourceId; tx: string }): Promise<TransferStatus> {
     if (r.chain === "sui") return suiStatus(r.tx.trim());
     if (r.chain === "solana") return solanaStatus(r.tx.trim());
+    if (r.chain === "aptos") {
+      const stellar = await aptosStellarStatus(r.tx.trim().toLowerCase());
+      if (stellar) return stellar;
+    }
     return circleStatus(r.chain, r.tx.trim().toLowerCase());
   }
 
@@ -773,12 +846,10 @@ export function createService(deps: Deps, now: () => number = Date.now) {
           : "tx must be 0x followed by 64 hex characters.",
       );
     }
-    const domain =
-      r.chain === "stellar"
-        ? STELLAR_CCTP_DOMAIN
-        : r.chain === "solana"
-          ? SOLANA_DOMAIN
-          : EVM_CHAINS[r.chain].cctpDomainId;
+    if (r.chain === "aptos" && (deps.aptos?.destinations.length ?? 0) === 0) {
+      throw new ApiError("route_unavailable", "Aptos is not switched on here.");
+    }
+    const domain = sourceDomainOf(r.chain);
     const answer = await deps.delivery(tx, domain);
     if (!answer || answer.status === "unknown") {
       throw new ApiError(
@@ -943,6 +1014,52 @@ export function createService(deps: Deps, now: () => number = Date.now) {
       );
       // A Solana transaction names a recent block and stops being valid about a minute later.
       return { quote: priced.quote, steps: [step] };
+    }
+
+    if (r.from === "aptos") {
+      if (!b.aptosBuild) {
+        throw new ApiError("route_unavailable", "Sending from Aptos is not configured here.");
+      }
+      const build = b.aptosBuild;
+      const answer = await upstream("The Aptos node", () =>
+        build({
+          sender,
+          amount: formatUsdcAmount(r.amount),
+          to: r.to,
+          recipient,
+          ...(priced.evm ? { maxFee: priced.evm.maxFee.toString() } : {}),
+        }),
+      );
+      if (!("transaction" in answer.body)) {
+        const reason = answer.body.error;
+        const code =
+          answer.status === 409
+            ? "fee_above_limit"
+            : answer.status === 503 || answer.status === 502
+              ? "upstream_unavailable"
+              : /holds .* USDC|does not exist on chain/.test(reason)
+                ? "insufficient_balance"
+                : answer.status === 400
+                  ? "invalid_request"
+                  : "transaction_rejected";
+        throw new ApiError(code, reason);
+      }
+      const t = answer.body.transaction;
+      return {
+        quote: priced.quote,
+        steps: [
+          {
+            id: "burn",
+            chain: "aptos",
+            description:
+              r.to === "stellar"
+                ? "Burn USDC on Aptos; Circle attests it, and the mint on Stellar is completed by Xebra's relayer or by POST /v1/claims."
+                : `Burn USDC on Aptos; Circle attests it and its Forwarding Service mints on ${DEST_NAME(r.to)}. Signed after ${priced.quote.expiresAt}, build it again first: the fee may have moved.`,
+            tx: { kind: "aptos", chainId: t.chainId, bytecode: t.bytecode, arguments: t.arguments },
+            expiresAt: r.to === "stellar" ? null : priced.quote.expiresAt,
+          },
+        ],
+      };
     }
 
     if (r.from === "sui" && r.to === "stellar") {
@@ -1111,6 +1228,50 @@ export function createService(deps: Deps, now: () => number = Date.now) {
     return { quote: priced.quote, steps };
   }
 
+  /** The CCTP domain a transfer from this chain is burned on. */
+  function sourceDomainOf(chain: SourceId): number {
+    return chain === "stellar"
+      ? STELLAR_CCTP_DOMAIN
+      : chain === "sui"
+        ? SUI_CCTP_DOMAIN
+        : chain === "solana"
+          ? SOLANA_DOMAIN
+          : chain === "aptos"
+            ? APTOS_CCTP_DOMAIN
+            : EVM_CHAINS[chain].cctpDomainId;
+  }
+
+  /**
+   * An Aptos burn to Stellar, read the way the Aptos page reads it, or null when it is not one (a
+   * burn Circle forwards is answered from Circle's delivery record instead).
+   */
+  async function aptosStellarStatus(tx: string): Promise<TransferStatus | null> {
+    if (!/^0x[0-9a-f]{64}$/.test(tx) || !deps.aptos?.destinations.includes("stellar")) return null;
+    if (!deps.aptosStatus) return null;
+    const answer = await deps.aptosStatus(tx);
+    if (!answer) {
+      throw new ApiError(
+        "upstream_unavailable",
+        "Circle's status could not be read just now. That does not mean the transfer failed. Try again shortly.",
+      );
+    }
+    const circleState = String(answer.state ?? "unknown");
+    // Attested but not bound for Stellar: Circle's forwarding record is the answer.
+    if (circleState === "complete" && typeof answer.refusal === "string") return null;
+    // Not attested yet: whether it is bound for Stellar is not known, so ask Circle's record too.
+    if (circleState !== "complete") return null;
+    return {
+      state: answer.delivered === true ? "delivered" : "needs_claim",
+      chain: "aptos",
+      tx,
+      deliveryTx: null,
+      reason: null,
+      // Finished by the relayer, or through POST /v1/claims with a Stellar payer.
+      claimUrl: null,
+      circleState,
+    };
+  }
+
   async function suiStatus(digest: string): Promise<TransferStatus> {
     if (!SUI_DIGEST.test(digest)) {
       throw new ApiError("invalid_request", "tx must be a Sui transaction digest.");
@@ -1271,14 +1432,10 @@ export function createService(deps: Deps, now: () => number = Date.now) {
             : "tx must be 0x followed by 64 hex characters.",
       );
     }
-    const srcDomain =
-      r.chain === "stellar"
-        ? STELLAR_CCTP_DOMAIN
-        : r.chain === "sui"
-          ? SUI_CCTP_DOMAIN
-          : onSolana
-            ? SOLANA_DOMAIN
-            : EVM_CHAINS[r.chain as EvmChainId].cctpDomainId;
+    if (r.chain === "aptos" && (deps.aptos?.destinations.length ?? 0) === 0) {
+      throw new ApiError("route_unavailable", "Aptos is not switched on here.");
+    }
+    const srcDomain = sourceDomainOf(r.chain);
     const att = await upstream("Circle's record of this burn", () => b.attestation(tx, srcDomain));
     if (!att || att.status === "unknown") {
       throw new ApiError(
@@ -1296,10 +1453,17 @@ export function createService(deps: Deps, now: () => number = Date.now) {
     const attestation = String(att.attestation) as `0x${string}`;
     const destinationDomain = Number(att.destinationDomain);
 
-    // A Solana burn into Stellar: the forwarder's mint, paid for by the payer's Stellar account.
-    if (onSolana && destinationDomain === STELLAR_CCTP_DOMAIN) {
-      if (!b.solanaStellarClaim) {
-        throw new ApiError("route_unavailable", "Claims into Stellar are not configured here.");
+    // A Solana or Aptos burn into Stellar: the forwarder's mint, paid for by the payer's Stellar
+    // account.
+    if ((onSolana || r.chain === "aptos") && destinationDomain === STELLAR_CCTP_DOMAIN) {
+      const claimStellar = onSolana ? b.solanaStellarClaim : b.aptosClaim;
+      if (!claimStellar) {
+        throw new ApiError(
+          "route_unavailable",
+          onSolana
+            ? "Claims into Stellar are not configured here."
+            : "Aptos to Stellar is not switched on here.",
+        );
       }
       if (!StrKey.isValidEd25519PublicKey(payer)) {
         throw new ApiError(
@@ -1313,12 +1477,15 @@ export function createService(deps: Deps, now: () => number = Date.now) {
           "payer's Stellar account does not exist yet. It needs XLM to pay the fee.",
         );
       }
-      const claimStellar = b.solanaStellarClaim;
       const plan = await upstream("Circle's record of this burn", () => claimStellar(tx, payer));
       if (!plan.ok) {
         if (plan.delivered)
           throw new ApiError("already_delivered", "This transfer has already been delivered.");
-        throw new ApiError("transaction_rejected", plan.reason);
+        // Aptos reports a burn Circle has not attested yet as not ready; Solana keeps its answer.
+        throw new ApiError(
+          !onSolana && /attested/.test(plan.reason) ? "not_ready" : "transaction_rejected",
+          plan.reason,
+        );
       }
       return {
         steps: [

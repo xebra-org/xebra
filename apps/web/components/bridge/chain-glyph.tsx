@@ -11,11 +11,12 @@ import { cn } from "../ui/cn";
  *
  * Files are 96px PNGs in /public/chains, sized for a 24px slot at 2x. Sources: Arc from
  * arc.network's own site icon; Unichain, Codex, World Chain and Ink from DefiLlama's chain icons;
- * every other chain from the Trust Wallet assets repository.
+ * every other chain (Aptos included) from the Trust Wallet assets repository.
  */
 export type Chain =
   | "stellar"
   | "sui"
+  | "aptos"
   | "solana"
   | "arc"
   | "avalanche"
@@ -36,6 +37,7 @@ export type Chain =
 const SRC: Record<Chain, string> = {
   stellar: "/chains/stellar.png",
   sui: "/chains/sui.png",
+  aptos: "/chains/aptos.png",
   solana: "/chains/solana.png",
   arc: "/chains/arc.png",
   avalanche: "/chains/avalanche.png",
@@ -75,6 +77,7 @@ export function ChainGlyph({ chain, className }: { chain: Chain; className?: str
 export const CHAIN_NAMES: Record<Chain, string> = {
   stellar: "Stellar",
   sui: "Sui",
+  aptos: "Aptos",
   solana: "Solana",
   arc: "Arc",
   avalanche: "Avalanche",

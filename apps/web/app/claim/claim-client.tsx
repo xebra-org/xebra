@@ -97,11 +97,14 @@ const SUI: Source = "8";
  */
 const SOLANA: Source = "5";
 const SOLANA_SIGNATURE = /^[1-9A-HJ-NP-Za-km-z]{64,88}$/;
+/** Aptos's CCTP domain. Its hashes are 0x and 64 hex, read like an EVM chain's. */
+const APTOS: Source = "9";
 
 const SOURCES: Array<{ value: Source; label: string }> = [
   { value: STELLAR, label: "Stellar" },
   { value: SUI, label: "Sui" },
   { value: SOLANA, label: "Solana" },
+  { value: APTOS, label: "Aptos" },
   ...Object.values(EVM_CHAINS).map((c) => ({ value: String(c.cctpDomainId), label: c.name })),
 ];
 
@@ -144,6 +147,11 @@ export function ClaimClient() {
     if (src === SOLANA) {
       setSource(SOLANA);
       if (raw && SOLANA_SIGNATURE.test(raw)) setTxHash(raw);
+      return;
+    }
+    if (src === APTOS) {
+      setSource(APTOS);
+      if (fromLink && EVM_HASH.test(fromLink)) setTxHash(fromLink);
       return;
     }
     const chain = src !== null && /^\d+$/.test(src) ? evmChainForDomain(Number(src)) : null;

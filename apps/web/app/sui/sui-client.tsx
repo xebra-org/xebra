@@ -566,7 +566,8 @@ function WalletSection({
 
 /**
  * A burn into Stellar on its way: burned, attested, minted. Shared with transfers that start on
- * Solana (`components/bridge/solana-bridge-form.tsx`), which name their own chain and explorer.
+ * Solana (`components/bridge/solana-bridge-form.tsx`) and Aptos
+ * (`components/bridge/aptos-bridge-form.tsx`), which name their own chain and explorer.
  */
 export function Progress({
   digest,

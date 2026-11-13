@@ -6,6 +6,25 @@ export type UnsignedTx =
   | { kind: "evm"; chainId: number; to: `0x${string}`; data: `0x${string}`; value: "0" }
   | { kind: "sui"; json: string }
   /**
+   * An Aptos Move script: Circle's precompiled burn and its arguments after the signer, in order
+   * (`@xebra/sdk/build`'s `aptosBurnPayload` turns them into what a wallet takes).
+   */
+  | {
+      kind: "aptos";
+      chainId: number;
+      bytecode: `0x${string}`;
+      arguments: {
+        amount: string;
+        destinationDomain: number;
+        mintRecipient: `0x${string}`;
+        destinationCaller: `0x${string}`;
+        burnToken: `0x${string}`;
+        maxFee: string;
+        minFinalityThreshold: number;
+        hookData: `0x${string}`;
+      };
+    }
+  /**
    * A legacy Solana transaction, serialized, base64. A claim carries no signatures; a burn from
    * Solana already carries one, its one-time message account's, and needs only the sender's.
    */

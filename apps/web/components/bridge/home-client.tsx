@@ -21,6 +21,12 @@ import { Fingerprint, Spark, Vault } from "../ui/icons";
 import { Notice } from "../ui/notice";
 import { Reveal } from "../ui/reveal";
 import { useWallets } from "../wallet/wallet-provider";
+import {
+  AptosBridgeForm,
+  type AptosSource,
+  isDestination as isAptosDestination,
+  recallAptosTransfer,
+} from "./aptos-bridge-form";
 import { CHAIN_NAMES, type Chain } from "./chain-glyph";
 import { ChainPicker, PickerLabel } from "./chain-picker";
 import { EvmBridgeForm } from "./evm-bridge-form";
@@ -43,10 +49,10 @@ import { StellarBridgeForm } from "./stellar-bridge-form";
  * whole page into client-only rendering and leave crawlers an empty shell.
  */
 /**
- * Where a transfer can start: Stellar, through the wrapper; Sui or Solana, when the server switches
- * them on; or an EVM chain, straight to Circle.
+ * Where a transfer can start: Stellar, through the wrapper; Sui, Solana or Aptos, when the server
+ * switches them on; or an EVM chain, straight to Circle.
  */
-type SourceId = "stellar" | "sui" | "solana" | EvmChainId;
+type SourceId = "stellar" | "sui" | "solana" | "aptos" | EvmChainId;
 
 /** What `/api/sui-stellar/config` says about the Sui source: absent until it answers, and when it is off. */
 interface SuiSource {
@@ -60,6 +66,42 @@ interface SuiSource {
 
 export function HomeClient({ children }: { children?: React.ReactNode }) {
   const { connections, stellarKit: kit, open: openWallets } = useWallets();
+
+  // Aptos, like Sui, is switched on by a server setting and asked for after mounting. Until it
+  // answers, or when it is off, the screen is exactly what it was.
+  const [aptos, setAptos] = useState<AptosSource | null>(null);
+  useEffect(() => {
+    let live = true;
+    fetch("/api/aptos/config", { cache: "no-store" })
+      .then((r) => (r.ok ? r.json() : null))
+      .then(
+        (
+          c: {
+            enabled?: boolean;
+            destinations?: unknown;
+            maxUsdc?: string | null;
+            relayer?: boolean;
+          } | null,
+        ) => {
+          if (!live || !c?.enabled) return;
+          const destinations = Array.isArray(c.destinations)
+            ? c.destinations.filter(isAptosDestination)
+            : [];
+          if (destinations.length === 0) return;
+          setAptos({ destinations, maxUsdc: c.maxUsdc ?? null, relayer: c.relayer === true });
+          // A transfer this browser was following comes back on screen.
+          if (recallAptosTransfer() && !parseDeepLink(window.location.search).from) {
+            setFrom("aptos");
+          }
+        },
+      )
+      .catch(() => {
+        // Off, or offline: the Aptos source simply is not offered.
+      });
+    return () => {
+      live = false;
+    };
+  }, []);
 
   // Stellar always; an EVM chain only once this build lets it send. With none on, there is one
   // source, no picker, and the screen is exactly the Stellar one.
@@ -149,8 +191,15 @@ export function HomeClient({ children }: { children?: React.ReactNode }) {
   }, []);
   // The top bar's wallet modal: a Sui tab too once Sui is a source here.
   const connect = useCallback(
-    () => openWallets(sui ? ["stellar", "solana", "evm", "sui"] : ["stellar", "solana", "evm"]),
-    [openWallets, sui],
+    () =>
+      openWallets([
+        "stellar",
+        "solana",
+        "evm",
+        ...(sui ? (["sui"] as const) : []),
+        ...(aptos ? (["aptos"] as const) : []),
+      ]),
+    [openWallets, sui, aptos],
   );
 
   const sources = useMemo<SourceId[]>(
@@ -158,9 +207,10 @@ export function HomeClient({ children }: { children?: React.ReactNode }) {
       "stellar",
       ...(sui ? (["sui"] as const) : []),
       ...(solana ? (["solana"] as const) : []),
+      ...(aptos ? (["aptos"] as const) : []),
       ...evmSources(env.evmRoutes),
     ],
-    [sui, solana],
+    [sui, solana, aptos],
   );
   const manyRoutes = sources.length > 1;
   const [from, setFrom] = useState<SourceId>("stellar");
@@ -272,7 +322,9 @@ export function HomeClient({ children }: { children?: React.ReactNode }) {
                 sourcePicker={sourcePicker}
                 onBusyChange={setBusy}
               />
-            ) : from === "solana" ? null : (
+            ) : from === "solana" ? null : from === "aptos" && aptos ? (
+              <AptosBridgeForm source={aptos} sourcePicker={sourcePicker} onBusyChange={setBusy} />
+            ) : from === "aptos" ? null : (
               // Keyed by source: a different chain is a different transfer, and nothing typed for
               // one (least of all a receipt) should survive into another.
               <EvmBridgeForm
