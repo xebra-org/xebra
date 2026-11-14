@@ -12,7 +12,8 @@
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "clean": "rm -rf .next .next-build .turbo",
     "build:next": "node scripts/check-build-network.mjs && NEXT_DIST_DIR=.next-build next build",
-    "build:vercel": "node scripts/check-build-network.mjs && next build"
+    "build:vercel": "node scripts/check-build-network.mjs && next build",
+    "intents:volume": "node scripts/near-intents-volume.mjs"
   },
   "dependencies": {
     "@creit.tech/stellar-wallets-kit": "^1.6.0",

@@ -1,0 +1,99 @@
+{
+  "about": "Transfers into NEAR Intents made through Xebra's wrapper contracts, found from their BridgeInitiated events and confirmed against 1Click's status API. Written by apps/web/scripts/near-intents-volume.mjs.",
+  "updatedAt": "2026-11-14T06:47:36.227Z",
+  "totals": {
+    "transfers": 2,
+    "delivered": 2,
+    "usdcSent": 3.8,
+    "usdDeliveredOnNear": 3.393585,
+    "bySource": {
+      "stellar": {
+        "transfers": 1,
+        "usdcSent": 1
+      },
+      "arc": {
+        "transfers": 1,
+        "usdcSent": 2.8
+      }
+    }
+  },
+  "cursors": {
+    "arc": "31159780",
+    "stellar": 65470562
+  },
+  "transfers": [
+    {
+      "id": "stellar:0x831c9fdb30e65f414b4d0e4ce4efa1fa8c11d47f63f3e3183d660af258c590fd",
+      "source": "stellar",
+      "sourceTx": "95efc874f62ed85b928c4886cdc943a0083594881e02c2916026b7bb4ced842b",
+      "sourceTxUrl": "https://stellar.expert/explorer/public/tx/95efc874f62ed85b928c4886cdc943a0083594881e02c2916026b7bb4ced842b",
+      "at": "2026-11-12T23:24:27Z",
+      "sender": "GBFI4X5ERTTOBZ22N54INR5ELPRLSIDGN7ZIXHZDH5CBIMDYFVSQSJHM",
+      "domain": 6,
+      "mintRecipient": "0x000000000000000000000000413731ce17ba813bf5b6aef69542ad69ae19c9e5",
+      "recipientOwner": "0x0000000000000000000000000000000000000000000000000000000000000000",
+      "amount": 1,
+      "xebraFee": 0.245136,
+      "circleFee": 0.054864,
+      "hub": "base",
+      "depositAddress": "0x413731ce17ba813bf5b6aef69542ad69ae19c9e5",
+      "intents": {
+        "status": "SUCCESS",
+        "updatedAt": "2026-11-12T23:25:08.000Z",
+        "depositedUsdc": 0.7,
+        "depositedUsd": 0.6996612,
+        "amountOut": "0.69558",
+        "amountOutUsd": 0.69524333928,
+        "destinationAsset": "nep141:17208628f84f5d6ad33f0da3bbbeb27ffcb398eac501a31bd6ad2011e36133a1",
+        "recipient": "that-guy.near",
+        "referral": null,
+        "nearTxs": [
+          "AtKuoXRQPm7TNqaVzvmuV3gLycuu3sunSbXrC1NBjPA1",
+          "AT1pBgjWNXPtJ4Ry3uAZmfFwU8qe1uNHSw3JTar5q6De",
+          "EbMzLRnfXD9wGvdjm4xK9QQrhGcpDPY3ePzfmkaTxMmf",
+          "Hv1xrVs5PLQvLPBm2CwR3kzbPirW1hK4Xd9KuoVzVAg7"
+        ],
+        "destinationTxs": [
+          "Hv1xrVs5PLQvLPBm2CwR3kzbPirW1hK4Xd9KuoVzVAg7"
+        ]
+      }
+    },
+    {
+      "id": "arc:0x88d0fbfc187db40594f9ffe9bbe33e8ee4a3f87d307482fcd1b2c2cd97ac1ad7",
+      "source": "arc",
+      "sourceTx": "0x1b5498defbccd39bf8aeafa44bd4b6906e2e3e89f3b3fbc25bb1791794a55d95",
+      "sourceTxUrl": "https://explorer.arc.io/tx/0x1b5498defbccd39bf8aeafa44bd4b6906e2e3e89f3b3fbc25bb1791794a55d95",
+      "at": "2026-11-13T21:37:06.000Z",
+      "sender": "0x3a5DC5aAE199bB836C112F1D8da446E92667714F",
+      "domain": 6,
+      "mintRecipient": "0x000000000000000000000000f1ac9ae4b089f197c662044e79e067a24aa1e976",
+      "recipientOwner": "0x0000000000000000000000000000000000000000000000000000000000000000",
+      "amount": 2.8,
+      "xebraFee": 0.046172,
+      "circleFee": 0.053828,
+      "hub": "base",
+      "depositAddress": "0xf1ac9ae4b089f197c662044e79e067a24aa1e976",
+      "intents": {
+        "status": "SUCCESS",
+        "updatedAt": "2026-11-13T21:37:40.000Z",
+        "depositedUsdc": 2.7,
+        "depositedUsd": 2.6986581,
+        "amountOut": "2.699683",
+        "amountOutUsd": 2.698341257549,
+        "destinationAsset": "nep141:17208628f84f5d6ad33f0da3bbbeb27ffcb398eac501a31bd6ad2011e36133a1",
+        "recipient": "that-guy.near",
+        "referral": null,
+        "nearTxs": [
+          "w9vpCq2b9a4iDNGYjw6XUciTqbf8u27o3ca1NELw4gV",
+          "5AEgu8zJyibnQKFmWH8p4W9EfvoeGX7i9Q4z4nZgVYUj",
+          "4cay5LbpNTqJnzvPjgARabjQs5PCbPBKC8pute1MJ9wV",
+          "F1kAhHaHeLHKh7QBGJ77zvAfLrKohkRcR9XLrhGN3WQY"
+        ],
+        "destinationTxs": [
+          "F1kAhHaHeLHKh7QBGJ77zvAfLrKohkRcR9XLrhGN3WQY"
+        ]
+      }
+    }
+  ],
+  "notIntents": []
+}

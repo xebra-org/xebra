@@ -45,6 +45,16 @@ in the [guide](/docs/guides/near-intents#proven-on-mainnet):
 
 Arc holds the most USDC of the nine (1.42 billion), and 1Click does not list it at all.
 
+Every transfer into NEAR Intents through Xebra's contracts can be counted from the chain: each
+`BridgeInitiated` event from the Arc and Stellar contracts that mints on a hub is checked against
+1Click's status API, which knows the deposit addresses it issued and answers 404 for any other.
+[`near-intents-volume.mjs`](https://github.com/xebra-org/xebra/blob/main/apps/web/scripts/near-intents-volume.mjs)
+does this and keeps the result in
+[`evidence/near-intents/transfers.json`](https://github.com/xebra-org/xebra/blob/main/evidence/near-intents/transfers.json).
+On 14 November it found two, both delivered: the two proofs above, made by the Xebra team. The
+quotes xebra.exchange asks 1Click for also carry the referral `xebra`, so NEAR Intents' own records
+show which swaps came in through it.
+
 ## Size: CCTP has no pool to run dry
 
 CCTP burns on one chain and Circle mints on the other, so the size of a transfer is not limited by
