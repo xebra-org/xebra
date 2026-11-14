@@ -94,6 +94,16 @@ built before the hackathon and is live on mainnet. Only the NEAR Intents integra
 [`pre-hackathon...hackathon-submission`](https://github.com/xebra-org/xebra/compare/pre-hackathon...hackathon-submission).
 It uses NEAR Intents' public 1Click API and token list, Circle's CCTP, and our own `@xebra/sdk`.
 
+That diff also carries Xebra's own bridge work from the same days (Solana, Aptos and Sui as source
+chains, the fee cut, a 404 page), which is not entered. The entry is these paths:
+`packages/sdk/src/intents/`, `apps/web/app/near-intents/`, `apps/web/app/api/near-intents/`,
+`apps/web/lib/near-intents/`, `apps/web/scripts/near-intents-volume.mjs`, `evidence/2026-11-13/`,
+`evidence/near-intents/`, and the docs pages
+[`guides/near-intents.mdx`](apps/docs/content/docs/guides/near-intents.mdx) and
+[`concepts/evidence.mdx`](apps/docs/content/docs/concepts/evidence.mdx). The EVM mesh and the
+fee wrapper pricing in `/v1` (`461dea5`, `6d53251`) were built so Intents swaps can start on any
+EVM chain.
+
 ## Status
 
 | | |
