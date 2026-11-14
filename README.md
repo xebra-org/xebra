@@ -39,6 +39,8 @@ see [`SECURITY.md`](./SECURITY.md).)
 
 Built for [NEAR HACKATHON](https://nearhackathon.com) (tracks: Real-World Money, Unstoppable DeFi).
 
+**Demo video:** [x.com/xebra_exchange/status/2121538607965954189](https://x.com/xebra_exchange/status/2121538607965954189), a real 2.80 USDC transfer from Arc into NEAR Intents, in the builder's own voice.
+
 **The problem.** NEAR Intents can swap into almost anything, but its solvers do not quote USDC that
 starts on Stellar: on 2026-11-12, 1Click answered `Quoting for this pair is not available` for Stellar
 USDC into USDC on Base, NEAR and Solana, at every amount tried. NEAR Intents moves money on and off
@@ -72,6 +74,11 @@ seconds from burn to wallet:
 [burned on Stellar](https://stellar.expert/explorer/public/tx/95efc874f62ed85b928c4886cdc943a0083594881e02c2916026b7bb4ced842b) 23:24:27 UTC,
 [minted on Base](https://basescan.org/tx/0x8d16acc88b2b07634a907a1f685fad0b7b4052094896d01d0651f2144dc8940a) into the 1Click deposit address 23:24:38,
 [delivered on NEAR](https://nearblocks.io/txns/Hv1xrVs5PLQvLPBm2CwR3kzbPirW1hK4Xd9KuoVzVAg7) 23:25:03.
+From Arc, which 1Click does not list, on 2026-11-13: 2.80 USDC in, 2.699683 USDC on `that-guy.near`,
+30 seconds, the first transfer through Xebra's Arc contract (the one in the demo video):
+[burned on Arc](https://explorer.arc.io/tx/0x1b5498defbccd39bf8aeafa44bd4b6906e2e3e89f3b3fbc25bb1791794a55d95) 21:37:06 UTC,
+[minted on Base](https://basescan.org/tx/0xb9fb6e35e9300faa0a341a1f52d57de9102e313bc4f0d77f1238cd24a306c4f6) into the 1Click deposit address 21:37:11,
+[delivered on NEAR](https://nearblocks.io/txns/F1kAhHaHeLHKh7QBGJ77zvAfLrKohkRcR9XLrhGN3WQY) 21:37:36.
 
 **Try it.**
 
