@@ -187,9 +187,9 @@ describe("SOLANA_SENDS_TO", () => {
     expect(s.evm.map((c) => c.id)).toEqual(["base", "arc"]);
     expect(s.stellar).toBe(false);
   });
-  it("`all` is every EVM chain in the table; Stellar only by name", () => {
+  it("`all` is every EVM chain in the table and Stellar", () => {
     expect(parseSolanaSendsTo("all").evm).toHaveLength(Object.keys(EVM_CHAINS).length);
-    expect(parseSolanaSendsTo("all").stellar).toBe(false);
+    expect(parseSolanaSendsTo("all").stellar).toBe(true);
     expect(parseSolanaSendsTo("all,stellar").stellar).toBe(true);
     expect(parseSolanaSendsTo("stellar")).toEqual({ evm: [], stellar: true });
   });

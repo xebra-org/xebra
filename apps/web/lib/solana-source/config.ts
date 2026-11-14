@@ -3,10 +3,8 @@
  * on or off is a Vercel env change and a redeploy, not a rebuild of the bundle.
  *
  *  - `SOLANA_SENDS_TO`       where Solana may send. A comma list of chain ids from the EVM table
- *                            (`base,arbitrum,arc`), `all` for every chain in that table, and
- *                            `stellar` for Stellar, which is never implied by `all`: nothing forwards
- *                            into Stellar, so that route leans on our relayer (or the owner's own
- *                            claim) and is switched on by name. `all,stellar` is everything.
+ *                            (`base,arbitrum,arc`) and `stellar`, or `all` for every one of them,
+ *                            Stellar included, as `all` means for Aptos.
  *                            Unset, empty or `none`: Solana is not a source at all.
  *  - `SOLANA_SOURCE_MAX_USDC` optional per-transfer cap, enforced when the burn is built. Unset
  *                            means no cap.
@@ -49,7 +47,7 @@ export function parseSolanaSendsTo(raw: string | null | undefined): SolanaSends 
   const all = names.includes("all");
   return {
     evm: Object.values(EVM_CHAINS).filter((c) => all || names.includes(c.id)),
-    stellar: names.includes("stellar"),
+    stellar: all || names.includes("stellar"),
   };
 }
 

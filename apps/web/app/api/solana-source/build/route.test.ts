@@ -62,8 +62,8 @@ describe("POST /api/solana-source/build", () => {
     });
   });
 
-  it("refuses a chain the switch does not name, and Stellar unless named", async () => {
-    vi.stubEnv("SOLANA_SENDS_TO", "all");
+  it("refuses a chain the switch does not name", async () => {
+    vi.stubEnv("SOLANA_SENDS_TO", "base");
     expect(
       (await post({ sender: SENDER, amount: "5", recipient: G, chain: "stellar" })).status,
     ).toBe(400);
