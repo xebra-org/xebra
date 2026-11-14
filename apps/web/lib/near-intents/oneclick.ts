@@ -87,6 +87,8 @@ export interface QuoteRequest {
   recipient: string;
   recipientType: "DESTINATION_CHAIN" | "INTENTS";
   deadline: string;
+  /** Who sent the swap, shown in NEAR Intents' records and analytics. Lower case. */
+  referral?: string;
 }
 
 export interface Quote {

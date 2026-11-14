@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { legSeconds, refundFor, sourceOf, toUnits } from "./plan";
+import { ONECLICK_REFERRAL, legSeconds, refundFor, request, sourceOf, toUnits } from "./plan";
 
 describe("toUnits", () => {
   it("scales a decimal amount to a token's base units", () => {
@@ -53,5 +53,27 @@ describe("legSeconds", () => {
     expect(legSeconds("stellar")).toBe(60);
     expect(legSeconds("arc")).toBe(60);
     expect(legSeconds("base")).toBe(20 * 60);
+  });
+});
+
+describe("request", () => {
+  const r = {
+    amount: "25",
+    sender: "0x1111111111111111111111111111111111111111",
+    destinationAsset: "nep141:wrap.near",
+    recipient: "alice.near",
+  };
+  const over = {
+    dry: true,
+    originAsset: "nep141:base-0x833589fcd6edb6e08f4c7c32d4f71b54bda02913.omft.near",
+    amount: "25000000",
+    refundTo: r.sender,
+    refundType: "ORIGIN_CHAIN" as const,
+  };
+
+  it("tags every 1Click quote with Xebra's referral, in lower case as 1Click requires", () => {
+    expect(ONECLICK_REFERRAL).toBe("xebra");
+    expect(request(over, r).referral).toBe("xebra");
+    expect(request({ ...over, dry: false }, r, { swapType: "FLEX_INPUT" }).referral).toBe("xebra");
   });
 });

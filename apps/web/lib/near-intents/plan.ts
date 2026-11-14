@@ -32,6 +32,12 @@ const router = createIntentsRouter({ client: xebra });
 const SLIPPAGE_BPS = 100;
 const DEADLINE_MS = 60 * 60_000;
 
+/**
+ * Tags every 1Click quote Xebra asks for, so NEAR Intents' records show which swaps came in
+ * through Xebra. Lower case, as 1Click requires.
+ */
+export const ONECLICK_REFERRAL = "xebra";
+
 export interface PlanRequest {
   /**
    * The chain the user's USDC is on, named as Xebra or NEAR Intents names it. Default `stellar`.
@@ -126,7 +132,7 @@ function chainName(from: Source): string {
   return from === "stellar" ? "Stellar" : EVM_CHAINS[from].name;
 }
 
-function request(
+export function request(
   over: Pick<oneclick.QuoteRequest, "dry" | "originAsset" | "amount" | "refundTo" | "refundType">,
   r: PlanRequest,
   extra: Partial<oneclick.QuoteRequest> = {},
@@ -139,6 +145,7 @@ function request(
     recipient: r.recipient,
     recipientType: "DESTINATION_CHAIN",
     deadline: new Date(Date.now() + DEADLINE_MS).toISOString(),
+    referral: ONECLICK_REFERRAL,
     ...over,
     ...extra,
   };
