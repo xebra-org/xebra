@@ -365,6 +365,20 @@ describe("withdrawal", () => {
     expect((err2 as OneClickError).body).toBe("bad gateway");
   });
 
+  it("withdraws with a 1Click partner JWT instead of an API key", async () => {
+    const one = fake1Click();
+    const rb = createRebalancer({
+      xebra: fakeXebra(),
+      fetch: one.fetch,
+      now: () => NOW,
+      oneClick: { jwt: "j" },
+    });
+    await rb.startWithdrawal(REQ);
+    const g = one.calls.find((c) => c.path === "/v0/generate-intent");
+    expect(g?.headers.Authorization).toBe("Bearer j");
+    expect(g?.headers["X-API-Key"]).toBeUndefined();
+  });
+
   it("quotes same asset out to the market maker's own wallet, refund to its own account", async () => {
     const one = fake1Click();
     const rb = createRebalancer({
