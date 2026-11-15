@@ -13,9 +13,21 @@ import { ArrowRight, Check } from "../../components/ui/icons";
 import { Notice } from "../../components/ui/notice";
 import { useWallets } from "../../components/wallet/wallet-provider";
 import { reportError } from "../../lib/format-error";
+import {
+  findBurnAfterFailure,
+  isDeclined,
+  lastSuiBurn,
+  sendFailureMessage,
+} from "../../lib/sui-send-check";
 import { claimOnStellar } from "../../lib/sui-stellar/claim-client";
 import { signAndExecuteSui } from "../../lib/wallets/sui";
-import { type SuiDestination, SuiDestinationPicker, SuiForwarded, recallSuiEvm } from "./sui-evm";
+import {
+  RecoveredNotice,
+  type SuiDestination,
+  SuiDestinationPicker,
+  SuiForwarded,
+  recallSuiEvm,
+} from "./sui-evm";
 
 /**
  * Sui to Stellar: connect a Sui wallet, burn USDC, and watch it arrive.
@@ -29,6 +41,8 @@ import { type SuiDestination, SuiDestinationPicker, SuiForwarded, recallSuiEvm }
 const STORAGE_KEY = "xebra.sui-stellar.digest";
 const POLL_MS = 4000;
 const DIGEST = /^[1-9A-HJ-NP-Za-km-z]{32,64}$/;
+/** Stellar's CCTP domain: the only burn this form follows itself. */
+const STELLAR_DOMAIN = 27;
 
 export type Delivery =
   | { kind: "idle" }
@@ -66,12 +80,9 @@ const short = (s: string) => `${s.slice(0, 6)}...${s.slice(-4)}`;
 
 type Problem = { text: string; declined: boolean };
 
-// Wallets word a declined request differently ("User rejected the request", "Cancelled", ...).
-const DECLINED = /reject|declin|den(y|ied)|cancel|closed|dismiss/i;
-
 function problem(label: string, err: unknown): Problem {
   const text = reportError(label, err);
-  return { text, declined: DECLINED.test(text) };
+  return { text, declined: isDeclined(text) };
 }
 
 /** The standalone `/sui` page: a heading around the same transfer the bridge screen embeds. */
@@ -147,8 +158,10 @@ export function SuiTransfer({
 }) {
   const [amount, setAmount] = useState("");
   const [recipient, setRecipient] = useState("");
-  const [step, setStep] = useState<"idle" | "preparing" | "signing">("idle");
+  const [step, setStep] = useState<"idle" | "preparing" | "signing" | "checking">("idle");
   const [error, setError] = useState<Problem | null>(null);
+  // The wallet reported an error, but the burn was on Sui anyway.
+  const [recovered, setRecovered] = useState(false);
   const [to, setTo] = useState<SuiDestination>("stellar");
   const forwardedKey = [...evmDestinations, ...(solana ? ["solana"] : [])].join(",");
 
@@ -208,7 +221,11 @@ export function SuiTransfer({
   async function send() {
     if (!wallet || !account) return;
     setError(null);
+    setRecovered(false);
     setStep("preparing");
+    // The newest burn before this one, read alongside the build, to recognise this one after an error.
+    const before = lastSuiBurn(account.address);
+    let signing = false;
     try {
       const res = await fetch("/api/sui-stellar/build", {
         method: "POST",
@@ -224,23 +241,53 @@ export function SuiTransfer({
         setError({ text: body.error ?? "Could not prepare the transfer.", declined: false });
         return;
       }
+      await before;
       setStep("signing");
+      signing = true;
       const tx = await signAndExecuteSui(wallet, account, body.transaction);
-      remember(tx);
-      setAttest("unknown");
-      setDelivery({ kind: "idle" });
-      setDigest(tx);
+      follow(tx);
     } catch (err) {
-      setError(problem("sui burn failed", err));
+      const p = problem("sui burn failed", err);
+      if (!signing) {
+        setError(p);
+        return;
+      }
+      // Nothing is said until Sui has been checked: the wallet may have sent it before failing.
+      setStep("checking");
+      const check = await findBurnAfterFailure(account.address, await before, {
+        // A decline is checked twice, not once: some wallets report one after sending anyway.
+        ...(p.declined ? { delaysMs: [0, 3000] } : {}),
+      });
+      if (check.kind === "found" && check.burn.destinationDomain === STELLAR_DOMAIN) {
+        setRecovered(true);
+        follow(check.burn.digest);
+        return;
+      }
+      const outcome = check.kind === "none" ? "none" : "unknown";
+      setError(
+        p.declined && outcome === "none"
+          ? p
+          : { text: sendFailureMessage(p.text, outcome), declined: false },
+      );
     } finally {
       setStep("idle");
     }
   }
 
+  function follow(tx: string) {
+    remember(tx);
+    setAttest("unknown");
+    setDelivery({ kind: "idle" });
+    setDigest(tx);
+  }
+
   // Follow a burn: ask Circle until it attests, then ask the relayer to finish the mint.
+  // The loop restarts only when the transfer settles, not on every delivery change: restarting on
+  // "completing" dropped the relayer's answer and posted the mint a second time.
   const completing = useRef(false);
+  const settled = delivery.kind === "done" || delivery.kind === "stuck";
   useEffect(() => {
-    if (!digest || delivery.kind === "done" || delivery.kind === "stuck") return;
+    if (!digest || settled) return;
     let cancelled = false;
     let timer: ReturnType<typeof setTimeout>;
 
@@ -310,7 +357,7 @@ export function SuiTransfer({
       cancelled = true;
       clearTimeout(timer);
     };
-  }, [digest, delivery.kind, relayerEnabled]);
+  }, [digest, settled, relayerEnabled]);
 
   function startOver() {
     remember(null);
@@ -321,6 +368,7 @@ export function SuiTransfer({
     setError(null);
     setClaimError(null);
     setRecipientSeen(null);
+    setRecovered(false);
   }
 
   async function claim() {
@@ -339,20 +387,23 @@ export function SuiTransfer({
   }
 
   const progress = digest ? (
-    <Progress
-      digest={digest}
-      attest={attest}
-      delivery={delivery}
-      relayerEnabled={relayerEnabled}
-      recipient={recipientSeen}
-      stellarAddress={stellarAddress}
-      claiming={claiming}
-      claimError={claimError}
-      onClaim={claim}
-      onConnectStellar={() => openWallets(["stellar"])}
-      onRetry={() => setDelivery({ kind: "idle" })}
-      onReset={startOver}
-    />
+    <>
+      {recovered && <RecoveredNotice className="mb-5" />}
+      <Progress
+        digest={digest}
+        attest={attest}
+        delivery={delivery}
+        relayerEnabled={relayerEnabled}
+        recipient={recipientSeen}
+        stellarAddress={stellarAddress}
+        claiming={claiming}
+        claimError={claimError}
+        onClaim={claim}
+        onConnectStellar={() => openWallets(["stellar"])}
+        onRetry={() => setDelivery({ kind: "idle" })}
+        onReset={startOver}
+      />
+    </>
   ) : null;
 
   const burnLabel =
@@ -360,7 +411,9 @@ export function SuiTransfer({
       ? "Preparing"
       : step === "signing"
         ? "Confirm in your wallet"
-        : "Burn on Sui";
+        : step === "checking"
+          ? "Checking Sui"
+          : "Burn on Sui";
 
   const walletSection = (
     <WalletSection
