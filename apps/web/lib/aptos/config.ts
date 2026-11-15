@@ -1,3 +1,4 @@
+import { CLAIM_ONLY_DOMAINS } from "@xebra/sdk/core";
 /**
  * Server-side switches for Aptos as a source chain. Read at request time, like the Sui switches in
  * `lib/sui-stellar/config.ts`, so turning a route on or off is an env change and a redeploy, not a
@@ -30,7 +31,10 @@ export type AptosDestination = EvmChainId | "solana" | "stellar";
 export const APTOS_ALL_DESTINATIONS: readonly AptosDestination[] = [
   "stellar",
   "arc",
-  ...EVM_CHAIN_IDS.filter((id) => id !== "arc"),
+  // Not the chains Circle does not deliver to: an Aptos burn is always a forwarded one.
+  ...EVM_CHAIN_IDS.filter(
+    (id) => id !== "arc" && !CLAIM_ONLY_DOMAINS.includes(EVM_CHAINS[id].cctpDomainId),
+  ),
   "solana",
 ];
 

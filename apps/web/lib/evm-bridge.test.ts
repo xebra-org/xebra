@@ -16,6 +16,8 @@ const FROM = "0x1111111111111111111111111111111111111111";
 const RECIPIENT = "0x2222222222222222222222222222222222222222";
 const APPROVAL_HASH = `0x${"a1".repeat(32)}`;
 const BURN_HASH = `0x${"b2".repeat(32)}`;
+const FEE_HASH = `0x${"fe".repeat(32)}`;
+const FEE_ADDRESS = "0x32e95718A4D9B60F2e4Fb1d371189ac5DD28211A";
 
 /** The latest block's timestamp in this scripted chain. */
 const CHAIN_NOW = 1_800_000_000n;
@@ -41,6 +43,7 @@ function chain(
     chainAfterApproval: number;
     simulation: () => string;
     emptyReads: boolean;
+    declineFee: boolean;
   }> = {},
 ) {
   const state = {
@@ -71,7 +74,11 @@ function chain(
           throw new Error(`unexpected eth_call ${selector}`);
         }
         case "eth_sendTransaction": {
+          if (state.declineFee && arg?.data?.startsWith("0xa9059cbb")) {
+            throw Object.assign(new Error("User rejected the request."), { code: 4001 });
+          }
           sent.push(arg as never);
+          if (arg?.data?.startsWith("0xa9059cbb")) return FEE_HASH;
           if (arg?.data?.startsWith("0x095ea7b3")) {
             state.allowance = state.approvalSets ?? BigInt(`0x${arg.data.slice(-64)}`);
             if (state.chainAfterApproval) state.chainId = state.chainAfterApproval;
@@ -121,7 +128,7 @@ describe("submitEvmBridge through Xebra's wrapper", () => {
         via: { address: WRAPPER, maxWrapperFee: 300_000n },
       }),
     );
-    expect(result).toEqual({ txHash: BURN_HASH, approvalTxHash: APPROVAL_HASH });
+    expect(result).toEqual({ txHash: BURN_HASH, approvalTxHash: APPROVAL_HASH, feeTxHash: null });
 
     const [approval, burn] = c.sent;
     expect(approval?.to).toBe(arc.usdcAddress);
@@ -170,7 +177,7 @@ describe("submitEvmBridge", () => {
     const steps: EvmBridgeStep[] = [];
     const result = await submitEvmBridge(request(c, { onStep: (s) => steps.push(s) }));
 
-    expect(result).toEqual({ txHash: BURN_HASH, approvalTxHash: APPROVAL_HASH });
+    expect(result).toEqual({ txHash: BURN_HASH, approvalTxHash: APPROVAL_HASH, feeTxHash: null });
     expect(steps).toEqual(["switching", "checking", "approving", "confirming-approval", "burning"]);
     expect(c.sent).toHaveLength(2);
 
@@ -190,6 +197,42 @@ describe("submitEvmBridge", () => {
       base.usdcAddress,
     ]);
     expect(decoded.args[5]).toBe(16_778n);
+  });
+
+  it("pays Xebra's flat fee right after the burn, and counts it in the balance check", async () => {
+    const c = chain();
+    const steps: EvmBridgeStep[] = [];
+    const result = await submitEvmBridge(
+      request(c, {
+        onStep: (s) => steps.push(s),
+        xebraFee: { address: FEE_ADDRESS, amount: 100_000n },
+      }),
+    );
+    expect(result.feeTxHash).toBe(FEE_HASH);
+    expect(steps.at(-1)).toBe("paying-fee");
+    const fee = c.sent.at(-1);
+    expect(fee?.to).toBe(base.usdcAddress);
+    expect(fee?.data.slice(0, 10)).toBe("0xa9059cbb");
+    expect(fee?.data).toContain(FEE_ADDRESS.slice(2).toLowerCase());
+    expect(BigInt(`0x${fee?.data.slice(-64)}`)).toBe(100_000n);
+
+    // 5 to burn and 0.10 to Xebra: a wallet holding exactly 5 is short.
+    await expect(
+      submitEvmBridge(
+        request(chain({ balance: 5_000_000n }), {
+          xebraFee: { address: FEE_ADDRESS, amount: 100_000n },
+        }),
+      ),
+    ).rejects.toThrow(/needs 5.1/);
+  });
+
+  it("keeps the transfer when the wallet declines the fee: the burn is already out", async () => {
+    const c = chain({ declineFee: true });
+    const result = await submitEvmBridge(
+      request(c, { xebraFee: { address: FEE_ADDRESS, amount: 100_000n } }),
+    );
+    expect(result.txHash).toBe(BURN_HASH);
+    expect(result.feeTxHash).toBeNull();
   });
 
   it("skips the approval when Circle's messenger may already pull the amount", async () => {

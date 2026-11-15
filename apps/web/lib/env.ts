@@ -2,8 +2,11 @@ import {
   parseArcReceivesFrom,
   parseArcSendsTo,
   parseEvmMesh,
+  parseEvmToSolana,
+  parseEvmToStellar,
   parseStellarSendsTo,
 } from "@xebra/sdk/core";
+import { parseFeeAddresses } from "./fee-addresses";
 
 /**
  * The frontend's single source of network truth.
@@ -66,6 +69,8 @@ const RAW = {
   NEXT_PUBLIC_ARC_SENDS_TO: process.env.NEXT_PUBLIC_ARC_SENDS_TO,
   NEXT_PUBLIC_ARC_RECEIVES_FROM: process.env.NEXT_PUBLIC_ARC_RECEIVES_FROM,
   NEXT_PUBLIC_EVM_MESH: process.env.NEXT_PUBLIC_EVM_MESH,
+  NEXT_PUBLIC_EVM_TO_SOLANA: process.env.NEXT_PUBLIC_EVM_TO_SOLANA,
+  NEXT_PUBLIC_EVM_TO_STELLAR: process.env.NEXT_PUBLIC_EVM_TO_STELLAR,
   NEXT_PUBLIC_STELLAR_SENDS_TO: process.env.NEXT_PUBLIC_STELLAR_SENDS_TO,
   NEXT_PUBLIC_ARC_USE_WRAPPER: process.env.NEXT_PUBLIC_ARC_USE_WRAPPER,
   NEXT_PUBLIC_STELLAR_ESCROW_CONTRACT_ID: process.env.NEXT_PUBLIC_STELLAR_ESCROW_CONTRACT_ID,
@@ -73,6 +78,10 @@ const RAW = {
     process.env.NEXT_PUBLIC_STELLAR_CCTP_WRAPPER_CONTRACT_ID,
   NEXT_PUBLIC_STELLAR_CCTP_WRAPPER_LEGACY_CONTRACT_ID:
     process.env.NEXT_PUBLIC_STELLAR_CCTP_WRAPPER_LEGACY_CONTRACT_ID,
+  NEXT_PUBLIC_XEBRA_FEE_ADDRESS_EVM: process.env.NEXT_PUBLIC_XEBRA_FEE_ADDRESS_EVM,
+  NEXT_PUBLIC_XEBRA_FEE_ADDRESS_SOLANA: process.env.NEXT_PUBLIC_XEBRA_FEE_ADDRESS_SOLANA,
+  NEXT_PUBLIC_XEBRA_FEE_ADDRESS_SUI: process.env.NEXT_PUBLIC_XEBRA_FEE_ADDRESS_SUI,
+  NEXT_PUBLIC_XEBRA_FEE_ADDRESS_APTOS: process.env.NEXT_PUBLIC_XEBRA_FEE_ADDRESS_APTOS,
 } as const;
 
 type RawKey = keyof typeof RAW;
@@ -167,6 +176,8 @@ export const env = {
     arcSendsTo: parseArcSendsTo(optional("NEXT_PUBLIC_ARC_SENDS_TO")),
     arcReceivesFrom: parseArcReceivesFrom(optional("NEXT_PUBLIC_ARC_RECEIVES_FROM")),
     evmMesh: parseEvmMesh(optional("NEXT_PUBLIC_EVM_MESH")),
+    evmToSolana: parseEvmToSolana(optional("NEXT_PUBLIC_EVM_TO_SOLANA")),
+    evmToStellar: parseEvmToStellar(optional("NEXT_PUBLIC_EVM_TO_STELLAR")),
   },
   /**
    * The EVM chains other than Arc that Stellar may send to, through the wrapper: a comma-separated
@@ -185,6 +196,17 @@ export const env = {
    * the whole amount, so it changes only by a commit. With no wrapper pinned this does nothing.
    */
   arcUseWrapper: optional("NEXT_PUBLIC_ARC_USE_WRAPPER") === "1",
+  /**
+   * Xebra's fee addresses for the flat fee on routes without a Xebra contract (`lib/fee-addresses`).
+   * EVM defaults to the Arc wrapper's fee recipient; Solana, Sui and Aptos have none, and their
+   * routes are off until one is set.
+   */
+  feeAddresses: parseFeeAddresses({
+    evm: optional("NEXT_PUBLIC_XEBRA_FEE_ADDRESS_EVM"),
+    solana: optional("NEXT_PUBLIC_XEBRA_FEE_ADDRESS_SOLANA"),
+    sui: optional("NEXT_PUBLIC_XEBRA_FEE_ADDRESS_SUI"),
+    aptos: optional("NEXT_PUBLIC_XEBRA_FEE_ADDRESS_APTOS"),
+  }),
   /**
    * Intent/swap-rail only, which is out of scope: the product is a USDC bridge over CCTP.
    * Optional so a mainnet build is not blocked on deploying an escrow the product does not

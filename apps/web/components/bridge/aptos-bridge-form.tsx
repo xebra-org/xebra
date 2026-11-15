@@ -6,8 +6,11 @@ import {
   EVM_CHAINS,
   type EvmChainId,
   type FeePlan,
+  XEBRA_FLAT_FEE,
   checkAddressOn,
   checkSolanaAddress,
+  flatFeeFor,
+  formatUsdc6,
   isEvmChainId,
   planEvmFee,
 } from "@xebra/sdk/core";
@@ -24,6 +27,7 @@ import {
   currentAptosAccount,
   findAptosWallet,
   signAndSubmitAptos,
+  signAndSubmitAptosCall,
 } from "../../lib/wallets/aptos";
 import { Button } from "../ui/button";
 import { Field, Input } from "../ui/field";
@@ -45,7 +49,9 @@ import { SubmittedNotice } from "./receipt";
  *   - To Stellar nothing forwards: the relayer completes the mint, or the sender claims it from a
  *     Stellar wallet and pays a few hundredths of an XLM. Circle is paid nothing.
  *
- * No Xebra fee on these routes yet. The burn's hash is kept in this browser so closing the tab
+ * Xebra's flat fee (0.10 delivered, 0.05 claimed) comes out of the amount entered: the server
+ * burns the rest and returns the fee as its own transaction, asked for right after the burn (Circle's
+ * Aptos burn is a fixed script). The burn's hash is kept in this browser so closing the tab
  * does not lose a transfer on its way.
  */
 
@@ -208,10 +214,12 @@ export function AptosBridgeForm({
   const tier = health?.tiers.standard ?? null;
   const plan: FeePlan | null = useMemo(() => {
     if (to === "stellar" || units === null || !tier) return null;
+    const dest = routeDestination(to);
     return planEvmFee({
       amount: units,
       tier,
-      destination: feeDestination(routeDestination(to), opensAccount),
+      destination: feeDestination(dest, opensAccount),
+      xebraFee: flatFeeFor(dest.cctpDomainId),
     });
   }, [units, tier, to, opensAccount]);
   const routeDown =
@@ -273,6 +281,7 @@ export function AptosBridgeForm({
       const body = (await res.json().catch(() => ({}))) as {
         error?: string;
         transaction?: { arguments: Parameters<typeof aptosBurnArgsFromJson>[0] };
+        feeTransaction?: { function: string; typeArguments: string[]; functionArguments: string[] };
         envelope?: Record<keyof Omit<AptosTxEnvelope, "sender" | "chainId">, string>;
       };
       if (!res.ok || !body.transaction || !body.envelope) {
@@ -297,6 +306,14 @@ export function AptosBridgeForm({
       };
       setStep("signing");
       const tx = await signAndSubmitAptos(wallet, args, envelope);
+      // The burn is out; Xebra's fee is asked for next. Declining it does not undo the transfer.
+      if (body.feeTransaction) {
+        try {
+          await signAndSubmitAptosCall(wallet, body.feeTransaction);
+        } catch (err) {
+          console.warn("xebra fee not sent", err);
+        }
+      }
       const r = { tx, to, at: Date.now() };
       remember(r);
       setSent(r);
@@ -439,10 +456,13 @@ export function AptosBridgeForm({
         {toStellar
           ? units !== null && (
               <Notice tone="info" title="No delivery fee to Stellar" className="-mt-2">
-                Circle does not forward into Stellar, so it is paid nothing and the recipient gets
-                the full amount.{" "}
+                Circle does not forward into Stellar, so it is paid nothing. Xebra takes{" "}
+                {formatUsdc6(XEBRA_FLAT_FEE.deliver)} USDC, a second wallet request after the burn,
+                and the recipient gets{" "}
+                {formatUsdc6(units > XEBRA_FLAT_FEE.deliver ? units - XEBRA_FLAT_FEE.deliver : 0n)}{" "}
+                USDC.{" "}
                 {source.relayer
-                  ? "Xebra completes the mint on Stellar for transfers of 1 USDC or more; for less, you finish it from a Stellar wallet for a few hundredths of an XLM."
+                  ? "Xebra completes the mint on Stellar for transfers of 1.10 USDC or more; for less, you finish it from a Stellar wallet for a few hundredths of an XLM."
                   : "You finish the mint from a Stellar wallet once Circle attests the burn, for a few hundredths of an XLM."}
               </Notice>
             )

@@ -17,8 +17,8 @@
 <sub>The 67-second film, looping. [Full quality, 1080p](film/xebra-film.mp4). It shows the first
 version, where a relay paid for the mint; Circle's Forwarding Service does that now.</sub>
 
-USDC from Stellar to Solana, Arc and, one by one as the wrapper commits them, fourteen EVM chains;
-and from Arc to those fourteen chains and Solana. All over Circle's CCTP. One asset, **mainnet only**.
+USDC from Stellar to Solana, Arc and, one by one as the wrapper commits them, twenty-one EVM chains;
+and from Arc to those twenty-one chains and Solana. All over Circle's CCTP. One asset, **mainnet only**.
 
 A user connects a Stellar wallet, enters an amount and an address on the destination chain, and signs once. A
 Soroban wrapper contract takes the fee and hands the burn to Circle, with Circle's forwarding hook,
@@ -180,7 +180,8 @@ today, so the bounds a wrapper would enforce are applied in the page before sign
 Circle's delivery fee paid out of it), the same caps and the same 48-hour governance, enforced on
 chain. It is deployed on Arc mainnet and pinned in `XEBRA_WRAPPERS`; with
 `NEXT_PUBLIC_ARC_USE_WRAPPER=1` the page approves and calls it instead of Circle.
-Ethereum, Linea, Plume and EDGE are left out on purpose.
+Ethereum, Linea, Plume and EDGE, left out until 2026-11-15, are back, with Cronos, Plasma and X Layer
+new. Injective, Morph and Pharos (Circle does not deliver to them) come with claim-only routes.
 
 Two build-time lists switch them on, one direction at a time: `NEXT_PUBLIC_ARC_SENDS_TO` (chain
 names, `solana`, or `all`) and `NEXT_PUBLIC_ARC_RECEIVES_FROM` (EVM chains that may send into Arc).
@@ -188,7 +189,7 @@ Production is built with `NEXT_PUBLIC_ARC_SENDS_TO=all` and no `NEXT_PUBLIC_ARC_
 
 ## Stellar to the EVM chains
 
-The same fourteen chains can be reached from Stellar through wrapper v2, which needs no code change
+The same twenty-one chains can be reached from Stellar through wrapper v2, which needs no code change
 for them: each chain's CCTP domain is proposed in `/admin`, and committed 48 hours later. The
 wrapper holds one pending domain at a time, so they are added one by one. The page reads the
 wrapper's committed domains and offers a chain only when it is committed *and* named in

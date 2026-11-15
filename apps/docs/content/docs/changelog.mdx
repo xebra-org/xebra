@@ -3,6 +3,25 @@ title: Changelog
 description: What changed in the Xebra API and SDK, newest first.
 ---
 
+## Unreleased
+
+**API**:
+
+- Every route without a Xebra fee contract carries Xebra's flat fee: 0.10 USDC where the transfer
+  arrives by itself (Circle's Forwarding Service, or Xebra's relayer into Stellar), 0.05 where the
+  recipient claims it. `fees.xebra` shows it; `amount` is what leaves the wallet and the burn is the
+  rest. See [Fees](/docs/concepts/fees).
+- `POST /v1/transfers` returns a `fee` step after the burn from EVM chains (a USDC transfer) and
+  from Aptos (a new `aptos_call` transaction). From Solana and Sui the fee is in the burn's own
+  transaction.
+- Aptos to Stellar needs at least 1.10 USDC (1 USDC burned, what the relayer completes).
+
+**SDK**:
+
+- `planEvmFee` takes `xebraFee`; `FeePlan` gains `burn`. `XEBRA_FLAT_FEE`, `flatFeeFor`,
+  `flatFeeKind`, `CLAIM_ONLY_DOMAINS`; `buildEvmFeeStep`, `buildAptosFeeStep`.
+- `TransferStep.id` can be `"fee"`; `UnsignedTx` can be `aptos_call`.
+
 ## 0.4.0 (2026-11-15)
 
 **SDK**, `@xebra/sdk` 0.4.0, `@xebra/sdk/intents`:
