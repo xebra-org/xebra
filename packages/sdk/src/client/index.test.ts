@@ -81,6 +81,28 @@ describe("createXebraClient", () => {
     });
     await expect(client.routes()).rejects.toMatchObject({ code: "timeout" });
   });
+
+  it("still aborts through the caller's signal where AbortSignal.any is missing", async () => {
+    const any = Object.getOwnPropertyDescriptor(AbortSignal, "any");
+    // Node 20.0-20.2 has no AbortSignal.any, and engines allows 20.
+    Reflect.deleteProperty(AbortSignal, "any");
+    try {
+      const client = createXebraClient({
+        fetch: (_url, init) =>
+          new Promise((_, reject) =>
+            init?.signal?.addEventListener("abort", () =>
+              reject((init.signal as AbortSignal).reason),
+            ),
+          ),
+      });
+      const caller = new AbortController();
+      const pending = client.getTransfer("stellar", "a".repeat(64), caller.signal);
+      caller.abort(new Error("stopped by the caller"));
+      await expect(pending).rejects.toThrow("stopped by the caller");
+    } finally {
+      if (any) Object.defineProperty(AbortSignal, "any", any);
+    }
+  });
 });
 
 describe("waitForDelivery", () => {

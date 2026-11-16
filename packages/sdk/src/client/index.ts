@@ -56,6 +56,31 @@ interface Schema<T> {
 const SETTLED = new Set<TransferStatus["state"]>(["delivered", "needs_claim", "failed"]);
 
 /**
+ * `AbortSignal.any` arrived in Node 20.3, while `engines` allows 20.0. Where it is missing,
+ * combine the caller's signal with the timeout by hand so either one still aborts the request.
+ */
+function combineSignals(caller: AbortSignal, timeout: AbortSignal): AbortSignal {
+  const any = (AbortSignal as unknown as { any?: (s: AbortSignal[]) => AbortSignal }).any;
+  if (any) return any([caller, timeout]);
+  const controller = new AbortController();
+  const off: Array<() => void> = [];
+  const abort = (source: AbortSignal) => () => {
+    for (const detach of off) detach();
+    controller.abort(source.reason);
+  };
+  for (const source of [caller, timeout]) {
+    if (source.aborted) {
+      abort(source)();
+      break;
+    }
+    const listener = abort(source);
+    source.addEventListener("abort", listener, { once: true });
+    off.push(() => source.removeEventListener("abort", listener));
+  }
+  return controller.signal;
+}
+
+/**
  * A client for the Xebra API. It prices transfers and builds unsigned transactions; your user's
  * wallet signs them. It never needs or accepts a private key.
  */
@@ -70,7 +95,7 @@ export function createXebraClient(opts: XebraClientOptions = {}) {
     init: { method?: "GET" | "POST"; body?: unknown; signal?: AbortSignal } = {},
   ): Promise<T> {
     const timeout = AbortSignal.timeout(timeoutMs);
-    const signal = init.signal ? AbortSignal.any([init.signal, timeout]) : timeout;
+    const signal = init.signal ? combineSignals(init.signal, timeout) : timeout;
     let res: Response;
     try {
       res = await doFetch(`${base}${path}`, {
