@@ -1280,7 +1280,9 @@ export function createService(deps: Deps, now: () => number = Date.now) {
       throw new ApiError("route_unavailable", "Sui to Stellar is not switched on here.");
     }
     const answer = await deps.suiStatus(digest);
-    if (!answer) {
+    // A 5xx from the status route is Circle (or the route) failing, not a burn still waiting.
+    const httpStatus = typeof answer?.httpStatus === "number" ? answer.httpStatus : 200;
+    if (!answer || httpStatus >= 500) {
       throw new ApiError(
         "upstream_unavailable",
         "Circle's status could not be read just now. That does not mean the transfer failed. Try again shortly.",

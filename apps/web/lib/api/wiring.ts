@@ -155,7 +155,7 @@ export const liveDeps: Deps = {
     );
   },
   async suiStatus(digest) {
-    return readJsonAnyStatus(
+    return readJsonWithStatus(
       await suiStatus(
         new Request(`${ORIGIN}/api/sui-stellar/status?digest=${encodeURIComponent(digest)}`),
       ),
@@ -275,6 +275,16 @@ async function readJsonAnyStatus(res: Response): Promise<Record<string, unknown>
   } catch {
     return null;
   }
+}
+
+/**
+ * The body of any answer, with the HTTP status beside it as `httpStatus`. The Sui status route
+ * answers 502 `{state:"unknown"}` when Circle is down and 200 `{state:"unknown"}` when Circle has
+ * not indexed the burn yet; only the status tells them apart.
+ */
+async function readJsonWithStatus(res: Response): Promise<Record<string, unknown> | null> {
+  const body = await readJsonAnyStatus(res);
+  return body ? { ...body, httpStatus: res.status } : null;
 }
 
 /** A read-only EIP-1193 provider over the chain's public JSON-RPC, for balance and allowance. */

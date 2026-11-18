@@ -204,6 +204,39 @@ describe("transferStatus: Sui", () => {
     });
   }
 
+  it("reads a Circle outage (502 from the status route) as upstream_unavailable, not pending", async () => {
+    const err = await refusal(
+      svc(
+        {},
+        {
+          ...on,
+          suiStatus: async () => ({
+            state: "unknown",
+            reason: "Circle did not answer",
+            httpStatus: 502,
+          }),
+        },
+      ).transferStatus({ chain: "sui", tx: DIGEST }),
+    );
+    expect(err.code).toBe("upstream_unavailable");
+  });
+
+  it("keeps a not-yet-indexed burn (200 unknown) pending", async () => {
+    const s = svc(
+      {},
+      {
+        ...on,
+        suiStatus: async () => ({
+          state: "unknown",
+          reason: "Circle has not indexed this burn yet",
+          httpStatus: 200,
+        }),
+        delivery: async () => ({ status: "known", state: "claimable", forwardTxHash: null }),
+      },
+    );
+    expect((await s.transferStatus({ chain: "sui", tx: DIGEST })).state).toBe("pending");
+  });
+
   it("reads a Sui burn to an EVM chain from Circle's forwarding record, not as failed", async () => {
     // The first Sui to Monad transfer: not a burn to Stellar, so the Stellar check refuses it,
     // but Circle forwarded it and minted on Monad.
