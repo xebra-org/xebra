@@ -306,12 +306,16 @@ export async function submitBridge(
   }
   if (step.tx.kind !== "stellar") throw new Error("expected a Stellar transaction");
 
+  // Name the account the transaction was built for. Without `address` the wallet signs with
+  // whichever account is active now, so a switch in Freighter after connecting yields a
+  // signature from the wrong account (`txBadAuth`).
   const { signedTxXdr } = await kit.signTransaction(step.tx.xdr, {
     networkPassphrase: config.networkPassphrase,
+    address: userAddress,
   });
 
   const signedTx = TransactionBuilder.fromXDR(signedTxXdr, config.networkPassphrase);
-  return submitSigned(server, signedTx, "bridge transaction");
+  return submitSigned(server, signedTx, "bridge transaction", userAddress);
 }
 
 /**
@@ -348,6 +352,8 @@ export async function submitSigned(
   server: rpc.Server,
   signedTx: Parameters<rpc.Server["sendTransaction"]>[0],
   what: string,
+  /** The connected account, so a wrong-account failure can name the one to switch back to. */
+  account?: string,
 ): Promise<{ txHash: string }> {
   const result = await server.sendTransaction(signedTx);
 
@@ -362,7 +368,7 @@ export async function submitSigned(
         `The network declined to queue the ${what} right now (TRY_AGAIN_LATER). Nothing has moved. Wait a few seconds and try again.`,
       );
     default:
-      throw new Error(describeRejectedTransaction(result, what));
+      throw new Error(describeRejectedTransaction(result, what, account));
   }
 }
 
@@ -379,13 +385,21 @@ const TX_RESULT_MESSAGES: Record<string, string> = {
   txInsufficientBalance:
     "Your wallet does not have enough XLM to cover the network fee. Add some XLM and try again.",
   txNoAccount: "This Stellar account is not funded yet. Add some XLM and try again.",
-  txBadAuth: "Your wallet signature was not accepted. Please try again.",
+  // `{account}` is filled in by `describeRejectedTransaction`. Retrying cannot fix this: the
+  // wallet will keep signing with the wrong account until the person switches back.
+  txBadAuth:
+    "Your wallet signed with a different account than the one connected here. Switch back to {account} in your wallet, or reconnect.",
   txBadAuthExtra: "Your wallet signature was not accepted. Please try again.",
   txFailed: "The transaction failed on the network. No USDC has moved.",
 };
 
 /** The `status: ERROR` reply carries an XDR result; read its code name rather than dumping it. */
-export function describeRejectedTransaction(result: unknown, what: string): string {
+export function describeRejectedTransaction(
+  result: unknown,
+  what: string,
+  /** The connected Stellar account, shown shortened (`GABC…WXYZ`) where a message names it. */
+  account?: string,
+): string {
   let code: string | undefined;
   try {
     const errorResult = (result as { errorResult?: { result(): { switch(): { name: string } } } })
@@ -395,7 +409,13 @@ export function describeRejectedTransaction(result: unknown, what: string): stri
     code = undefined;
   }
   const known = code ? TX_RESULT_MESSAGES[code] : undefined;
-  if (known) return known;
+  if (known) {
+    const shortAccount =
+      account && account.length > 10
+        ? `${account.slice(0, 4)}…${account.slice(-4)}`
+        : "your connected account";
+    return known.replace("{account}", shortAccount);
+  }
   return `The network rejected the ${what}${code ? ` (${code})` : ""}. No USDC has moved. Please try again.`;
 }
 
