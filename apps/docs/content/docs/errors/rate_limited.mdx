@@ -11,9 +11,11 @@ Too many requests in a short time.
 
 ## What to do
 
-Wait for the number of seconds in the `Retry-After` header, then ask again. The SDK's `waitForDelivery` waits this out on its own.
+No server code returns this status yet, so you will not see `rate_limited` today. It is reserved for per-key limits, which will arrive with API keys. When that happens, the server will send a `Retry-After` header with the number of seconds to wait.
 
-<Callout>Per-key limits arrive with API keys. See the [changelog](/docs/changelog).</Callout>
+Until then, if you do receive a 429, back off before retrying. `waitForDelivery` retries at a fixed interval and does not read `Retry-After`, and `XebraApiError` does not expose response headers, so the SDK cannot wait out the header for you. Add your own exponential backoff around the call instead.
+
+<Callout>Per-key limits arrive with API keys. See the [changelog](/docs/changelog). This page will be updated when [#92](https://github.com/xebra-exchange/xebra/issues/92) lands.</Callout>
 
 ## Example
 
