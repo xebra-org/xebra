@@ -52,10 +52,43 @@ import { SubmittedNotice } from "./receipt";
 const APTOS_DOMAIN = 9;
 const STORAGE_KEY = "xebra.aptos.transfer";
 const HASH = /^0x[0-9a-f]{64}$/;
-const POLL_MS = 4_000;
 const HEALTH_MS = 30_000;
 /** Iris can show the attestation a moment before it shows the delivery under way. */
 const CLAIM_GRACE_MS = 10 * 60_000;
+
+export const POLL_FAILURE_THRESHOLD = 5;
+export const POLL_BASE_MS = 4_000;
+export const POLL_MAX_MS = 30_000;
+const POLL_MS = POLL_BASE_MS;
+
+export function nextPollDelay(
+  consecutiveFailures: number,
+  baseMs = POLL_BASE_MS,
+  maxMs = POLL_MAX_MS,
+): number {
+  if (consecutiveFailures <= 0) return baseMs;
+  const backoff = baseMs * 2 ** Math.min(consecutiveFailures, 4);
+  return Math.min(backoff, maxMs);
+}
+
+export function shouldShowPollNotice(
+  consecutiveFailures: number,
+  threshold = POLL_FAILURE_THRESHOLD,
+): boolean {
+  return consecutiveFailures >= threshold;
+}
+
+export function isTerminalStellarState(
+  state?: Attest,
+  delivered?: boolean,
+  refusal?: string,
+): boolean {
+  return (state === "complete" && Boolean(delivered)) || (state === "complete" && Boolean(refusal));
+}
+
+export function isTerminalRelayerStatus(status?: string): boolean {
+  return status === "delivered" || status === "refused" || status === "failed";
+}
 
 export type AptosDestination = EvmChainId | "solana" | "stellar";
 
@@ -262,6 +295,7 @@ export function AptosBridgeForm({
       const res = await fetch("/api/aptos/build", {
         method: "POST",
         headers: { "content-type": "application/json" },
+        signal: AbortSignal.timeout(15_000),
         body: JSON.stringify({
           sender,
           amount: amount.trim(),
@@ -301,6 +335,16 @@ export function AptosBridgeForm({
       remember(r);
       setSent(r);
     } catch (err) {
+      if (
+        (err instanceof Error && (err.name === "TimeoutError" || err.name === "AbortError")) ||
+        /timed? ?out|abort/i.test(String(err))
+      ) {
+        setError({
+          text: "Xebra did not answer in time. Nothing was sent.",
+          declined: false,
+        });
+        return;
+      }
       const text = reportError("aptos burn failed", err);
       setError({ text, declined: DECLINED.test(text) });
     } finally {
@@ -523,7 +567,7 @@ function Forwarded({
       const d = await getDelivery(tx, APTOS_DOMAIN);
       if (cancelled) return;
       setDelivery(d);
-      if (d.status === "known" && d.state === "delivered") {
+      if (d.status === "known" && (d.state === "delivered" || d.state === "failed")) {
         remember(null);
         return;
       }
@@ -603,16 +647,21 @@ function ToStellar({
   const [recipient, setRecipient] = useState<string | null>(null);
   const [claiming, setClaiming] = useState(false);
   const [claimError, setClaimError] = useState<string | null>(null);
+  const [pollError, setPollError] = useState(false);
   const completing = useRef(false);
 
   useEffect(() => {
     if (delivery.kind === "done" || delivery.kind === "stuck") return;
     let cancelled = false;
     let timer: ReturnType<typeof setTimeout>;
+    let consecutiveFailures = 0;
 
     async function tick() {
       try {
         const s = await fetch(`/api/aptos/status?tx=${tx}`, { cache: "no-store" });
+        if (!s.ok) {
+          throw new Error(`Status service answered ${s.status}`);
+        }
         const body = (await s.json()) as {
           state?: Attest;
           delivered?: boolean;
@@ -621,19 +670,21 @@ function ToStellar({
         };
         const state: Attest = body.state ?? "unknown";
         if (cancelled) return;
+        consecutiveFailures = 0;
+        setPollError(false);
         setAttest(state);
         if (body.recipient) setRecipient(body.recipient);
 
-        if (state === "complete" && body.delivered) {
-          setDelivery({ kind: "done", hash: null });
-          remember(null);
-          return;
-        }
-        if (state === "complete" && body.refusal) {
-          setDelivery({
-            kind: "stuck",
-            message: `This burn cannot be completed on Stellar (${body.refusal}).`,
-          });
+        if (isTerminalStellarState(state, body.delivered, body.refusal)) {
+          if (body.delivered) {
+            setDelivery({ kind: "done", hash: null });
+            remember(null);
+          } else {
+            setDelivery({
+              kind: "stuck",
+              message: `This burn cannot be completed on Stellar (${body.refusal}).`,
+            });
+          }
           return;
         }
         if (state === "complete" && relayerEnabled && !completing.current) {
@@ -652,7 +703,7 @@ function ToStellar({
             remember(null);
             return;
           }
-          if (result.status === "refused" || result.status === "failed") {
+          if (isTerminalRelayerStatus(result.status)) {
             setDelivery({
               kind: "stuck",
               message: result.reason ?? "The mint could not be completed.",
@@ -663,9 +714,16 @@ function ToStellar({
         }
       } catch {
         completing.current = false;
-        // A dropped request is not a failed transfer; the next tick asks again.
+        if (cancelled) return;
+        consecutiveFailures += 1;
+        if (shouldShowPollNotice(consecutiveFailures)) {
+          setPollError(true);
+        }
       }
-      if (!cancelled) timer = setTimeout(tick, POLL_MS);
+      if (!cancelled) {
+        const delay = nextPollDelay(consecutiveFailures);
+        timer = setTimeout(tick, delay);
+      }
     }
 
     void tick();
@@ -691,21 +749,28 @@ function ToStellar({
   }
 
   return (
-    <Progress
-      digest={tx}
-      attest={attest}
-      delivery={delivery}
-      relayerEnabled={relayerEnabled}
-      recipient={recipient}
-      stellarAddress={stellarAddress}
-      claiming={claiming}
-      claimError={claimError}
-      onClaim={onClaim}
-      onConnectStellar={onConnectStellar}
-      onRetry={() => setDelivery({ kind: "idle" })}
-      onReset={onReset}
-      sourceName="Aptos"
-      burnUrl={explorer(tx)}
-    />
+    <div className="flex flex-col gap-5">
+      {pollError && (
+        <Notice tone="info" title="We can't reach the status service right now">
+          Your transfer is safe on chain; this page keeps trying.
+        </Notice>
+      )}
+      <Progress
+        digest={tx}
+        attest={attest}
+        delivery={delivery}
+        relayerEnabled={relayerEnabled}
+        recipient={recipient}
+        stellarAddress={stellarAddress}
+        claiming={claiming}
+        claimError={claimError}
+        onClaim={onClaim}
+        onConnectStellar={onConnectStellar}
+        onRetry={() => setDelivery({ kind: "idle" })}
+        onReset={onReset}
+        sourceName="Aptos"
+        burnUrl={explorer(tx)}
+      />
+    </div>
   );
 }
