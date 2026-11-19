@@ -19,6 +19,7 @@ import { reportError } from "../../lib/format-error";
 import { feeDestination, routeDestination } from "../../lib/route-destination";
 import { type RecipientResolution, resolveRecipient } from "../../lib/solana-recipient";
 import { claimOnStellar } from "../../lib/sui-stellar/claim-client";
+import { type ClassifiedError, classifyWalletError } from "../../lib/wallet-error";
 import {
   aptosWalletOnMainnet,
   currentAptosAccount,
@@ -109,8 +110,6 @@ function parseAmount(input: string): bigint | null {
   return v > 0n ? v : null;
 }
 
-const DECLINED = /reject|declin|den(y|ied)|cancel|closed|dismiss/i;
-
 export function AptosBridgeForm({
   source,
   sourcePicker,
@@ -128,7 +127,7 @@ export function AptosBridgeForm({
   const [amount, setAmount] = useState("");
   const [recipient, setRecipient] = useState("");
   const [step, setStep] = useState<"idle" | "preparing" | "signing">("idle");
-  const [error, setError] = useState<{ text: string; declined: boolean } | null>(null);
+  const [error, setError] = useState<ClassifiedError | null>(null);
   const [sent, setSent] = useState<Remembered | null>(null);
 
   // A transfer this browser was following comes back on screen.
@@ -242,19 +241,18 @@ export function AptosBridgeForm({
     setError(null);
     const wallet = findAptosWallet(aptos.walletKey);
     if (!wallet) {
-      setError({
-        text: "Your Aptos wallet is no longer available. Connect it again.",
-        declined: false,
-      });
+      setError(classifyWalletError("Your Aptos wallet is no longer available. Connect it again."));
       return;
     }
     setStep("preparing");
     try {
       if ((await aptosWalletOnMainnet(wallet)) === false) {
-        setError({
-          text: `${wallet.name} is not on Aptos mainnet. Switch it to mainnet, then send again.`,
-          declined: false,
-        });
+        setError(
+          classifyWalletError({
+            code: 4902,
+            message: `${wallet.name} is not on Aptos mainnet. Switch it to mainnet, then send again.`,
+          }),
+        );
         return;
       }
       // The account the wallet will sign with now, which may not be the one it connected with.
@@ -276,7 +274,9 @@ export function AptosBridgeForm({
         envelope?: Record<keyof Omit<AptosTxEnvelope, "sender" | "chainId">, string>;
       };
       if (!res.ok || !body.transaction || !body.envelope) {
-        setError({ text: body.error ?? "Could not prepare the transfer.", declined: false });
+        const classified = classifyWalletError(body.error ?? "Could not prepare the transfer.");
+        reportError("aptos prepare failed", classified.raw);
+        setError(classified);
         // A fee that moved is shown again from a fresh quote before anything is signed.
         if (res.status === 409 && to !== "stellar") {
           const domain = routeDestination(to).cctpDomainId;
@@ -301,8 +301,9 @@ export function AptosBridgeForm({
       remember(r);
       setSent(r);
     } catch (err) {
-      const text = reportError("aptos burn failed", err);
-      setError({ text, declined: DECLINED.test(text) });
+      const classified = classifyWalletError(err);
+      reportError("aptos burn failed", classified.raw);
+      setError(classified);
     } finally {
       setStep("idle");
     }
@@ -459,14 +460,17 @@ export function AptosBridgeForm({
             )}
 
         {error &&
-          (error.declined ? (
+          (error.kind === "declined" || error.kind === "popup" ? (
             <Notice tone="info" title="Wallet request cancelled">
-              The wallet reported: {error.text} If you did not cancel it yourself, the wallet window
-              may have been blocked or closed. Allow pop-ups for this site, then try again.
+              You cancelled in your wallet. Nothing was sent.
+            </Notice>
+          ) : error.maybeSent ? (
+            <Notice tone="alarm" title="Could not confirm transfer">
+              {error.message}
             </Notice>
           ) : (
             <Notice tone="alarm" title="Could not send">
-              {error.text}
+              {error.message}
             </Notice>
           ))}
 
