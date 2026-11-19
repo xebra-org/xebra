@@ -37,13 +37,13 @@ export function walletErrorCode(err: unknown): number | null {
 }
 
 /** EIP-1193 codes that mean the person, not the chain: said plainly instead of dumped as JSON. */
-const WALLET_SENTENCES: Record<number, string> = {
+export const WALLET_SENTENCES: Record<number, string> = {
   4001: "You declined the request in your wallet.",
   4100: "Your wallet has not given this site access to that account.",
   [-32002]: "Your wallet already has a request open. Finish or dismiss it there, then try again.",
 };
 
-async function request(
+export async function request(
   provider: Eip1193Provider,
   method: string,
   params?: unknown[],

@@ -71,6 +71,20 @@ describe("EIP-6963", () => {
     await expect(connectEvm(entry, provider([]))).rejects.toThrow(/address/);
     await expect(connectEvm(entry, provider(["nope"]))).rejects.toThrow(/address/);
   });
+  it("words a 4001 decline at connect", async () => {
+    const entry = evmEntries(reduceAnnouncements(new Map(), detail("a", "A")), null)[0];
+    if (!entry) throw new Error("no entry");
+    const rejecting: Eip1193Provider = {
+      request: async () => {
+        const err = new Error("User rejected");
+        Object.assign(err, { code: 4001 });
+        throw err;
+      },
+    };
+    await expect(connectEvm(entry, rejecting)).rejects.toThrow(
+      "You declined the request in your wallet.",
+    );
+  });
 });
 
 describe("the EVM wallet's network", () => {
