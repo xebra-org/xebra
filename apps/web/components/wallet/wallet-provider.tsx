@@ -12,6 +12,7 @@ import {
   useState,
 } from "react";
 import { formatError } from "../../lib/format-error";
+import { readJson } from "../../lib/read-json";
 import { createStellarWalletKit, probeStellarWallet } from "../../lib/stellar-wallet";
 import {
   aptosEntries,
@@ -100,7 +101,18 @@ async function broadcastSolana(signed: Uint8Array): Promise<string> {
       params: [btoa(binary), { encoding: "base64", preflightCommitment: "confirmed" }],
     }),
   });
-  const body = (await res.json()) as { result?: string; error?: { message?: string } };
+  const parsed = await readJson<{ result?: string; error?: { message?: string } }>(res);
+  if (!parsed.ok) {
+    const errorMsg =
+      parsed.body &&
+      typeof parsed.body === "object" &&
+      "error" in parsed.body &&
+      (parsed.body as { error?: { message?: string } }).error?.message
+        ? (parsed.body as { error: { message: string } }).error.message
+        : "Xebra's server did not answer properly. Nothing was sent; try again in a minute.";
+    throw new Error(errorMsg);
+  }
+  const body = parsed.body;
   if (typeof body.result === "string") return body.result;
   throw new Error(body.error?.message ?? `Solana refused the transaction (${res.status}).`);
 }
