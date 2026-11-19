@@ -30,7 +30,7 @@ import { useWallets } from "../wallet/wallet-provider";
 import type { Chain } from "./chain-glyph";
 import { ChainPicker, PickerLabel } from "./chain-picker";
 import { EvmQuotePanel } from "./evm-quote-panel";
-import { SubmittedNotice } from "./receipt";
+import { CopyButton, SubmittedNotice } from "./receipt";
 
 /**
  * A transfer that starts on Solana: burn native USDC there with the connected Solana wallet, and
@@ -71,12 +71,14 @@ interface Remembered {
   at: number;
 }
 
-function remember(t: Remembered | null) {
+export function remember(t: Remembered | null): boolean {
   try {
     if (t) window.localStorage.setItem(STORAGE_KEY, JSON.stringify(t));
     else window.localStorage.removeItem(STORAGE_KEY);
+    return true;
   } catch {
     // Private mode or blocked storage: the transfer still works, it just cannot be resumed.
+    return false;
   }
 }
 
@@ -148,6 +150,7 @@ export function SolanaBridgeForm({
   const [recipientSeen, setRecipientSeen] = useState<string | null>(null);
   const [claiming, setClaiming] = useState(false);
   const [claimError, setClaimError] = useState<string | null>(null);
+  const [saved, setSaved] = useState(true);
 
   // A transfer this browser was following comes back on screen.
   useEffect(() => {
@@ -363,7 +366,8 @@ export function SolanaBridgeForm({
       const tx = await sendSolana(body.transaction);
       // Remembered before it is confirmed: a burn that lands while this tab waits must not be lost.
       const record: Remembered = { tx, to, at: Date.now() };
-      remember(record);
+      const savedOk = remember(record);
+      setSaved(savedOk);
       setStep("confirming");
       try {
         await waitForSignature(proxyConnection(), tx);
@@ -394,6 +398,7 @@ export function SolanaBridgeForm({
 
   function startOver() {
     remember(null);
+    setSaved(true);
     completing.current = false;
     setSent(null);
     setDelivery(null);
@@ -487,12 +492,19 @@ export function SolanaBridgeForm({
               }}
             />
             <div className="flex items-center justify-between gap-3">
-              {!finished && (
-                <p className="max-w-[18rem] text-xs leading-relaxed text-bone/35">
-                  Safe to close this tab. Come back on the same browser and it picks up where it
-                  left off.
-                </p>
-              )}
+              {!finished &&
+                (saved ? (
+                  <p className="max-w-[18rem] text-xs leading-relaxed text-bone/35">
+                    Safe to close this tab. Come back on the same browser and it picks up where it
+                    left off.
+                  </p>
+                ) : (
+                  <p className="max-w-[20rem] text-xs leading-relaxed text-bone/45">
+                    This browser could not save your transfer. Keep this hash to find it again:{" "}
+                    <span className="tabular font-mono text-bone/70">{short(sent.tx)}</span>{" "}
+                    <CopyButton value={sent.tx} label="transaction hash" />
+                  </p>
+                ))}
               <Button
                 variant={finished ? "primary" : "quiet"}
                 size="sm"
