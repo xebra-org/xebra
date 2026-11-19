@@ -31,6 +31,7 @@ export async function GET(request: Request): Promise<Response> {
       const mint = await mintState(att, burn.recipient);
       return Response.json({
         state: "complete",
+        mint,
         delivered: mint === "delivered",
         recipient: burn.recipient,
         amount: formatUsdcAmount(burn.amount),
@@ -43,7 +44,8 @@ export async function GET(request: Request): Promise<Response> {
         refusal: err instanceof Error ? err.message : "invalid message",
       });
     }
-  } catch {
+  } catch (err) {
+    console.error("[solana-source/status] could not read status", err);
     return Response.json({ state: "unknown", reason: "Circle did not answer" }, { status: 502 });
   }
 }

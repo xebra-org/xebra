@@ -176,7 +176,8 @@ export async function mintState(
     const sim = await server.simulateTransaction(tx);
     if (!rpc.Api.isSimulationError(sim)) return "open";
     return sim.error.includes(NONCE_ALREADY_USED) ? "delivered" : "unknown";
-  } catch {
+  } catch (err) {
+    console.error("[stellar-side] mintState failed", err);
     return "unknown";
   }
 }
@@ -279,126 +280,4 @@ export async function planClaim(
     recipient: burn.recipient,
     amount: burn.amount,
   };
-}
-
-export async function completeBurn(
-  digest: string,
-  relayerSecret: string,
-  sourceDomain: number = SUI_DOMAIN,
-  opts: { minAmount?: bigint; confirmTimeoutMs?: number; confirmPollMs?: number } = {},
-): Promise<CompleteResult> {
-  const key = `${sourceDomain}:${digest}`;
-  if (inFlight.has(key)) return { status: "pending", reason: "already being completed" };
-  inFlight.add(key);
-  try {
-    const att = await readAttestation(digest, sourceDomain);
-    if (att.state !== "complete") {
-      return att.state === "pending"
-        ? { status: "pending" }
-        : { status: "unknown", reason: att.reason };
-    }
-
-    let burn: VerifiedBurn;
-    try {
-      burn = verify(att.message);
-    } catch (err) {
-      return { status: "refused", reason: err instanceof Error ? err.message : "invalid message" };
-    }
-
-    // The relayer pays XLM for every completion; a floor keeps dust burns from draining it.
-    if (opts.minAmount !== undefined && burn.amount < opts.minAmount) {
-      return {
-        status: "refused",
-        reason: `Xebra completes transfers of at least ${Number(opts.minAmount) / 1e6} USDC. Smaller ones can be claimed by anyone who pays the Stellar fee.`,
-      };
-    }
-
-    // A mint to an account without a trustline cannot land, and the USDC would sit at the forwarder.
-    const recipient = await recipientStatus(burn.recipient);
-    if (!recipient.exists || !recipient.hasTrustline) {
-      return {
-        status: "refused",
-        reason: recipient.exists
-          ? "The recipient has no USDC trustline. Add one, then try again."
-          : "The recipient account does not exist on Stellar yet. Fund it, add a USDC trustline, then try again.",
-      };
-    }
-
-    const keypair = Keypair.fromSecret(relayerSecret);
-    const server = new rpc.Server(env.sorobanRpcUrl);
-    const account = await server.getAccount(keypair.publicKey());
-    const tx = new TransactionBuilder(account, {
-      fee: "1000000",
-      networkPassphrase: env.stellarNetworkPassphrase,
-    })
-      .addOperation(mintCall(att))
-      .setTimeout(180)
-      .build();
-
-    const prep = await prepareMintTransaction(server, tx, "completeBurn");
-    if (!prep.ok) {
-      if (prep.delivered) return { status: "delivered" };
-      return {
-        status: "refused",
-        reason: `${prep.reason} If the USDC has already arrived, it was completed earlier.`,
-      };
-    }
-    const prepared = prep.prepared;
-    prepared.sign(keypair);
-    const sent = await server.sendTransaction(prepared);
-    if (sent.status === "ERROR") throw new Error("the network rejected the transaction");
-
-    // stellar-sdk 13 cannot decode protocol 23+ result meta, so confirm through Horizon's JSON.
-    // Once sendTransaction succeeded, always return `{ status: "submitted", hash }` even if
-    // confirmation cannot be read.
-    const confirmed = await confirmViaHorizon(
-      sent.hash,
-      opts.confirmTimeoutMs,
-      opts.confirmPollMs,
-    ).catch((err) => {
-      console.error("[stellar-side] Horizon confirmation failed", err);
-      return null;
-    });
-    if (!confirmed) return { status: "submitted", hash: sent.hash };
-    if (confirmed.successful) {
-      return { status: "submitted", hash: sent.hash, ledger: confirmed.ledger };
-    }
-    // Failed on chain. If another instance completed the same message first, the nonce is now used
-    // and the USDC has arrived: tell the caller it was delivered, not that it failed.
-    if ((await mintState(att, keypair.publicKey())) === "delivered") return { status: "delivered" };
-    return { status: "failed", hash: sent.hash, ledger: confirmed.ledger };
-  } finally {
-    inFlight.delete(key);
-  }
-}
-
-const HORIZON_POLL_TIMEOUT_MS = 5_000;
-
-export async function confirmViaHorizon(
-  hash: string,
-  timeoutMs = 45_000,
-  pollMs = 2_500,
-): Promise<{ successful: boolean; ledger: number } | null> {
-  const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
-    try {
-      const r = await fetch(`${env.horizonUrl}/transactions/${hash}`, {
-        cache: "no-store",
-        signal: AbortSignal.timeout(HORIZON_POLL_TIMEOUT_MS),
-      });
-      if (r.ok) {
-        const t = (await r.json()) as { successful: boolean; ledger: number };
-        return { successful: t.successful, ledger: t.ledger };
-      }
-      if (r.status === 429 || r.status >= 500) {
-        console.error(`[stellar-side] Horizon confirmation returned ${r.status} for ${hash}`);
-      }
-    } catch (err) {
-      console.error(`[stellar-side] Horizon confirmation error for ${hash}`, err);
-    }
-    const remaining = deadline - Date.now();
-    if (remaining <= 0) break;
-    await new Promise((res) => setTimeout(res, Math.min(pollMs, remaining)));
-  }
-  return null;
 }
