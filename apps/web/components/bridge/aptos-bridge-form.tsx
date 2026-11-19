@@ -403,7 +403,10 @@ export function AptosBridgeForm({
             autoComplete="off"
             spellCheck={false}
             value={amount}
-            onChange={(e) => setAmount(e.target.value)}
+            onChange={(e) => {
+              setAmount(e.target.value);
+              setError(null);
+            }}
             placeholder="0.00"
             className="tabular h-12 text-base"
             invalid={amount.trim() !== "" && (units === null || amountError !== null)}
@@ -429,7 +432,10 @@ export function AptosBridgeForm({
             autoComplete="off"
             spellCheck={false}
             value={recipient}
-            onChange={(e) => setRecipient(e.target.value)}
+            onChange={(e) => {
+              setRecipient(e.target.value);
+              setError(null);
+            }}
             placeholder={toStellar ? "G..." : to === "solana" ? "Recipient wallet" : "0x…"}
             className="h-12 font-mono text-xs"
             invalid={recipientCheck.error !== null}

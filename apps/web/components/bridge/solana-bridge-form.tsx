@@ -591,7 +591,10 @@ export function SolanaBridgeForm({
               autoComplete="off"
               spellCheck={false}
               value={amount}
-              onChange={(e) => setAmount(e.target.value)}
+              onChange={(e) => {
+                setAmount(e.target.value);
+                setError(null);
+              }}
               placeholder="0.00"
               className="tabular h-12 text-base"
               invalid={amountError !== null}
@@ -613,7 +616,10 @@ export function SolanaBridgeForm({
               autoComplete="off"
               spellCheck={false}
               value={recipient}
-              onChange={(e) => setRecipient(e.target.value)}
+              onChange={(e) => {
+                setRecipient(e.target.value);
+                setError(null);
+              }}
               placeholder={to === "stellar" ? "G..." : "0x…"}
               className="h-12 font-mono text-xs"
               invalid={recipientError !== null}
