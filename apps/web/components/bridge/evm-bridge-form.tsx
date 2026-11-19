@@ -644,7 +644,10 @@ export function EvmBridgeForm({
               inputMode="decimal"
               autoComplete="off"
               value={amountInput}
-              onChange={(e) => setAmountInput(e.target.value)}
+              onChange={(e) => {
+                setAmountInput(e.target.value);
+                setSubmitError(null);
+              }}
               invalid={Boolean(amountProblem)}
               aria-invalid={amountProblem ? "true" : undefined}
               aria-describedby={
@@ -697,7 +700,10 @@ export function EvmBridgeForm({
             spellCheck={false}
             autoComplete="off"
             value={recipientInput}
-            onChange={(e) => setRecipientInput(e.target.value)}
+            onChange={(e) => {
+              setRecipientInput(e.target.value);
+              setSubmitError(null);
+            }}
             placeholder={dest.evm ? "0x…" : "Recipient wallet"}
             invalid={Boolean(recipientCheck.error)}
             aria-invalid={recipientCheck.error ? "true" : undefined}
