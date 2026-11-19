@@ -527,6 +527,54 @@ describe("buildTransfer: Sui to an EVM chain or Solana", () => {
     ]);
   });
 
+  it("lists Sui to Monad by default, as the page offers it (#9)", async () => {
+    const { routes } = await svc({}, sui(["monad"])).routes();
+    expect(routes.find((g) => g.from === "sui")?.to).toEqual([
+      { id: "stellar", name: "Stellar", speeds: ["standard"] },
+      { id: "monad", name: "Monad", speeds: ["standard"] },
+    ]);
+  });
+
+  it("does not list Sui to Monad when the page's switch leaves it off (#9)", async () => {
+    const { routes } = await svc({}, sui([])).routes();
+    expect(routes.find((g) => g.from === "sui")?.to).toEqual([
+      { id: "stellar", name: "Stellar", speeds: ["standard"] },
+    ]);
+    const err = await refusal(
+      svc({}, sui([])).quote({ from: "sui", to: "monad", amount: 5_000_000n }),
+    );
+    expect(err.code).toBe("route_unavailable");
+  });
+
+  it("builds Sui to Monad as a forwarded burn to domain 15, to the recipient (#9)", async () => {
+    const circle = vi.fn(async () => health({}, 54_785));
+    const suiForwardBurn = vi.fn(async () => SUI_STEP);
+    const { quote, steps } = await svc(
+      { suiForwardBurn },
+      { ...sui(["monad"]), circle },
+    ).buildTransfer({
+      from: "sui",
+      to: "monad",
+      amount: 5_000_000n,
+      sender: SUI_SENDER,
+      recipient: RECIPIENT,
+    });
+    // Circle's quote for Sui (domain 8) to Monad (domain 15).
+    expect(circle).toHaveBeenCalledWith(8, 15);
+    expect(quote.from).toBe("sui");
+    expect(quote.to).toBe("monad");
+    expect(quote.recipientGets).toBe(5_000_000n - 54_785n);
+    expect(suiForwardBurn).toHaveBeenCalledWith({
+      sender: SUI_SENDER,
+      amount: 5_000_000n,
+      recipient: RECIPIENT,
+      destinationDomain: 15,
+      maxFee: 54_785n,
+      destinationName: "Monad",
+    });
+    expect(steps[0]?.expiresAt).toBe(quote.expiresAt);
+  });
+
   it("refuses a destination the switches do not name", async () => {
     const err = await refusal(
       svc({}, sui(["monad"])).quote({ from: "sui", to: "solana", amount: 5_000_000n }),
