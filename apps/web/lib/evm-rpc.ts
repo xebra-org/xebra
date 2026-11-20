@@ -226,11 +226,27 @@ export async function sendTransaction(
 }
 
 export interface WaitOptions {
-  timeoutMs?: number;
-  pollMs?: number;
+  chainName?: string | undefined;
+  timeoutMs?: number | undefined;
+  pollMs?: number | undefined;
   /** Injected in tests. */
-  sleep?: (ms: number) => Promise<void>;
-  now?: () => number;
+  sleep?: ((ms: number) => Promise<void>) | undefined;
+  now?: (() => number) | undefined;
+}
+
+/** Thrown when polling for a transaction receipt reaches the timeout without a receipt. */
+export class ReceiptTimeoutError extends Error {
+  readonly hash: string;
+  readonly txHash: string;
+
+  constructor(hash: string, chainName = "The network") {
+    super(
+      `${chainName} has not confirmed the transaction yet. It may still go through: check ${hash}.`,
+    );
+    this.name = "ReceiptTimeoutError";
+    this.hash = hash;
+    this.txHash = hash;
+  }
 }
 
 /**
@@ -260,7 +276,8 @@ export async function waitForReceipt(
     if (receipt) return receipt.status === "0x1" ? "success" : "reverted";
     await sleep(pollMs);
   }
-  throw new Error(`no receipt for ${hash} after ${Math.round(timeoutMs / 1000)}s`);
+  const chainName = options.chainName ?? "The network";
+  throw new ReceiptTimeoutError(hash, chainName);
 }
 
 /** The latest block number on the wallet's current chain. */
