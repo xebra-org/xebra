@@ -113,6 +113,13 @@ describe("receiveAbortCode", () => {
     expect(receiveAbortCode(seen)).toBe(4);
   });
 
+  it("reads the other shape a node returns, as seen from the web server", () => {
+    const seen =
+      "Transaction fails in simulation: Move Runtime Abort. Location: 16bcfcfc465f96281663a344641c017de84529370e11aa3879d0dce43ad6db87::receive_message::receive_message_shared (function index 15) at offset 83, Abort Code: 4 in command 0";
+    expect(receiveAbortCode(seen)).toBe(4);
+    expect(receiveAbortCode(encodeURIComponent(seen))).toBe(4);
+  });
+
   it("ignores the same code from another package or module", () => {
     expect(receiveAbortCode(`abort code: 4, in '${TMM}::receive_message::x'`)).toBeNull();
     expect(receiveAbortCode(`abort code: 4, in '${MT}::state::x'`)).toBeNull();

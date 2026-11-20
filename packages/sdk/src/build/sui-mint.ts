@@ -176,16 +176,22 @@ export class SuiCctpPausedError extends Error {
 /**
  * The abort code from a failed simulation when `message_transmitter::receive_message` raised it, or
  * null for any other failure. Codes from Circle's `receive_message.move`: 0 `EPaused`,
- * 1 `EInvalidDestinationCaller`, 2 `EInvalidDestinationDomain`, 4 `ENonceAlreadyUsed`. A used nonce
- * was seen on mainnet 2026-11-20 as "MoveAbort in 1st command, abort code: 4, in
- * '0x16bc…db87::receive_message::receive_message_shared'".
+ * 1 `EInvalidDestinationCaller`, 2 `EInvalidDestinationDomain`, 4 `ENonceAlreadyUsed` (seen on
+ * mainnet 2026-11-20 for an already-minted message, in both shapes below).
  *
  * @internal
  */
 export function receiveAbortCode(error: string): number | null {
-  const m = /abort code: (\d+), in '(0x[0-9a-f]+)::receive_message::/.exec(error);
-  if (!m || m[2] !== CFG.mtV2PackageId) return null;
-  return Number(m[1]);
+  // Two shapes seen from mainnet nodes, both carrying the location and the code:
+  //   "MoveAbort in 1st command, abort code: 4, in '0x16bc…::receive_message::receive_message_shared'"
+  //   "Move Runtime Abort. Location: 16bc…::receive_message::receive_message_shared (…) at offset 83,
+  //    Abort Code: 4 in command 0"
+  const text = decodeURIComponent(error.replace(/%(?![0-9a-fA-F]{2})/g, "%25"));
+  const location = /(?:0x)?([0-9a-f]{64})::receive_message::/i.exec(text);
+  const code = /abort code:\s*(\d+)/i.exec(text);
+  if (!location || !code) return null;
+  if (`0x${location[1]?.toLowerCase()}` !== CFG.mtV2PackageId) return null;
+  return Number(code[1]);
 }
 
 /**
