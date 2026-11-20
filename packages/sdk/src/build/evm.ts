@@ -32,6 +32,20 @@ export interface EvmBurnInput {
   via: { address: string; maxWrapperFee: bigint } | null;
 }
 
+/**
+ * A burn request that fails before anything is built: a deadline outside the wrapper's range.
+ * Carries the API's error code, so a route can answer with it as it is.
+ */
+export class EvmBuildError extends Error {
+  constructor(
+    readonly code: "invalid_request",
+    message: string,
+  ) {
+    super(message);
+    this.name = "EvmBuildError";
+  }
+}
+
 /** Who takes the USDC and is called: the wrapper, or Circle's messenger. */
 export function evmBurnTarget(p: EvmBurnInput): Hex {
   return (p.via?.address ?? p.source.tokenMessengerAddress) as Hex;
@@ -42,7 +56,20 @@ export function evmBurnTarget(p: EvmBurnInput): Hex {
  * latest block just before asking for the signature; direct to Circle the deadline is ignored.
  * Throws for anything the contract would revert, so no wallet is asked to sign it.
  */
-export function evmBurnCall(p: EvmBurnInput, deadline: bigint): { to: Hex; data: Hex } {
+export function evmBurnCall(
+  p: EvmBurnInput,
+  deadline: bigint,
+  now = Date.now() / 1000,
+): { to: Hex; data: Hex } {
+  if (p.via) {
+    const current = BigInt(Math.floor(now));
+    if (deadline <= current || deadline > current + 3600n) {
+      throw new EvmBuildError(
+        "invalid_request",
+        "deadline must be in seconds, between now and one hour from now",
+      );
+    }
+  }
   const data = p.via
     ? encodeWrapperBridge({
         amount: p.amount,
@@ -74,7 +101,7 @@ export function evmApproveCall(p: EvmBurnInput): { to: Hex; data: Hex } {
  * burn. Pure: the caller reads the allowance and picks the deadline.
  */
 export function buildEvmBridge(
-  p: EvmBurnInput & { from: string; allowance: bigint; deadline: bigint },
+  p: EvmBurnInput & { from: string; allowance: bigint; deadline: bigint; now?: number },
 ): TransferStep[] {
   const steps: TransferStep[] = [];
   const evm = (call: { to: Hex; data: Hex }) =>
@@ -92,7 +119,7 @@ export function buildEvmBridge(
     id: "burn",
     chain: p.source.id,
     description: `Burn the USDC on ${p.source.name}; Circle mints it on the destination.`,
-    tx: evm(evmBurnCall(p, p.deadline)),
+    tx: evm(evmBurnCall(p, p.deadline, p.now)),
     expiresAt: p.via ? new Date(Number(p.deadline) * 1000).toISOString() : null,
   });
   return steps;

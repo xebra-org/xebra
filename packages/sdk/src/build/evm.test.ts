@@ -11,6 +11,7 @@ import { buildEvmBridge, evmBurnCall } from "./evm.js";
 const base = EVM_CHAINS.base;
 const RECIPIENT = "0x1111111111111111111111111111111111111111";
 const WRAPPER = "0x2222222222222222222222222222222222222222";
+const NOW = 1_800_000_000;
 const INPUT = {
   source: base,
   from: "0x3333333333333333333333333333333333333333",
@@ -20,7 +21,8 @@ const INPUT = {
   maxFee: 50_000n,
   finality: FINALITY.standard,
   via: null,
-  deadline: 1_800_000_000n,
+  deadline: BigInt(NOW + 1800),
+  now: NOW,
 } as const;
 
 describe("buildEvmBridge", () => {
@@ -84,5 +86,67 @@ describe("buildEvmBridge", () => {
 
   it("refuses an encoding the contract would revert, before anything is signed", () => {
     expect(() => evmBurnCall({ ...INPUT, maxFee: INPUT.amount }, 0n)).toThrow(/maxFee/);
+  });
+
+  describe("wrapper deadline validation", () => {
+    const via = { address: WRAPPER, maxWrapperFee: 400_000n };
+
+    it("accepts a valid deadline within the next hour", () => {
+      const now = 1_000_000;
+      const deadline = BigInt(now + 1800);
+      expect(() => evmBurnCall({ ...INPUT, via }, deadline, now)).not.toThrow();
+      const steps = buildEvmBridge({ ...INPUT, via, allowance: INPUT.amount, deadline, now });
+      expect(steps[0]?.expiresAt).toBe(new Date(Number(deadline) * 1000).toISOString());
+    });
+
+    it("rejects a deadline in the past or at now", () => {
+      const now = 1_000_000;
+      expect(() => evmBurnCall({ ...INPUT, via }, BigInt(now), now)).toThrow(
+        "deadline must be in seconds, between now and one hour from now",
+      );
+      expect(() => evmBurnCall({ ...INPUT, via }, BigInt(now - 1), now)).toThrow(
+        "deadline must be in seconds, between now and one hour from now",
+      );
+      expect(() =>
+        buildEvmBridge({ ...INPUT, via, allowance: INPUT.amount, deadline: BigInt(now - 10), now }),
+      ).toThrow(
+        expect.objectContaining({
+          code: "invalid_request",
+          message: "deadline must be in seconds, between now and one hour from now",
+        }),
+      );
+    });
+
+    it("rejects a deadline more than one hour ahead", () => {
+      const now = 1_000_000;
+      const deadline = BigInt(now + 3601);
+      expect(() => evmBurnCall({ ...INPUT, via }, deadline, now)).toThrow(
+        "deadline must be in seconds, between now and one hour from now",
+      );
+      expect(() =>
+        buildEvmBridge({ ...INPUT, via, allowance: INPUT.amount, deadline, now }),
+      ).toThrow(
+        expect.objectContaining({
+          code: "invalid_request",
+          message: "deadline must be in seconds, between now and one hour from now",
+        }),
+      );
+    });
+
+    it("rejects a deadline passed in milliseconds", () => {
+      const now = 1_000_000;
+      const deadline = BigInt(now * 1000);
+      expect(() => evmBurnCall({ ...INPUT, via }, deadline, now)).toThrow(
+        "deadline must be in seconds, between now and one hour from now",
+      );
+      expect(() =>
+        buildEvmBridge({ ...INPUT, via, allowance: INPUT.amount, deadline, now }),
+      ).toThrow(
+        expect.objectContaining({
+          code: "invalid_request",
+          message: "deadline must be in seconds, between now and one hour from now",
+        }),
+      );
+    });
   });
 });
