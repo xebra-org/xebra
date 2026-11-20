@@ -28,7 +28,9 @@ function walk(dir) {
 
 const pages = new Map();
 for (const file of walk(root).filter((f) => f.endsWith(".html"))) {
-  let route = `/${relative(root, file).replace(/\.html$/, "")}`;
+  let route = `/${relative(root, file)
+    .replace(/\\/g, "/")
+    .replace(/\.html$/, "")}`;
   if (route.endsWith("/index")) route = route.slice(0, -6) || "/";
   const html = readFileSync(file, "utf8");
   const ids = new Set([...html.matchAll(/\sid="([^"]+)"/g)].map((m) => m[1]));
