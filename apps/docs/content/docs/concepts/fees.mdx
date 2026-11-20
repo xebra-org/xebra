@@ -52,9 +52,10 @@ is shown rounded up to six places.
 
 ### Limits
 
-The contract takes **1 to 100 USDC per transfer** (as of 2026-11-12). Those limits stay low while
-the contracts have had no external audit. The quote reports the live limits as `minimum` and
-`maximum`; an amount outside them is refused with `amount_below_minimum` or `amount_above_maximum`.
+The Stellar contract takes **1 to 10,000,000 USDC per transfer** (as of 2026-11-16); the Arc contract
+takes **1 to 100 USDC per transfer** (as of 2026-11-16). The contracts have had no external audit.
+The quote reports the live limits as `minimum` and `maximum`; an amount outside them is refused with
+`amount_below_minimum` or `amount_above_maximum`.
 
 The effective minimum can be higher than the contract's: Circle's delivery fee may be at most a
 tenth of the amount (see below), so a route with a larger delivery fee needs a larger transfer. A new
