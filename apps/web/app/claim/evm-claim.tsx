@@ -13,6 +13,7 @@ import {
   waitForClaim,
 } from "../../lib/evm-claim";
 import { reportError } from "../../lib/format-error";
+import { type ClassifiedError, classifyWalletError } from "../../lib/wallet-error";
 
 /**
  * The EVM half of `/claim`: complete an attested transfer from your own wallet, on whichever EVM
@@ -27,6 +28,33 @@ import { reportError } from "../../lib/format-error";
  * about a day. That is found by asking the chain whether the mint would succeed, and fixed by
  * asking Circle to sign again. The money was never at risk; the signature was only stale.
  */
+function ClaimErrorNotice({ error }: { error: ClassifiedError }) {
+  if (error.kind === "declined" || error.kind === "popup") {
+    return (
+      <Notice tone="info" title="Wallet request cancelled">
+        You cancelled. Your USDC is still waiting to be claimed; try again any time.
+      </Notice>
+    );
+  }
+  if (error.maybeSent) {
+    return (
+      <Notice tone="alarm" title="Could not confirm claim">
+        <p>{error.message}</p>
+        <p className="mt-2 text-bone/35">
+          Your claim may have gone out. Check your wallet or explorer before trying again.
+        </p>
+      </Notice>
+    );
+  }
+  return (
+    <Notice tone="alarm" title="That did not go through">
+      <pre className="max-h-48 overflow-auto whitespace-pre-wrap break-words font-mono text-[0.75rem] leading-relaxed text-bone/60">
+        {error.message}
+      </pre>
+    </Notice>
+  );
+}
+
 export function EvmClaim({
   message,
   attestation,
@@ -49,7 +77,7 @@ export function EvmClaim({
   const provider = evm?.provider ?? null;
   const wallet = evm?.address ?? null;
   const [busy, setBusy] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<ClassifiedError | null>(null);
   const [hash, setHash] = useState<string | null>(null);
   const [sent, setSent] = useState<string | null>(null);
   const [confirming, setConfirming] = useState(false);
@@ -102,7 +130,8 @@ export function EvmClaim({
         }
       }
     } catch (err) {
-      setError(reportError("claim failed", err));
+      reportError("claim failed", err);
+      setError(classifyWalletError(err));
     } finally {
       setBusy(null);
       void syncEvmChain();
@@ -116,7 +145,8 @@ export function EvmClaim({
     const result = await requestReattest(eventNonce);
     setBusy(null);
     if (!result.ok) {
-      setError(`Circle did not accept the request: ${result.reason}.`);
+      const message = `Circle did not accept the request: ${result.reason}.`;
+      setError({ kind: "unknown", message, maybeSent: false, raw: result.reason });
       return;
     }
     setRefreshed(true);
@@ -194,13 +224,7 @@ export function EvmClaim({
               transaction up again in a moment.
             </Notice>
           ))}
-        {error && (
-          <Notice tone="alarm" title="That did not go through">
-            <pre className="max-h-48 overflow-auto whitespace-pre-wrap break-words font-mono text-[0.75rem] leading-relaxed text-bone/60">
-              {error}
-            </pre>
-          </Notice>
-        )}
+        {error && <ClaimErrorNotice error={error} />}
       </>
     );
   }
@@ -245,13 +269,7 @@ export function EvmClaim({
         {busy ?? "Claim it"}
       </button>
 
-      {error && (
-        <Notice tone="alarm" title="That did not go through">
-          <pre className="max-h-48 overflow-auto whitespace-pre-wrap break-words font-mono text-[0.75rem] leading-relaxed text-bone/60">
-            {error}
-          </pre>
-        </Notice>
-      )}
+      {error && <ClaimErrorNotice error={error} />}
     </>
   );
 }
