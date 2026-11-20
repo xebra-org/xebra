@@ -102,6 +102,22 @@ function combineSignals(caller: AbortSignal, timeout: AbortSignal): AbortSignal 
   return controller.signal;
 }
 
+/** What any one call may be given, as its last argument. */
+export interface XebraCallOptions {
+  /**
+   * Stops the call. It rejects with the signal's reason, not with an `XebraApiError`. The timeout
+   * still applies: whichever comes first ends the request.
+   */
+  signal?: AbortSignal;
+  /** How long this call may take, in place of the client's `timeoutMs`. */
+  timeoutMs?: number;
+}
+
+/** `getTransfer` took a bare signal before it took options; it still takes either. */
+function isAbortSignal(value: XebraCallOptions | AbortSignal | undefined): value is AbortSignal {
+  return typeof (value as AbortSignal | undefined)?.addEventListener === "function";
+}
+
 /**
  * A client for the Xebra API. It prices transfers and builds unsigned transactions; your user's
  * wallet signs them. It never needs or accepts a private key.
@@ -109,13 +125,15 @@ function combineSignals(caller: AbortSignal, timeout: AbortSignal): AbortSignal 
 export function createXebraClient(opts: XebraClientOptions = {}) {
   const base = (opts.baseUrl ?? DEFAULT_BASE_URL).replace(/\/+$/, "");
   const doFetch = opts.fetch ?? globalThis.fetch;
-  const timeoutMs = opts.timeoutMs ?? 15_000;
+  const defaultTimeoutMs = opts.timeoutMs ?? 15_000;
 
   async function call<T>(
     path: string,
     schema: Schema<T>,
-    init: { method?: "GET" | "POST"; body?: unknown; signal?: AbortSignal } = {},
+    init: { method?: "GET" | "POST"; body?: unknown } & XebraCallOptions = {},
   ): Promise<T> {
+    // Named as the client's own was, so every message below reports the limit that applied.
+    const timeoutMs = init.timeoutMs ?? defaultTimeoutMs;
     const timeout = AbortSignal.timeout(timeoutMs);
     const signal = init.signal ? combineSignals(init.signal, timeout) : timeout;
     let res: Response;
@@ -186,36 +204,48 @@ export function createXebraClient(opts: XebraClientOptions = {}) {
       Object.entries(q).filter((e): e is [string, string] => e[1] !== undefined),
     ).toString();
 
-  const getTransfer = (chain: ChainId, tx: string, signal?: AbortSignal): Promise<TransferStatus> =>
+  /** The part of a request that the caller's options decide. Absent options add nothing. */
+  const passed = (o?: XebraCallOptions): XebraCallOptions => ({
+    ...(o?.signal ? { signal: o.signal } : {}),
+    ...(o?.timeoutMs !== undefined ? { timeoutMs: o.timeoutMs } : {}),
+  });
+
+  const getTransfer = (
+    chain: ChainId,
+    tx: string,
+    /** Options, or only a signal, which is what this argument used to be. */
+    o?: XebraCallOptions | AbortSignal,
+  ): Promise<TransferStatus> =>
     call(
       `/v1/transfers/${encodeURIComponent(chain)}/${encodeURIComponent(tx)}`,
       TransferStatusSchema,
-      signal ? { signal } : {},
+      passed(isAbortSignal(o) ? { signal: o } : o),
     );
 
   return {
     /** Every route Xebra sends on right now. */
-    routes: (): Promise<Routes> => call("/v1/routes", RoutesSchema),
+    routes: (o?: XebraCallOptions): Promise<Routes> => call("/v1/routes", RoutesSchema, passed(o)),
 
     /** What a transfer costs and what the recipient gets. Read-only. */
-    quote: (q: QuoteRequest): Promise<Quote> =>
+    quote: (q: QuoteRequest, o?: XebraCallOptions): Promise<Quote> =>
       call(
         `/v1/quote?${query({ from: q.from, to: q.to, amount: q.amount, speed: q.speed, recipient: q.recipient })}`,
         QuoteSchema,
+        passed(o),
       ),
 
     /** The unsigned transactions for a transfer, in signing order, and its price. */
-    createTransfer: (r: TransferRequest): Promise<TransferBuild> =>
-      call("/v1/transfers", TransferBuildSchema, { method: "POST", body: r }),
+    createTransfer: (r: TransferRequest, o?: XebraCallOptions): Promise<TransferBuild> =>
+      call("/v1/transfers", TransferBuildSchema, { method: "POST", body: r, ...passed(o) }),
 
     /** Where a transfer is, by the burn's transaction hash (or Sui digest). */
     getTransfer,
 
     /** The unsigned mint for a transfer whose delivery did not complete on its own. */
-    createClaim: (r: ClaimRequest): Promise<ClaimBuild> =>
-      call("/v1/claims", ClaimBuildSchema, { method: "POST", body: r }),
+    createClaim: (r: ClaimRequest, o?: XebraCallOptions): Promise<ClaimBuild> =>
+      call("/v1/claims", ClaimBuildSchema, { method: "POST", body: r, ...passed(o) }),
 
-    health: (): Promise<Health> => call("/v1/health", HealthSchema),
+    health: (o?: XebraCallOptions): Promise<Health> => call("/v1/health", HealthSchema, passed(o)),
 
     /**
      * Polls until the transfer is delivered, needs a claim, or failed. A moment where Circle

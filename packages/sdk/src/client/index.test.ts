@@ -1,6 +1,11 @@
 import { describe, expect, it, vi } from "vitest";
 import { XebraError } from "../errors.js";
-import { XebraApiError, createXebraClient } from "./index.js";
+import {
+  XebraApiError,
+  type XebraCallOptions,
+  type XebraClient,
+  createXebraClient,
+} from "./index.js";
 
 const json = (status: number, body: unknown, type = "application/json") =>
   new Response(JSON.stringify(body), { status, headers: { "Content-Type": type } });
@@ -103,6 +108,113 @@ describe("createXebraClient", () => {
     } finally {
       if (any) Object.defineProperty(AbortSignal, "any", any);
     }
+  });
+});
+
+describe("options on a single call", () => {
+  const TX = "a".repeat(64);
+  const QUOTE = { from: "stellar", to: "base", amount: "10" } as const;
+  const TRANSFER = { ...QUOTE, sender: "GSENDER", recipient: "0xrecipient" };
+
+  /** A fetch that never answers, and fails with the signal's reason once the request is aborted. */
+  const hanging = () =>
+    vi.fn(
+      (_url: string | URL | Request, init?: RequestInit) =>
+        new Promise<Response>((_, reject) => {
+          const signal = init?.signal;
+          if (signal?.aborted) return reject(signal.reason);
+          signal?.addEventListener("abort", () => reject(signal.reason), { once: true });
+        }),
+    );
+
+  /** A fetch that answers after `ms`, unless the request is aborted first. */
+  const answering = (ms: number, body: unknown) =>
+    vi.fn(
+      (_url: string | URL | Request, init?: RequestInit) =>
+        new Promise<Response>((resolve, reject) => {
+          const timer = setTimeout(() => resolve(json(200, body)), ms);
+          init?.signal?.addEventListener(
+            "abort",
+            () => {
+              clearTimeout(timer);
+              reject(init.signal?.reason);
+            },
+            { once: true },
+          );
+        }),
+    );
+
+  it("stops a quote when the caller aborts, and rejects with the caller's own reason", async () => {
+    const fetch = hanging();
+    const client = createXebraClient({ fetch });
+    const caller = new AbortController();
+    const reason = new Error("the component unmounted");
+    const pending = client.quote(QUOTE, { signal: caller.signal });
+    caller.abort(reason);
+    await expect(pending).rejects.toBe(reason);
+    // The request itself was told to stop: aborting is more than no longer listening for it.
+    expect(fetch.mock.calls[0]?.[1]?.signal?.aborted).toBe(true);
+  });
+
+  it("takes a signal on every method", async () => {
+    const methods: Array<[string, (c: XebraClient, o: XebraCallOptions) => Promise<unknown>]> = [
+      ["routes", (c, o) => c.routes(o)],
+      ["quote", (c, o) => c.quote(QUOTE, o)],
+      ["createTransfer", (c, o) => c.createTransfer(TRANSFER, o)],
+      ["getTransfer", (c, o) => c.getTransfer("stellar", TX, o)],
+      ["getTransfer with only a signal", (c, o) => c.getTransfer("stellar", TX, o.signal)],
+      ["createClaim", (c, o) => c.createClaim({ chain: "stellar", tx: TX, payer: "0xpayer" }, o)],
+      ["health", (c, o) => c.health(o)],
+    ];
+    for (const [name, run] of methods) {
+      const client = createXebraClient({ fetch: hanging() });
+      const caller = new AbortController();
+      const reason = new Error(`stopped ${name}`);
+      const pending = run(client, { signal: caller.signal });
+      caller.abort(reason);
+      await expect(pending, name).rejects.toBe(reason);
+    }
+  });
+
+  it("gives one call its own timeout, shorter than the client's", async () => {
+    const client = createXebraClient({ timeoutMs: 10_000, fetch: hanging() });
+    const err = await client.quote(QUOTE, { timeoutMs: 20 }).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(XebraApiError);
+    // The message names the limit that applied to this call, not the client's ten seconds.
+    expect(err).toMatchObject({ code: "timeout", detail: "No answer within 20 ms." });
+  });
+
+  it("gives one call its own timeout, longer than the client's, and only that call", async () => {
+    const health = { status: "ok", version: "1" };
+    const client = createXebraClient({ timeoutMs: 20, fetch: answering(80, health) });
+    await expect(client.health()).rejects.toMatchObject({ code: "timeout" });
+    await expect(client.health({ timeoutMs: 2_000 })).resolves.toEqual(health);
+    // The next call is back on the client's 20 ms.
+    await expect(client.health()).rejects.toMatchObject({
+      code: "timeout",
+      detail: "No answer within 20 ms.",
+    });
+  });
+
+  it("times out a call whose signal nobody aborts: whichever comes first ends it", async () => {
+    const client = createXebraClient({ fetch: hanging() });
+    const caller = new AbortController();
+    await expect(client.routes({ signal: caller.signal, timeoutMs: 20 })).rejects.toMatchObject({
+      code: "timeout",
+    });
+    expect(caller.signal.aborted).toBe(false);
+  });
+
+  it("keeps the options out of what is sent", async () => {
+    const fetch = hanging();
+    const client = createXebraClient({ fetch });
+    const caller = new AbortController();
+    const pending = client.createTransfer(TRANSFER, { signal: caller.signal, timeoutMs: 5_000 });
+    caller.abort();
+    await pending.catch(() => {});
+    const [url, init] = fetch.mock.calls[0] ?? [];
+    expect(url).toBe("https://api.xebra.exchange/v1/transfers");
+    expect(JSON.parse(String(init?.body))).toEqual(TRANSFER);
   });
 });
 
