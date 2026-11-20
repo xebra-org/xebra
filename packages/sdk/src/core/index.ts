@@ -5,6 +5,7 @@
  */
 export * from "./addresses/evm.js";
 export * from "./addresses/solana.js";
+export * from "./addresses/sui.js";
 export * from "./amounts.js";
 export * from "./cctp/sui-stellar.js";
 export * from "./chains/destinations.js";

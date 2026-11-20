@@ -34,6 +34,27 @@ export function ArcRecipientPanel({
 }
 
 /**
+ * A Sui recipient, and what finishing the transfer takes. Said before signing because it is the one
+ * route where the transfer does not finish by itself: Circle does not deliver to Sui.
+ */
+export function SuiRecipientPanel({ address, valid }: { address: string; valid: boolean }) {
+  if (!valid) return null;
+  return (
+    <InsetTray className="mt-3 py-3">
+      <p className="text-xs text-bone/40">USDC will be minted to this Sui address</p>
+      <p className="tabular mt-1.5 break-all font-mono text-xs text-bone/70">
+        {address.toLowerCase()}
+      </p>
+      <p className="mt-2.5 text-xs leading-relaxed text-bone/45">
+        One more step on Sui: Circle does not deliver there by itself. A few minutes after you send,
+        the receipt links to the claim page, where any Sui wallet finishes it for a little SUI gas.
+        The USDC goes to this address whoever signs.
+      </p>
+    </InsetTray>
+  );
+}
+
+/**
  * Shows what the USDC will actually be delivered to.
  *
  * Users type a wallet address, but CCTP's `mintRecipient` on Solana must be the USDC **token
@@ -115,7 +136,7 @@ export function UseMyWallet({
   onUse,
   onConnect,
 }: {
-  family: "solana" | "evm";
+  family: "solana" | "evm" | "sui";
   connection: Connection | undefined;
   disabled: boolean;
   onUse: (address: string) => void;
@@ -140,7 +161,8 @@ export function UseMyWallet({
           onClick={() => onConnect([family])}
           className="underline underline-offset-4 transition-colors hover:text-bone disabled:opacity-40"
         >
-          Connect {family === "solana" ? "a Solana" : "an EVM"} wallet to fill this in
+          Connect {family === "solana" ? "a Solana" : family === "sui" ? "a Sui" : "an EVM"} wallet
+          to fill this in
         </button>
       )}
     </div>

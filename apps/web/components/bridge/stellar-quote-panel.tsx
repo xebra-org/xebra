@@ -15,12 +15,15 @@ export function QuotePanel({
   error,
   hasAddress,
   destinationName,
+  claimOnly = false,
 }: {
   quote: BridgeQuote | null;
   loading: boolean;
   error: string | null;
   hasAddress: boolean;
   destinationName: string;
+  /** Circle does not deliver there: the recipient mints it, paying that chain's gas. */
+  claimOnly?: boolean;
 }) {
   if (!hasAddress) {
     return (
@@ -62,7 +65,11 @@ export function QuotePanel({
         <DataRow
           label="Fee"
           value={`−${formatUsdc(quote.fee)} USDC`}
-          hint={`Includes Circle's delivery to ${destinationName}${quote.accountCreated ? ", and opening the recipient's USDC account" : ""}. Nothing more to pay on ${destinationName}.`}
+          hint={
+            claimOnly
+              ? `Xebra's fee. Circle does not deliver to ${destinationName}: the recipient claims it there, paying a little gas.`
+              : `Includes Circle's delivery to ${destinationName}${quote.accountCreated ? ", and opening the recipient's USDC account" : ""}. Nothing more to pay on ${destinationName}.`
+          }
         />
         {quote.remainder > 0n && (
           <DataRow
@@ -77,7 +84,11 @@ export function QuotePanel({
             label="Recipient gets"
             value={`${formatUsdc(quote.netBurned - quote.forwardFee)} USDC`}
             emphasis
-            hint="After every fee."
+            hint={
+              claimOnly
+                ? `After every fee, once claimed on ${destinationName}.`
+                : "After every fee."
+            }
           />
         </div>
       </dl>
