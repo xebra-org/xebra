@@ -1,4 +1,5 @@
 import { ERROR_TYPE_BASE } from "@xebra/sdk";
+import type { Gate, Guard } from "./auth";
 import { ApiError } from "./errors";
 import { extraToWire } from "./wire";
 
@@ -130,9 +131,13 @@ export async function handle<I, O>(
     output: Parser<O>;
     /** `Cache-Control` for a success. */
     cache?: string;
+    /** Identify and count the caller before anything is read. Refusals are problems like any other. */
+    guard: Guard;
   },
 ): Promise<Response> {
+  let gate: Gate | null = null;
   try {
+    gate = await opts.guard(req);
     let raw: unknown = {};
     if (opts.from === "query") raw = Object.fromEntries(new URL(req.url).searchParams);
     if (opts.from === "body") raw = await readBody(req);
@@ -152,13 +157,22 @@ export async function handle<I, O>(
       throw new ApiError("internal_error", "The answer failed our own checks. Nothing was sent.");
     }
     return Response.json(checked.data, {
-      headers: { ...CORS, "Cache-Control": opts.cache ?? "no-store" },
+      headers: {
+        ...CORS,
+        ...(gate?.headers ?? {}),
+        "Cache-Control": opts.cache ?? "no-store",
+      },
     });
   } catch (err) {
-    if (err instanceof ApiError) return problem(err);
+    const headers = {
+      ...(gate?.headers ?? {}),
+      ...(err instanceof ApiError ? err.headers : {}),
+    };
+    if (err instanceof ApiError) return problem(err, headers);
     console.error("v1 request failed", req.url, err);
     return problem(
       new ApiError("internal_error", "Something went wrong on our side. Nothing was sent."),
+      headers,
     );
   }
 }

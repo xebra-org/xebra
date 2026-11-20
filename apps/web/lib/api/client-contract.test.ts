@@ -1,5 +1,6 @@
 import { XebraApiError, createXebraClient } from "@xebra/sdk";
 import { describe, expect, it } from "vitest";
+import { OPEN_GUARD } from "./auth";
 import type { Deps } from "./deps";
 import { endpoints } from "./endpoints";
 import { RECIPIENT, SENDER, STELLAR_TX, buildDeps, deps } from "./fakes";
@@ -11,7 +12,7 @@ import { createService } from "./service";
  * from the shared schemas fails here.
  */
 function client(over: Partial<Deps> = {}) {
-  const v1 = endpoints(createService(deps({ build: buildDeps(), ...over })));
+  const v1 = endpoints(createService(deps({ build: buildDeps(), ...over })), OPEN_GUARD);
   const fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
     const req = new Request(input, init);
     const path = new URL(req.url).pathname;

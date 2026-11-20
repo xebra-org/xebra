@@ -12,6 +12,7 @@ import {
   TransferStatusSchema,
 } from "@xebra/sdk";
 import { parseUsdcAmount } from "@xebra/sdk/core";
+import type { Guard } from "./auth";
 import { ApiError } from "./errors";
 import { handle } from "./http";
 import { type DestId, type Service, type SourceId, isDestId, isSourceId } from "./service";
@@ -20,6 +21,9 @@ import { buildToWire, claimToWire, quoteToWire, routesToWire, statusToWire } fro
 /**
  * The `/v1` handlers, built over a service so tests can drive them with fakes. The route files in
  * `app/v1` are one line each over `v1` from `lib/api/instance.ts`.
+ *
+ * `guard` identifies the caller and counts them (`lib/api/auth.ts`); every handler goes through it
+ * before it reads a parameter or a body.
  */
 
 function units(raw: string): bigint {
@@ -46,10 +50,11 @@ function source(chain: string): SourceId {
   return chain;
 }
 
-export function endpoints(service: Service) {
+export function endpoints(service: Service, guard: Guard) {
   return {
     routes: (req: Request) =>
       handle(req, {
+        guard,
         from: "none",
         run: async () => {
           const r = await service.routes();
@@ -61,6 +66,7 @@ export function endpoints(service: Service) {
 
     quote: (req: Request) =>
       handle(req, {
+        guard,
         from: "query",
         input: QuoteRequestSchema,
         run: async (q) => {
@@ -83,6 +89,7 @@ export function endpoints(service: Service) {
 
     createTransfer: (req: Request) =>
       handle(req, {
+        guard,
         from: "body",
         input: TransferRequestSchema,
         run: async (r) =>
@@ -103,6 +110,7 @@ export function endpoints(service: Service) {
 
     getTransfer: (req: Request, params: { chain: string; tx: string }) =>
       handle(req, {
+        guard,
         from: "params",
         params,
         input: TransferPathSchema,
@@ -113,6 +121,7 @@ export function endpoints(service: Service) {
 
     createClaim: (req: Request) =>
       handle(req, {
+        guard,
         from: "body",
         input: ClaimRequestSchema,
         run: async (c) =>
@@ -129,6 +138,7 @@ export function endpoints(service: Service) {
 
     health: (req: Request) =>
       handle(req, {
+        guard,
         from: "none",
         run: async () => ({ status: "ok" as const, version: SDK_VERSION }),
         output: HealthSchema,

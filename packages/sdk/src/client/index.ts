@@ -61,8 +61,8 @@ export class XebraApiError extends XebraError {
 export interface XebraClientOptions {
   baseUrl?: string;
   /**
-   * Sent as `Authorization: Bearer <apiKey>`. Optional: keys are not issued yet, and the API
-   * answers without one.
+   * Sent as `Authorization: Bearer <apiKey>`. Optional: without one the API answers at a lower
+   * rate limit. See https://docs.xebra.exchange/guides/api-keys.
    */
   apiKey?: string;
   fetch?: typeof fetch;
