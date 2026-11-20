@@ -32,6 +32,7 @@ import { env, isCctpRailConfigured } from "../../lib/env";
 import { formatError, reportError } from "../../lib/format-error";
 import { unitsToInput } from "../../lib/max-amount";
 import { type RecipientResolution, resolveRecipient } from "../../lib/solana-recipient";
+import { type ClassifiedError, classifyWalletError } from "../../lib/wallet-error";
 import { Button } from "../ui/button";
 import { Field, Input } from "../ui/field";
 import { ArrowRight } from "../ui/icons";
@@ -96,6 +97,15 @@ const CONSECUTIVE_POLL_FAILURES_THRESHOLD = 5;
 /** Backoff interval when consecutive poll failures occur. */
 const POLL_BACKOFF_MS = 30_000;
 
+function preSubmitError(message: string): ClassifiedError {
+  return {
+    kind: "unknown",
+    message,
+    maybeSent: false,
+    raw: message,
+  };
+}
+
 export function StellarBridgeForm({
   sourcePicker,
   onBusyChange,
@@ -131,7 +141,7 @@ export function StellarBridgeForm({
   const [quoteError, setQuoteError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [step, setStep] = useState<string | null>(null);
-  const [submitError, setSubmitError] = useState<string | null>(null);
+  const [submitError, setSubmitError] = useState<ClassifiedError | null>(null);
   const [txHash, setTxHash] = useState<string | null>(null);
   // Circle's own account of the transfer. `null` until the first answer.
   const [delivery, setDelivery] = useState<DeliveryView | null>(null);
@@ -605,7 +615,9 @@ export function StellarBridgeForm({
       } catch (err) {
         reportError("reading the wrapper's destinations failed", err);
         setSubmitError(
-          "We could not read the bridge contract's settings just now, so nothing was sent.",
+          preSubmitError(
+            "We could not read the bridge contract's settings just now, so nothing was sent.",
+          ),
         );
         return;
       }
@@ -613,7 +625,9 @@ export function StellarBridgeForm({
       const latestCfg = latestDomains?.get(dest.domain);
       if (!latestCfg) {
         setSubmitError(
-          `The bridge contract does not send to ${dest.name} right now, so nothing was sent.`,
+          preSubmitError(
+            `The bridge contract does not send to ${dest.name} right now, so nothing was sent.`,
+          ),
         );
         return;
       }
@@ -621,13 +635,17 @@ export function StellarBridgeForm({
       setHealthState({ key: healthKey, value: fresh });
       if (fresh?.status === "down") {
         setSubmitError(
-          `Circle is not able to deliver to ${dest.name} right now, so nothing was sent. ${fresh.reasons[0] ?? ""}`.trim(),
+          preSubmitError(
+            `Circle is not able to deliver to ${dest.name} right now, so nothing was sent. ${fresh.reasons[0] ?? ""}`.trim(),
+          ),
         );
         return;
       }
       // With no relay, a transfer signed without a live delivery fee is one nobody can deliver.
       if (!fresh?.quote) {
-        setSubmitError("We could not get Circle's delivery fee just now, so nothing was sent.");
+        setSubmitError(
+          preSubmitError("We could not get Circle's delivery fee just now, so nothing was sent."),
+        );
         return;
       }
 
@@ -638,7 +656,7 @@ export function StellarBridgeForm({
         destinationName: dest.name,
       });
       if (!choice.ok) {
-        setSubmitError(choice.reason);
+        setSubmitError(preSubmitError(choice.reason));
         return;
       }
 
@@ -655,14 +673,18 @@ export function StellarBridgeForm({
       if (!latest.forwarded) {
         setQuote(null);
         setSubmitError(
-          `Automatic delivery to ${dest.name} is not available right now, so nothing was sent.`,
+          preSubmitError(
+            `Automatic delivery to ${dest.name} is not available right now, so nothing was sent.`,
+          ),
         );
         return;
       }
       if (latest.fee > quote.fee) {
         setQuote(latest);
         setSubmitError(
-          `Circle's delivery fee moved while you were reviewing: the fee is now ${formatUsdc(latest.fee)} USDC, was ${formatUsdc(quote.fee)}. Nothing was sent. Check the new total and confirm again.`,
+          preSubmitError(
+            `Circle's delivery fee moved while you were reviewing: the fee is now ${formatUsdc(latest.fee)} USDC, was ${formatUsdc(quote.fee)}. Nothing was sent. Check the new total and confirm again.`,
+          ),
         );
         return;
       }
@@ -696,7 +718,8 @@ export function StellarBridgeForm({
       // actually sent to belongs in the list.
       book.remember(dest.evm ? "evm" : "solana", destination);
     } catch (err) {
-      setSubmitError(reportError("transfer failed", err));
+      reportError("transfer failed", err);
+      setSubmitError(classifyWalletError(err));
     } finally {
       setSubmitting(false);
       setStep(null);
@@ -866,20 +889,35 @@ export function StellarBridgeForm({
           </Notice>
         )}
 
-        {submitError && (
-          <Notice tone="alarm" title="The transfer did not go through" className="mt-5">
-            {/* A Soroban failure's useful part is its diagnostic event log, which is
-                long and multi-line. Rendered as flowing text it collapses into an
-                unreadable run-on, so it gets a scrollable monospace block instead. */}
-            <pre className="max-h-48 overflow-auto whitespace-pre-wrap break-words font-mono text-[0.75rem] leading-relaxed text-bone/60">
-              {submitError}
-            </pre>
-            <p className="mt-2 text-bone/35">
-              No funds have moved unless a transaction hash is shown. Full detail is in the browser
-              console under <code className="font-mono">[xebra]</code>.
-            </p>
-          </Notice>
-        )}
+        {submitError &&
+          (submitError.kind === "declined" || submitError.kind === "popup" ? (
+            <Notice tone="info" title="Wallet request cancelled" className="mt-5">
+              You cancelled in your wallet. Nothing was sent.
+            </Notice>
+          ) : submitError.maybeSent ? (
+            <Notice tone="alarm" title="Could not confirm transfer" className="mt-5">
+              <pre className="max-h-48 overflow-auto whitespace-pre-wrap break-words font-mono text-[0.75rem] leading-relaxed text-bone/60">
+                {submitError.message}
+              </pre>
+              <p className="mt-2 text-bone/35">
+                Check your wallet&rsquo;s activity first before trying again. Full detail is in the
+                browser console under <code className="font-mono">[xebra]</code>.
+              </p>
+            </Notice>
+          ) : (
+            <Notice tone="alarm" title="The transfer did not go through" className="mt-5">
+              {/* A Soroban failure's useful part is its diagnostic event log, which is
+                  long and multi-line. Rendered as flowing text it collapses into an
+                  unreadable run-on, so it gets a scrollable monospace block instead. */}
+              <pre className="max-h-48 overflow-auto whitespace-pre-wrap break-words font-mono text-[0.75rem] leading-relaxed text-bone/60">
+                {submitError.message}
+              </pre>
+              <p className="mt-2 text-bone/35">
+                No funds have moved unless a transaction hash is shown. Full detail is in the browser
+                console under <code className="font-mono">[xebra]</code>.
+              </p>
+            </Notice>
+          ))}
 
         {!txHash && health?.status === "down" && (
           <Notice
