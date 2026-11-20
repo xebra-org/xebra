@@ -225,7 +225,7 @@ function security(arcViaWrapper: boolean): Doc {
 | Xebra fee wrapper v2 | Stellar | [\`${CONTRACTS.stellarWrapper.address}\`](${CONTRACTS.stellarWrapper.explorer}) |
 | Xebra fee wrapper | Arc | [\`${CONTRACTS.arcWrapper.address}\`](${CONTRACTS.arcWrapper.explorer}) |
 
-Both are open source: [github.com/drydocs/xebra](https://github.com/drydocs/xebra). Burning, attesting and minting are Circle's contracts and Circle's service.
+Both are open source: [github.com/xebra-org/xebra](https://github.com/xebra-org/xebra). Burning, attesting and minting are Circle's contracts and Circle's service.
 
 ## Custody
 
