@@ -44,6 +44,9 @@ function chain(
     simulation: () => string;
     emptyReads: boolean;
     onBurnSend: (state: { nonce: bigint }) => unknown;
+    /** The chain's own coin, in wei. */
+    native: bigint;
+    gasPrice: bigint;
   }> = {},
 ) {
   const state = {
@@ -53,6 +56,8 @@ function chain(
     nonce: 0n,
     approvalStatus: "0x1",
     simulation: () => "0x",
+    native: 10n ** 16n,
+    gasPrice: 1_000_000_000n,
     ...over,
   };
   const calls: Call[] = [];
@@ -90,6 +95,10 @@ function chain(
         }
         case "eth_getTransactionReceipt":
           return { status: state.approvalStatus };
+        case "eth_getBalance":
+          return `0x${state.native.toString(16)}`;
+        case "eth_gasPrice":
+          return `0x${state.gasPrice.toString(16)}`;
         case "eth_getBlockByNumber":
           return { timestamp: `0x${CHAIN_NOW.toString(16)}` };
         default:
@@ -235,6 +244,28 @@ describe("submitEvmBridge", () => {
     const c = chain({ emptyReads: true });
     await expect(submitEvmBridge(request(c))).rejects.toThrow("returned no value");
     expect(c.sent).toHaveLength(0);
+  });
+
+  it("stops before any prompt when the wallet has no gas", async () => {
+    const c = chain({ native: 0n });
+    await expect(submitEvmBridge(request(c))).rejects.toThrow(
+      "You need some ETH on Base to pay the network fee. Nothing was sent.",
+    );
+    expect(c.sent).toHaveLength(0);
+    expect(c.calls.find((x) => x.method === "eth_getBalance")?.params).toEqual([FROM, "latest"]);
+  });
+
+  it("stops when the gas held is below a rough approve-and-burn estimate", async () => {
+    // 310k gas at 1 gwei is 0.00031 ETH; this wallet holds 0.0001.
+    const c = chain({ native: 10n ** 14n });
+    await expect(submitEvmBridge(request(c))).rejects.toThrow("You need some ETH on Base");
+    expect(c.sent).toHaveLength(0);
+  });
+
+  it("does not ask Arc for a native balance, since its gas is the USDC kept back", async () => {
+    const c = chain({ chainId: arc.chainId, native: 0n, balance: 10_000_000n });
+    await submitEvmBridge(request(c, { source: arc, destination: base, maxFee: 54_454n }));
+    expect(c.calls.filter((x) => x.method === "eth_getBalance")).toHaveLength(0);
   });
 
   it("stops when the approval was lowered in the wallet", async () => {

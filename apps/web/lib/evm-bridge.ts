@@ -114,6 +114,27 @@ async function readPendingNonce(provider: Eip1193Provider, from: string): Promis
  */
 export const ARC_GAS_RESERVE_UNITS = 50_000n;
 
+/**
+ * Rough gas for the two transactions where gas is the chain's own coin. Margins, not measurements:
+ * an approval costs about 46k and Circle's burn, or the wrapper's, well under 200k. A rollup's L1
+ * data fee is not in `eth_gasPrice`, so a wallet that passes this may still be asked for a little more.
+ */
+const APPROVE_GAS = 60_000n;
+const BURN_GAS = 250_000n;
+
+/** A wei amount from the wallet's node, read as a quantity and never guessed. */
+async function readQuantity(
+  provider: Eip1193Provider,
+  method: string,
+  params?: unknown[],
+): Promise<bigint> {
+  const raw = await provider.request(params ? { method, params } : { method });
+  if (typeof raw !== "string" || !/^0x[0-9a-fA-F]+$/.test(raw)) {
+    throw new Error(`The wallet's network returned an unreadable answer to ${method}.`);
+  }
+  return BigInt(raw);
+}
+
 /** How much USDC `owner` can send from `chain`, leaving gas where gas is USDC. */
 export function spendableUsdc(chain: EvmChain, balance: bigint): bigint {
   if (chain.id !== "arc") return balance;
@@ -219,8 +240,22 @@ export async function submitEvmBridge(req: EvmBridgeRequest): Promise<EvmBridgeR
     );
   }
 
+  const needsApproval = (await getAllowance(provider, source, from, target)) < amount;
+
+  // Without the chain's own coin the wallet fails with a raw "insufficient funds for gas * price +
+  // value". Arc is covered above: its gas is the USDC kept back by `spendableUsdc`.
+  if (source.id !== "arc") {
+    const native = await readQuantity(provider, "eth_getBalance", [from, "latest"]);
+    const gas = BURN_GAS + (needsApproval ? APPROVE_GAS : 0n);
+    if (native === 0n || native < (await readQuantity(provider, "eth_gasPrice")) * gas) {
+      throw new Error(
+        `You need some ${source.nativeCurrency.symbol} on ${source.name} to pay the network fee. Nothing was sent.`,
+      );
+    }
+  }
+
   let approvalTxHash: Hex | null = null;
-  if ((await getAllowance(provider, source, from, target)) < amount) {
+  if (needsApproval) {
     step("approving");
     approvalTxHash = await sendTransaction(provider, {
       from,
