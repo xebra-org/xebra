@@ -582,7 +582,7 @@ export function EvmBridgeForm({
       // in the list.
       book.remember(destination.evm ? "evm" : "solana", recipientInput);
       // Only a revert changes what the page says, so that is all this waits to hear.
-      void watchBurn(provider, hash)
+      void watchBurn(provider, hash, source.name)
         .then((outcome) => {
           if (outcome === "reverted") setReverted(true);
         })

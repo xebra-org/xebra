@@ -11,6 +11,7 @@ import {
   spendableUsdc,
   submitEvmBridge,
 } from "./evm-bridge";
+import type { Hex } from "./evm-rpc";
 
 const { base, arc } = EVM_CHAINS;
 const FROM = "0x1111111111111111111111111111111111111111";
@@ -191,6 +192,13 @@ describe("submitEvmBridge", () => {
     expect(result).toEqual({ txHash: BURN_HASH, approvalTxHash: APPROVAL_HASH });
     expect(steps).toEqual(["switching", "checking", "approving", "confirming-approval", "burning"]);
     expect(c.sent).toHaveLength(2);
+  });
+
+  it("calls onApprovalHash as soon as the approval transaction is sent", async () => {
+    const c = chain();
+    let hash: Hex | null = null;
+    await submitEvmBridge(request(c, { onApprovalHash: (h) => { hash = h; } }));
+    expect(hash).toBe(APPROVAL_HASH);
 
     const [approval, burn] = c.sent;
     expect(approval?.to).toBe(base.usdcAddress);

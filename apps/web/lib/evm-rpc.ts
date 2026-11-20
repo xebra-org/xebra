@@ -1,3 +1,4 @@
+import { type EvmChain, explorerTxUrl } from "@xebra/sdk/core";
 import type { Eip1193Provider } from "./wallets/types";
 
 /**
@@ -226,11 +227,40 @@ export async function sendTransaction(
 }
 
 export interface WaitOptions {
-  timeoutMs?: number;
-  pollMs?: number;
+  chain?: Pick<EvmChain, "name" | "explorerUrl"> | undefined;
+  chainName?: string | undefined;
+  timeoutMs?: number | undefined;
+  pollMs?: number | undefined;
   /** Injected in tests. */
-  sleep?: (ms: number) => Promise<void>;
-  now?: () => number;
+  sleep?: ((ms: number) => Promise<void>) | undefined;
+  now?: (() => number) | undefined;
+}
+
+/** Thrown when polling for a transaction receipt reaches the timeout without a receipt. */
+export class ReceiptTimeoutError extends Error {
+  readonly hash: string;
+  readonly txHash: string;
+  readonly chainName: string;
+  readonly explorerUrl?: string;
+
+  constructor(
+    hash: string,
+    chain: Pick<EvmChain, "name" | "explorerUrl"> | string = "The network",
+  ) {
+    const isChainObj = typeof chain === "object" && chain !== null && "explorerUrl" in chain;
+    const chainName = typeof chain === "object" && chain !== null ? chain.name : chain;
+    const target = isChainObj ? explorerTxUrl(chain as EvmChain, hash) : hash;
+    super(
+      `${chainName} has not confirmed the transaction yet. It may still go through: check ${target}.`,
+    );
+    this.name = "ReceiptTimeoutError";
+    this.hash = hash;
+    this.txHash = hash;
+    this.chainName = chainName;
+    if (isChainObj) {
+      this.explorerUrl = target;
+    }
+  }
 }
 
 /**
@@ -260,7 +290,8 @@ export async function waitForReceipt(
     if (receipt) return receipt.status === "0x1" ? "success" : "reverted";
     await sleep(pollMs);
   }
-  throw new Error(`no receipt for ${hash} after ${Math.round(timeoutMs / 1000)}s`);
+  const chain = options.chain ?? options.chainName ?? "The network";
+  throw new ReceiptTimeoutError(hash, chain);
 }
 
 /** The latest block number on the wallet's current chain. */
