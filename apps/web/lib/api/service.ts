@@ -29,6 +29,7 @@ import {
   isEvmChainId,
   minimumEvmAmount,
   minimumForwardedAmount,
+  minimumWrapperAmount,
   planEvmFee,
   planWrapperFee,
   solanaAddressToBytes32,
@@ -486,9 +487,10 @@ export function createService(deps: Deps, now: () => number = Date.now) {
           sourceName: SOURCE_NAME(from),
         })
       : planEvmFee({ amount: units, tier, destination });
-    const floor = suggestedEvmMinimum(minimumEvmAmount(tier));
-    const minimum =
-      wrapper && wrapper.terms.minTransfer > floor ? wrapper.terms.minTransfer : floor;
+    // The figure the page names under the amount field, so a refusal here reads the same there.
+    const minimum = suggestedEvmMinimum(
+      wrapper ? minimumWrapperAmount(tier, wrapper.terms) : minimumEvmAmount(tier),
+    );
     if (!plan.ok) {
       const code =
         plan.kind === "minimum"

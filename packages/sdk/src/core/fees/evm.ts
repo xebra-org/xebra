@@ -190,6 +190,28 @@ export function wrapperSplit(
   return netBurned > maxFee ? { fee, xebraFee, netBurned } : null;
 }
 
+function fitsWrapper(
+  amount: bigint,
+  tier: FeeTier,
+  terms: Pick<WrapperTerms, "feeBps" | "minFee" | "minTransfer">,
+): boolean {
+  if (amount < terms.minTransfer) return false;
+  const { deliveryFee, speedFee } = feesFor(amount, tier);
+  const split = wrapperSplit(amount, deliveryFee + speedFee, terms);
+  return split !== null && deliveryFee + speedFee <= split.netBurned / FEE_FRACTION_DENOM;
+}
+
+/**
+ * `minimumEvmAmount` through Xebra's wrapper: the smallest amount the wrapper takes whose Circle fee
+ * is at most a tenth of what is burned. Show it through `suggestedEvmMinimum`, as `planWrapperFee` does.
+ */
+export function minimumWrapperAmount(
+  tier: FeeTier,
+  terms: Pick<WrapperTerms, "feeBps" | "minFee" | "minTransfer">,
+): bigint {
+  return smallestPassing((amount) => fitsWrapper(amount, tier, terms));
+}
+
 /**
  * `planEvmFee` for a transfer through Xebra's wrapper. Every bound the contract enforces is applied
  * here first, so a wallet is never asked to sign what the contract would refuse: its pause, the
@@ -256,16 +278,10 @@ export function planWrapperFee(input: {
     };
   }
 
-  const fits = (a: bigint): boolean => {
-    if (a < terms.minTransfer) return false;
-    const { deliveryFee: d, speedFee: s } = feesFor(a, tier);
-    const split = wrapperSplit(a, d + s, terms);
-    return split !== null && d + s <= split.netBurned / FEE_FRACTION_DENOM;
-  };
   const maxFee = deliveryFee + speedFee;
   const split = wrapperSplit(amount, maxFee, terms);
-  if (!fits(amount) || split === null) {
-    const minimum = suggestedEvmMinimum(smallestPassing(fits));
+  if (!fitsWrapper(amount, tier, terms) || split === null) {
+    const minimum = suggestedEvmMinimum(minimumWrapperAmount(tier, terms));
     return {
       ok: false,
       kind: "minimum",
