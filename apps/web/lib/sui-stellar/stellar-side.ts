@@ -43,6 +43,10 @@ export interface RecipientStatus {
 
 const MISSING_TRUSTLINE = "trustline entry is missing for account";
 
+function stellarRpc(): rpc.Server {
+  return new rpc.Server(env.sorobanRpcUrl, { timeout: 10_000 });
+}
+
 function isAccountNotFoundError(err: unknown): boolean {
   if (err && typeof err === "object") {
     const e = err as {
@@ -65,7 +69,7 @@ function isAccountNotFoundError(err: unknown): boolean {
 }
 
 export async function recipientStatus(recipient: string): Promise<RecipientStatus> {
-  const server = new rpc.Server(env.sorobanRpcUrl);
+  const server = stellarRpc();
   let account: Awaited<ReturnType<rpc.Server["getAccount"]>>;
   try {
     account = await server.getAccount(recipient);
@@ -164,7 +168,7 @@ export async function mintState(
   source: string,
 ): Promise<"delivered" | "open" | "unknown"> {
   try {
-    const server = new rpc.Server(env.sorobanRpcUrl);
+    const server = stellarRpc();
     const account = await server.getAccount(source);
     const tx = new TransactionBuilder(account, {
       fee: BASE_FEE,
@@ -258,7 +262,7 @@ export async function planClaim(
         : "The recipient account does not exist on Stellar yet. Fund it, add a USDC trustline, then try again.",
     };
   }
-  const server = new rpc.Server(env.sorobanRpcUrl);
+  const server = stellarRpc();
   const account = await server.getAccount(payer);
   const tx = new TransactionBuilder(account, {
     fee: "1000000",
@@ -325,7 +329,7 @@ export async function completeBurn(
     }
 
     const keypair = Keypair.fromSecret(relayerSecret);
-    const server = new rpc.Server(env.sorobanRpcUrl);
+    const server = stellarRpc();
     const account = await server.getAccount(keypair.publicKey());
     const tx = new TransactionBuilder(account, {
       fee: "1000000",
