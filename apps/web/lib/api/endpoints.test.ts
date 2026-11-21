@@ -9,7 +9,7 @@ import {
   TransferStatusSchema,
 } from "@xebra/sdk";
 import { stellarDestination } from "@xebra/sdk/core";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   DELETE as catchAllDelete,
   GET as catchAllGet,
@@ -32,7 +32,7 @@ import {
   health,
 } from "./fakes";
 import { TITLES, methodNotAllowed, notFound } from "./host";
-import { preflight, problem } from "./http";
+import { preflight, problem, requestId } from "./http";
 import { createService } from "./service";
 
 const BASE = "https://api.xebra.exchange/v1";
@@ -326,14 +326,129 @@ describe("problem titles", () => {
 
   it("says the same from the middleware as from an endpoint", async () => {
     const detail = "The API lives under /v1. See https://docs.xebra.exchange/api.";
-    expect(await notFound(detail).json()).toEqual(
-      await problem(new ApiError("not_found", detail)).json(),
-    );
+    // All but `instance`: the middleware logs nothing that an id of its own would be matched to.
+    const { instance, ...fromAnEndpoint } = (await problem(
+      new ApiError("not_found", detail),
+    ).json()) as Record<string, unknown>;
+    expect(instance).toMatch(/^urn:xebra:request:/);
+    expect(await notFound(detail).json()).toEqual(fromAnEndpoint);
     // A 405 has no code of its own, so it is `invalid_request` under another status: same title.
     const wrongMethod = await problemOf(methodNotAllowed("GET", ["POST", "OPTIONS"]));
     expect(wrongMethod.title).toBe(TITLES.invalid_request);
     expect(wrongMethod.title).toBe(
       (await problemOf(problem(new ApiError("invalid_request", "A sentence.")))).title,
     );
+  });
+});
+
+describe("request ids", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  const VERCEL_ID = "iad1::iad1::7zdhm-1700000000000-0a1b2c3d4e5f";
+  const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+  /** A request as Vercel hands it over: with its id for it. */
+  const fromVercel = (req: Request, id = VERCEL_ID) => {
+    req.headers.set("x-vercel-id", id);
+    return req;
+  };
+  /** A request the API refuses with a 422: the caller's mistake, not ours. */
+  const refused = () => get("/quote?from=stellar&to=sui&amount=10");
+
+  it("puts Vercel's id for the request in `instance` and in X-Request-Id", async () => {
+    const res = await api().quote(fromVercel(refused()));
+    expect(res.status).toBe(422);
+    // `problemOf` checks the body against the SDK's schema, `instance` included.
+    expect((await problemOf(res)).instance).toBe(`urn:xebra:request:${VERCEL_ID}`);
+    expect(res.headers.get("X-Request-Id")).toBe(VERCEL_ID);
+    // A script in a browser reads only the response headers the server names.
+    expect(res.headers.get("Access-Control-Expose-Headers")).toBe("X-Request-Id");
+  });
+
+  it("makes an id of its own when Vercel sent none, a new one for every answer", async () => {
+    const answers = await Promise.all([api().quote(refused()), api().quote(refused())]);
+    const ids: string[] = [];
+    for (const res of answers) {
+      const id = res.headers.get("X-Request-Id") ?? "";
+      expect(id).toMatch(UUID);
+      expect((await problemOf(res)).instance).toBe(`urn:xebra:request:${id}`);
+      ids.push(id);
+    }
+    expect(ids[0]).not.toBe(ids[1]);
+    // A problem built with no request at all, as the tests above build them, has one too.
+    const bare = problem(new ApiError("not_found", "A sentence."));
+    expect(bare.headers.get("X-Request-Id")).toMatch(UUID);
+    // And an error's own extra fields cannot take the member over.
+    const crowded = problem(new ApiError("not_found", "A sentence.", { instance: "urn:other" }));
+    expect((await crowded.json()).instance).toBe(
+      `urn:xebra:request:${crowded.headers.get("X-Request-Id")}`,
+    );
+  });
+
+  it("does not echo back a header that is not an id", async () => {
+    // Away from Vercel the header is whatever the caller sent.
+    for (const sent of ["<script>alert(1)</script>", "two words", "x".repeat(201), ""]) {
+      expect(requestId(fromVercel(refused(), sent)), JSON.stringify(sent)).toMatch(UUID);
+    }
+    const res = await api().quote(fromVercel(refused(), "<script>alert(1)</script>"));
+    expect(res.headers.get("X-Request-Id")).toMatch(UUID);
+    expect(JSON.stringify(await res.json())).not.toContain("script");
+    // The longest id it does take, and one padded with spaces.
+    expect(requestId(fromVercel(refused(), "x".repeat(200)))).toBe("x".repeat(200));
+    expect(requestId(fromVercel(refused(), `  ${VERCEL_ID} `))).toBe(VERCEL_ID);
+  });
+
+  it("logs a 5xx once with the id the caller was given, and nothing for a 4xx", async () => {
+    const logged = vi.spyOn(console, "error").mockImplementation(() => {});
+    const line = () => JSON.parse(String(logged.mock.calls[0]?.[0])) as Record<string, unknown>;
+
+    // The caller's mistake: there is nothing of ours to find.
+    await api().quote(fromVercel(refused()));
+    expect(logged).not.toHaveBeenCalled();
+
+    // An error we did not raise: a 500.
+    const failed = await api({
+      stellarRoutes: async () => {
+        throw new Error("rpc fell over");
+      },
+    }).routes(fromVercel(get("/routes?why=1")));
+    const body = await problemOf(failed);
+    expect(failed.status).toBe(500);
+    expect(logged).toHaveBeenCalledTimes(1);
+    expect(line()).toMatchObject({
+      route: "/v1/routes",
+      url: `${BASE}/routes?why=1`,
+      request_id: VERCEL_ID,
+      instance: body.instance,
+      code: "internal_error",
+      status: 500,
+      name: "Error",
+      message: "rpc fell over",
+    });
+    expect(String(line().stack)).toContain("rpc fell over");
+    // What is logged is not what is sent.
+    expect(JSON.stringify(body)).not.toContain("rpc fell over");
+
+    // A 5xx we raise on purpose is logged as well: 503 when Circle cannot be read.
+    logged.mockClear();
+    const held = await api({ circle: async () => null }).quote(
+      get("/quote?from=stellar&to=base&amount=10"),
+    );
+    const heldBody = await problemOf(held);
+    expect(held.status).toBe(503);
+    expect(logged).toHaveBeenCalledTimes(1);
+    expect(line()).toMatchObject({
+      route: "/v1/quote",
+      request_id: null,
+      instance: heldBody.instance,
+      code: "upstream_unavailable",
+      status: 503,
+      name: "ApiError",
+    });
+    // With no id from Vercel, `instance` is the only way to the line, and it is the header's id.
+    expect(line().instance).toBe(`urn:xebra:request:${held.headers.get("X-Request-Id")}`);
+    // Our own error: where it was raised is known, so no stack.
+    expect(line().stack).toBeUndefined();
   });
 });

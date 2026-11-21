@@ -1,4 +1,5 @@
 import { ERROR_TYPE_BASE } from "@xebra/sdk";
+import { logFailure } from "../server/log";
 import { ApiError } from "./errors";
 import { TITLES } from "./host";
 import { extraToWire } from "./wire";
@@ -30,7 +31,33 @@ const MAX_BODY_BYTES = 16 * 1024;
 /** Fields whose problems are about the amount, which a caller fixes differently from a typo. */
 const AMOUNT_FIELDS = new Set(["amount", "maxTotalFee"]);
 
-export function problem(err: ApiError, headers: Record<string, string> = {}): Response {
+/** What an id may look like. Vercel's are regions and a token joined by `::`, about 50 characters. */
+const REQUEST_ID = /^[A-Za-z0-9:._-]{1,200}$/;
+
+/**
+ * An id for one request. The problem it is answered with carries it, and so does the line we log
+ * for it, so a report from an integrator can be matched to that line.
+ *
+ * It is Vercel's own id for the request (`x-vercel-id`) when there is one, which is also what
+ * Vercel's request log is searched by. Anywhere else, a local server or a test, it is a random
+ * one. A value that does not look like an id is not used: away from Vercel the header is whatever
+ * the caller sent, and it is echoed back.
+ */
+export function requestId(req?: Request): string {
+  const sent = req?.headers.get("x-vercel-id");
+  return sent && REQUEST_ID.test(sent) ? sent : crypto.randomUUID();
+}
+
+/** The `instance` of a problem (RFC 9457): a URI for this one occurrence of it. */
+function instanceOf(id: string): string {
+  return `urn:xebra:request:${id}`;
+}
+
+export function problem(
+  err: ApiError,
+  headers: Record<string, string> = {},
+  id: string = requestId(),
+): Response {
   return Response.json(
     {
       type: `${ERROR_TYPE_BASE}${err.code}`,
@@ -40,11 +67,16 @@ export function problem(err: ApiError, headers: Record<string, string> = {}): Re
       detail: err.detail,
       code: err.code,
       ...extraToWire(err.extra),
+      // Last, so no extra field can replace it: the header and the log line carry the same id.
+      instance: instanceOf(id),
     },
     {
       status: err.status,
       headers: {
         ...CORS,
+        // A browser lets a script read only a short list of response headers; this is not on it.
+        "Access-Control-Expose-Headers": "X-Request-Id",
+        "X-Request-Id": id,
         "Content-Type": "application/problem+json",
         "Cache-Control": "no-store",
         ...(err.status === 503 ? { "Retry-After": "10" } : {}),
@@ -141,10 +173,27 @@ export async function handle<I, O>(
       headers: { ...CORS, "Cache-Control": opts.cache ?? "no-store" },
     });
   } catch (err) {
-    if (err instanceof ApiError) return problem(err);
-    console.error("v1 request failed", req.url, err);
-    return problem(
-      new ApiError("internal_error", "Something went wrong on our side. Nothing was sent."),
-    );
+    const id = requestId(req);
+    const answer =
+      err instanceof ApiError
+        ? err
+        : new ApiError("internal_error", "Something went wrong on our side. Nothing was sent.");
+    // One line for every 5xx, with the id the caller was given, so quoting `instance` or
+    // `X-Request-Id` finds it. An error we did not raise ourselves is logged with its stack.
+    if (answer.status >= 500) {
+      logFailure(
+        new URL(req.url).pathname,
+        err,
+        {
+          instance: instanceOf(id),
+          code: answer.code,
+          status: answer.status,
+          url: req.url,
+          ...(err instanceof Error && !(err instanceof ApiError) ? { stack: err.stack } : {}),
+        },
+        req,
+      );
+    }
+    return problem(answer, {}, id);
   }
 }

@@ -13,13 +13,17 @@ served as `application/problem+json`:
   "status": 422,
   "detail": "Fees would take more than a tenth of this transfer. Send at least 2.4 USDC to Base.",
   "code": "amount_below_minimum",
-  "minimum": "2.4"
+  "minimum": "2.4",
+  "instance": "urn:xebra:request:iad1::7zdhm-1700000000000-0a1b2c3d4e5f"
 }
 ```
 
 - `code` is stable. Branch on it, not on `title` or `detail`.
 - `detail` is a sentence written for a person. You can show it to your user as it is.
 - `type` is the page for that code, on this site.
+- `instance` names this one answer. The part after `urn:xebra:request:` is also in the
+  `X-Request-Id` response header. Quote either when you report a problem: for a `5xx` it is on the
+  line Xebra logged. The API host's own `not_found` and method errors carry no `instance`.
 - Some codes add fields, such as `minimum`, `maximum`, `have`, `need`, `total`, `limit` and `needs`.
   Amounts are decimal strings of USDC, like everywhere else in the API.
 

@@ -76,3 +76,33 @@ describe("error codes", () => {
     expect(ProblemSchema.shape.code.safeParse("teapot").success).toBe(false);
   });
 });
+
+describe("a problem's instance", () => {
+  const problem = {
+    type: "https://docs.xebra.exchange/errors/internal_error",
+    title: "Internal error",
+    status: 500,
+    detail: "Something went wrong on our side. Nothing was sent.",
+    code: "internal_error",
+  };
+
+  it("is kept when the API sends one, so the client can hand it on, and is not required", () => {
+    const instance = "urn:xebra:request:iad1::7zdhm-1700000000000-0a1b2c3d4e5f";
+    // A member the schema does not name is dropped on parsing, which is how this one used to go.
+    expect(ProblemSchema.parse({ ...problem, instance }).instance).toBe(instance);
+    expect(ProblemSchema.parse({ ...problem, instance, other: 1 })).not.toHaveProperty("other");
+    // The API host's own 404 and 405 carry none.
+    expect(ProblemSchema.safeParse(problem).success).toBe(true);
+  });
+
+  it("is in the published document, which allows a problem no member it does not list", () => {
+    const published = buildOpenApiDocument().components?.schemas?.Problem as {
+      additionalProperties?: boolean;
+      properties: Record<string, unknown>;
+      required: string[];
+    };
+    expect(published.additionalProperties).toBe(false);
+    expect(Object.keys(published.properties)).toContain("instance");
+    expect(published.required).not.toContain("instance");
+  });
+});
