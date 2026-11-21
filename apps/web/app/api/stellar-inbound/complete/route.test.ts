@@ -1,4 +1,5 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { IrisUnavailable } from "@xebra/cctp-client";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const completeBurn = vi.fn();
 let secret: string | null = null;
@@ -7,7 +8,9 @@ vi.mock("../../../../lib/sui-stellar/stellar-side", () => ({
   stellarInboundSources: () => sources,
   completeBurn: (...a: unknown[]) => completeBurn(...a),
 }));
-vi.mock("../../../../lib/sui-stellar/config", () => ({
+// Only the relayer key is faked: what the route answers while it is off is the real `notFound`.
+vi.mock("../../../../lib/sui-stellar/config", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../../../lib/sui-stellar/config")>()),
   relayerSecret: () => secret,
 }));
 
@@ -28,10 +31,19 @@ describe("POST /api/stellar-inbound/complete", () => {
     secret = "S-secret";
     sources = [8, 5, 6, 26];
   });
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
 
-  it("is off without a relayer key", async () => {
+  it("is switched off, not broken, without a relayer key", async () => {
     secret = null;
-    expect((await post({ src: 6, tx: EVM_TX })).status).toBe(503);
+    const res = await post({ src: 6, tx: EVM_TX });
+    // A 503 said "outage, keep retrying" about a deployment that completes nothing.
+    expect(res.status).toBe(404);
+    expect(res.headers.get("Retry-After")).toBeNull();
+    expect(res.headers.get("cache-control")).toBe("no-store");
+    expect(await res.json()).toMatchObject({ code: "feature_disabled" });
+    expect(completeBurn).not.toHaveBeenCalled();
   });
 
   it("refuses a chain it does not complete from, and a hash of the wrong kind", async () => {
@@ -63,9 +75,40 @@ describe("POST /api/stellar-inbound/complete", () => {
     ).toBe(400);
   });
 
+  it("answers 200 once the mint is on Stellar or on its way there", async () => {
+    for (const result of [{ status: "delivered" }, { status: "submitted", hash: "h", ledger: 7 }]) {
+      completeBurn.mockResolvedValue(result);
+      const res = await post({ src: 26, tx: EVM_TX });
+      expect(res.status).toBe(200);
+      expect(await res.json()).toEqual(result);
+    }
+  });
+
+  it("answers 202 while there is nothing to show yet", async () => {
+    for (const result of [
+      { status: "pending" },
+      { status: "pending", reason: "already being completed" },
+      { status: "unknown", reason: "Circle has not indexed this burn yet" },
+    ]) {
+      completeBurn.mockResolvedValue(result);
+      const res = await post({ src: 26, tx: EVM_TX });
+      expect(res.status, JSON.stringify(result)).toBe(202);
+      // Nobody asked us to wait a set time, so there is no delay to name.
+      expect(res.headers.get("Retry-After")).toBeNull();
+      expect(await res.json()).toEqual(result);
+    }
+  });
+
   it("answers 422 for a refusal", async () => {
     completeBurn.mockResolvedValue({ status: "refused", reason: "no trustline" });
     expect((await post({ src: 26, tx: EVM_TX })).status).toBe(422);
+  });
+
+  it("answers 502 for a mint that was sent and did not land", async () => {
+    completeBurn.mockResolvedValue({ status: "failed", hash: "h", ledger: 7 });
+    const res = await post({ src: 26, tx: EVM_TX });
+    expect(res.status).toBe(502);
+    expect(await res.json()).toEqual({ status: "failed", hash: "h", ledger: 7 });
   });
 
   it("answers 503 with Retry-After when the network asks to try again later", async () => {
@@ -77,6 +120,40 @@ describe("POST /api/stellar-inbound/complete", () => {
     const res = await post({ src: 26, tx: EVM_TX });
     expect(res.status).toBe(503);
     expect(res.headers.get("Retry-After")).toBe("5");
+  });
+
+  it("answers 503 with Retry-After, and stays pending, while Circle lookups are paused", async () => {
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    completeBurn.mockRejectedValue(new IrisUnavailable("rate_limited", 330_000));
+    const res = await post({ src: 26, tx: EVM_TX });
+    expect(res.status).toBe(503);
+    expect(res.headers.get("Retry-After")).toBe("330");
+    // Not `failed`: the Solana and Aptos pages stop polling and show the transfer as stuck on
+    // `failed` (`nextStellarDelivery`, `nextDelivery`), and ask again on anything they do not name.
+    expect(await res.json()).toEqual({
+      status: "pending",
+      retryAfterMs: 330_000,
+      reason: "Circle lookups are paused for a moment. Try again shortly.",
+    });
+
+    // A hold that is already over still names a wait: never "retry in 0".
+    completeBurn.mockRejectedValue(new IrisUnavailable("over_budget", 0));
+    expect((await post({ src: 26, tx: EVM_TX })).headers.get("Retry-After")).toBe("1");
+  });
+
+  it("answers 502, and logs, for a failure it has no better name for", async () => {
+    const logged = vi.spyOn(console, "error").mockImplementation(() => {});
+    const boom = new Error("soroban rpc down");
+    completeBurn.mockRejectedValue(boom);
+    const res = await post({ src: 26, tx: EVM_TX });
+    expect(res.status).toBe(502);
+    expect(res.headers.get("Retry-After")).toBeNull();
+    // The cause is logged and never returned.
+    expect(await res.json()).toEqual({
+      status: "failed",
+      reason: "Could not complete the transfer. It is safe to try again.",
+    });
+    expect(logged).toHaveBeenCalledWith("stellar-inbound complete failed", boom);
   });
 
   it("completes an Aptos burn, with the 1 USDC floor, only while Aptos may send to Stellar", async () => {

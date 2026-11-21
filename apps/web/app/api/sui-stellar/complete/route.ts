@@ -1,5 +1,8 @@
 import { SUI_DIGEST } from "../../../../lib/sui-stellar/attestation";
-import { completeResultResponse } from "../../../../lib/sui-stellar/complete-response";
+import {
+  completeErrorResponse,
+  completeResultResponse,
+} from "../../../../lib/sui-stellar/complete-response";
 import { notFound, relayerSecret, suiStellarEnabled } from "../../../../lib/sui-stellar/config";
 import { completeBurn } from "../../../../lib/sui-stellar/stellar-side";
 
@@ -16,13 +19,10 @@ export const maxDuration = 120;
 
 export async function POST(request: Request): Promise<Response> {
   if (!suiStellarEnabled()) return notFound();
+  // No relayer is a switch that is off, like the one above, and not an outage: a 503 here told
+  // callers to keep retrying a deployment that will never complete anything.
   const secret = relayerSecret();
-  if (!secret) {
-    return Response.json(
-      { status: "unavailable", reason: "Completion is not switched on for this deployment." },
-      { status: 503 },
-    );
-  }
+  if (!secret) return notFound();
 
   let digest = "";
   try {
@@ -40,9 +40,6 @@ export async function POST(request: Request): Promise<Response> {
     return completeResultResponse(result);
   } catch (err) {
     console.error("sui-stellar complete failed", err);
-    return Response.json(
-      { status: "failed", reason: "Could not complete the transfer. It is safe to try again." },
-      { status: 502 },
-    );
+    return completeErrorResponse(err);
   }
 }

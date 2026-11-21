@@ -83,8 +83,21 @@ On the main bridge screen, Sui appears in the "Send from" picker when `SUI_STELL
 
 **A relayer secret that is not a secret seed counts as unset.** `SUI_STELLAR_RELAYER_SECRET` has to be a Stellar secret
 seed (`S...`, 56 characters). With a typo in it, or a public key pasted by mistake, the page is told there is no relayer and
-completion answers 503, exactly as when the variable is missing, and the server logs the problem once, never the value.
-Before, such a value left the config route saying `relayer: true` while every completion failed and asked to be retried.
+completion answers 404 with `code: "feature_disabled"`, exactly as when the variable is missing, and the server logs the
+problem once, never the value. Before, such a value left the config route saying `relayer: true` while every completion
+failed and asked to be retried.
+
+**What the completion routes answer.** `POST /api/sui-stellar/complete` and `POST /api/stellar-inbound/complete` share one
+table. The body's `status` is what the pages read; the HTTP status says the same thing to a caller that reads nothing else.
+
+| HTTP | Body `status` | Meaning |
+| --- | --- | --- |
+| 200 | `delivered`, `submitted` | The mint is on Stellar, or sent and on its way. |
+| 202 | `pending`, `unknown` | Nothing to show yet: Circle has not attested or indexed the burn, or a completion is already under way. Ask again. |
+| 404 | none (`code: "feature_disabled"`) | No relayer on this deployment, or the Sui page is off. It was a 503 without `Retry-After`, which read as an outage. |
+| 422 | `refused` | This burn cannot be completed as it stands; `reason` says why. |
+| 502 | `failed` | The mint was sent and did not land, or something failed that has no better name. |
+| 503 + `Retry-After` | `pending` | Stellar declined to queue the mint, or our calls to Circle are paused (our own rate budget, or a 429 from Circle). It used to be a 502 with `status: "failed"` when Circle was the cause, which made the pages show the transfer as stuck. |
 
 **Claiming without a relayer.** Once Circle has attested a burn, the page offers "Claim on Stellar": the server prepares the
 `mint_and_forward` call with the user's own Stellar wallet as the source (`POST /api/sui-stellar/claim`), the wallet signs,

@@ -1,8 +1,11 @@
 import { EVM_CHAINS, SUI_DOMAIN } from "@xebra/sdk/core";
 import { SOLANA_CCTP_DOMAIN, SOLANA_SIGNATURE } from "../../../../lib/solana-source/config";
 import { SUI_DIGEST } from "../../../../lib/sui-stellar/attestation";
-import { completeResultResponse } from "../../../../lib/sui-stellar/complete-response";
-import { relayerSecret } from "../../../../lib/sui-stellar/config";
+import {
+  completeErrorResponse,
+  completeResultResponse,
+} from "../../../../lib/sui-stellar/complete-response";
+import { notFound, relayerSecret } from "../../../../lib/sui-stellar/config";
 
 /** Aptos's CCTP domain; its transaction hashes are 0x and 64 hex, like an EVM chain's. */
 const APTOS_DOMAIN = 9;
@@ -30,13 +33,10 @@ const MIN_RELAYED_UNITS = 1_000_000n;
 const EVM_TX = /^0x[0-9a-fA-F]{64}$/;
 
 export async function POST(request: Request): Promise<Response> {
+  // No relayer is a switch that is off, not an outage: a 503 here told callers to keep retrying a
+  // deployment that will never complete anything.
   const secret = relayerSecret();
-  if (!secret) {
-    return Response.json(
-      { status: "unavailable", reason: "Completion is not switched on for this deployment." },
-      { status: 503 },
-    );
-  }
+  if (!secret) return notFound();
 
   let src = Number.NaN;
   let tx = "";
@@ -85,9 +85,6 @@ export async function POST(request: Request): Promise<Response> {
     return completeResultResponse(result);
   } catch (err) {
     console.error("stellar-inbound complete failed", err);
-    return Response.json(
-      { status: "failed", reason: "Could not complete the transfer. It is safe to try again." },
-      { status: 502 },
-    );
+    return completeErrorResponse(err);
   }
 }
