@@ -156,7 +156,9 @@ export interface EvmBridgeRequest {
   /** What Circle may keep, from `planEvmFee`. */
   maxFee: bigint;
   finality: Finality;
-  onStep?: (step: EvmBridgeStep) => void;
+  onStep?: (step: EvmBridgeStep, approvalTxHash?: Hex) => void;
+  /** Called as soon as the approval transaction is sent, so the form can show and link it. */
+  onApprovalHash?: (hash: Hex) => void;
   /**
    * The fee this transfer needs *now*. Asked only after an approval, since that can take minutes
    * and Circle's quote moves. Returning more than `maxFee` stops the transfer before the burn.
@@ -227,9 +229,11 @@ export async function submitEvmBridge(req: EvmBridgeRequest): Promise<EvmBridgeR
       ...evmApproveCall(burnInput),
       chainId: source.chainId,
     });
+    req.onApprovalHash?.(approvalTxHash);
 
-    step("confirming-approval");
+    req.onStep?.("confirming-approval", approvalTxHash);
     const outcome = await waitForReceipt(provider, approvalTxHash, {
+      chainName: source.name,
       timeoutMs: RECEIPT_TIMEOUT_MS,
       pollMs: RECEIPT_POLL_MS,
     });
@@ -321,8 +325,10 @@ export async function submitEvmBridge(req: EvmBridgeRequest): Promise<EvmBridgeR
 export function watchBurn(
   provider: Eip1193Provider,
   txHash: string,
+  chainName?: string,
 ): Promise<"success" | "reverted"> {
   return waitForReceipt(provider, txHash, {
+    ...(chainName ? { chainName } : {}),
     timeoutMs: RECEIPT_TIMEOUT_MS,
     pollMs: RECEIPT_POLL_MS,
   });
