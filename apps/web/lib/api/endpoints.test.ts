@@ -9,7 +9,7 @@ import {
   TransferStatusSchema,
 } from "@xebra/sdk";
 import { stellarDestination } from "@xebra/sdk/core";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   DELETE as catchAllDelete,
   GET as catchAllGet,
@@ -272,6 +272,103 @@ describe("failures on our side", () => {
     const body = await problemOf(res);
     expect(body.code).toBe("internal_error");
     expect(JSON.stringify(body)).not.toContain("secret");
+  });
+});
+
+describe("the live instance", () => {
+  afterEach(() => {
+    vi.doUnmock("./wiring");
+    vi.doUnmock("./service");
+    vi.unstubAllEnvs();
+    vi.restoreAllMocks();
+    vi.resetModules();
+  });
+
+  it("answers a missing environment variable as a 500 problem, and logs its name without returning it", async () => {
+    // Nothing is faked: this is the real wiring, loaded without the first variable `lib/env.ts`
+    // reads. That file throws while it loads, which is the failure a deployment would have.
+    vi.resetModules();
+    vi.stubEnv("NEXT_PUBLIC_NETWORK", "");
+    const logged = vi.spyOn(console, "error").mockImplementation(() => {});
+
+    // Loading the module the routes import must not be what fails. When it was, the caller got
+    // Next's HTML 500 page and no handler ever ran.
+    const { v1 } = await import("./instance");
+    expect(logged).not.toHaveBeenCalled();
+
+    const res = await v1.routes(get("/routes"));
+    expect(res.status).toBe(500);
+    const body = await problemOf(res);
+    expect(body.code).toBe("internal_error");
+    expect(body.detail).toBe("Something went wrong on our side. Nothing was sent.");
+    expect(JSON.stringify(body)).not.toContain("NEXT_PUBLIC");
+    // The name is in the log, where the person who can fix it will look. This reads every
+    // argument of every line, so it holds whatever shape the log line is given.
+    const logText = logged.mock.calls
+      .flat()
+      .map((part) => (part instanceof Error ? part.message : String(part)))
+      .join(" ");
+    expect(logText).toContain("NEXT_PUBLIC_NETWORK is not set");
+
+    // Every endpoint that needs the service says the same.
+    const again = await v1.quote(get("/quote?from=stellar&to=base&amount=10"));
+    expect((await problemOf(again)).code).toBe("internal_error");
+  });
+
+  it("keeps a failed load, and does not ask for the wiring again", async () => {
+    vi.resetModules();
+    let loads = 0;
+    vi.doMock("./wiring", () => {
+      loads += 1;
+      throw new Error("NEXT_PUBLIC_SOROBAN_RPC_URL is not set.");
+    });
+    vi.spyOn(console, "error").mockImplementation(() => {});
+
+    const { v1 } = await import("./instance");
+    for (const call of [
+      () => v1.routes(get("/routes")),
+      () => v1.quote(get("/quote?from=stellar&to=base&amount=10")),
+      () => v1.routes(get("/routes")),
+    ]) {
+      expect((await problemOf(await call())).code).toBe("internal_error");
+    }
+    // A variable missing from the bundle stays missing, so there is nothing to retry.
+    expect(loads).toBe(1);
+  });
+
+  it("builds the service on the first call that needs it, and only once", async () => {
+    vi.resetModules();
+    let loads = 0;
+    let builds = 0;
+    vi.doMock("./wiring", () => {
+      loads += 1;
+      return { liveDeps: deps({ build: buildDeps() }) };
+    });
+    vi.doMock("./service", async (importOriginal) => {
+      const real = await importOriginal<typeof import("./service")>();
+      return {
+        ...real,
+        createService: (...args: Parameters<typeof real.createService>) => {
+          builds += 1;
+          return real.createService(...args);
+        },
+      };
+    });
+
+    const { v1 } = await import("./instance");
+    expect([loads, builds]).toEqual([0, 0]);
+    // Health asks nothing of the service, so it does not build one either.
+    expect((await v1.health(get("/health"))).status).toBe(200);
+    expect([loads, builds]).toEqual([0, 0]);
+
+    const routes = await v1.routes(get("/routes"));
+    expect(routes.status).toBe(200);
+    expect(RoutesSchema.safeParse(await routes.json()).success).toBe(true);
+    const quote = await v1.quote(get("/quote?from=stellar&to=base&amount=10"));
+    expect(QuoteSchema.safeParse(await quote.json()).success).toBe(true);
+    // Two calls, and two at once, still share the one service and whatever it has cached.
+    await Promise.all([v1.routes(get("/routes")), v1.routes(get("/routes"))]);
+    expect([loads, builds]).toEqual([1, 1]);
   });
 });
 
