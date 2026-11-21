@@ -21,6 +21,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   type BridgeChainConfig,
   type BridgeQuote,
+  UncertainSubmitError,
   getUsdcBalance,
   getWrapperDomains,
   getWrapperFeeParams,
@@ -104,6 +105,34 @@ function preSubmitError(message: string): ClassifiedError {
     maybeSent: false,
     raw: message,
   };
+}
+
+/**
+ * Classifies errors caught during Stellar burn submission:
+ * - `UncertainSubmitError` keeps its message (including the tx hash) with `maybeSent: true` so the
+ *   UI never claims "No funds have moved" or hides the hash.
+ * - Soroban `TRY_AGAIN_LATER` ("The network declined to queue...") stays an actionable alarm error
+ *   with `maybeSent: false` rather than matching the wallet-decline classifier pattern.
+ */
+export function classifyStellarSubmitError(err: unknown): ClassifiedError {
+  if (err instanceof UncertainSubmitError) {
+    return {
+      kind: "network",
+      message: err.message,
+      maybeSent: true,
+      raw: err.message,
+    };
+  }
+  const msg = formatError(err);
+  if (msg.includes("TRY_AGAIN_LATER") || msg.includes("The network declined to queue")) {
+    return {
+      kind: "unknown",
+      message: msg,
+      maybeSent: false,
+      raw: msg,
+    };
+  }
+  return classifyWalletError(err);
 }
 
 export function StellarBridgeForm({
@@ -719,7 +748,7 @@ export function StellarBridgeForm({
       book.remember(dest.evm ? "evm" : "solana", destination);
     } catch (err) {
       reportError("transfer failed", err);
-      setSubmitError(classifyWalletError(err));
+      setSubmitError(classifyStellarSubmitError(err));
     } finally {
       setSubmitting(false);
       setStep(null);
@@ -913,8 +942,8 @@ export function StellarBridgeForm({
                 {submitError.message}
               </pre>
               <p className="mt-2 text-bone/35">
-                No funds have moved unless a transaction hash is shown. Full detail is in the browser
-                console under <code className="font-mono">[xebra]</code>.
+                No funds have moved unless a transaction hash is shown. Full detail is in the
+                browser console under <code className="font-mono">[xebra]</code>.
               </p>
             </Notice>
           ))}
