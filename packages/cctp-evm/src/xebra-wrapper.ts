@@ -1,4 +1,5 @@
 import { type Hex, encodeFunctionData, parseAbi } from "viem";
+import { CctpEvmError } from "./errors.js";
 import {
   type BurnRecipient,
   type Finality,
@@ -43,19 +44,28 @@ export interface WrapperBridgeArgs {
 }
 
 export function encodeWrapperBridge(args: WrapperBridgeArgs): Hex {
-  if (args.amount <= 0n) throw new Error("amount must be positive");
+  if (args.amount <= 0n) throw new CctpEvmError("invalid_amount", "amount must be positive");
   if (args.maxFee <= 0n || args.maxFee >= args.amount) {
-    throw new Error("maxFee must be positive and less than the amount");
+    throw new CctpEvmError("invalid_amount", "maxFee must be positive and less than the amount");
   }
   if (args.maxWrapperFee < args.maxFee || args.maxWrapperFee >= args.amount) {
-    throw new Error("maxWrapperFee must cover maxFee and be less than the amount");
+    throw new CctpEvmError(
+      "invalid_amount",
+      "maxWrapperFee must cover maxFee and be less than the amount",
+    );
   }
   if (args.minFinalityThreshold !== 1000 && args.minFinalityThreshold !== 2000) {
-    throw new Error("minFinalityThreshold must be 1000 (Fast) or 2000 (Standard)");
+    throw new CctpEvmError(
+      "invalid_request",
+      "minFinalityThreshold must be 1000 (Fast) or 2000 (Standard)",
+    );
   }
   // The wrapper always asks Circle to forward, and Circle does not forward to Stellar.
   if (typeof args.recipient !== "string" && args.recipient.kind === "stellar") {
-    throw new Error("Xebra's wrapper cannot send to Stellar; burn to Circle directly");
+    throw new CctpEvmError(
+      "invalid_recipient",
+      "Xebra's wrapper cannot send to Stellar; burn to Circle directly",
+    );
   }
   // The same recipient rules as a direct burn; the wrapper builds the hook from the owner itself.
   const { mintRecipient } = recipientAndHook(args.recipient, args.destinationDomain);
