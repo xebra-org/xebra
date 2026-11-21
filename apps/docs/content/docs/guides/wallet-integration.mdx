@@ -69,19 +69,28 @@ import { TransactionBuilder, rpc } from "@stellar/stellar-sdk";
 
 const server = new rpc.Server("https://your-soroban-rpc.example");
 const signed = TransactionBuilder.fromXDR(signedTxXdr, step.tx.networkPassphrase);
+const burnHash = Buffer.from(signed.hash()).toString("hex"); // compute before submitting
 const sent = await server.sendTransaction(signed);
 if (sent.status === "TRY_AGAIN_LATER") throw new Error("Not queued; nothing moved. Try again.");
 if (sent.status === "ERROR") throw new Error("Rejected; nothing moved.");
 
 // PENDING or DUPLICATE: poll until it is in a ledger.
-let result = await server.getTransaction(sent.hash);
-while (result.status === "NOT_FOUND") {
+const deadline = Date.now() + 30_000;
+let result = await server.getTransaction(burnHash);
+while (result.status === "NOT_FOUND" && Date.now() < deadline) {
   await new Promise((r) => setTimeout(r, 2000));
-  result = await server.getTransaction(sent.hash);
+  result = await server.getTransaction(burnHash);
 }
-if (result.status !== "SUCCESS") throw new Error(`Failed in ledger: ${sent.hash}`);
-const burnHash = sent.hash; // track with chain "stellar"
+if (result.status === "NOT_FOUND") throw new Error(`Lookup timed out: ${burnHash}`);
+if (result.status !== "SUCCESS") throw new Error(`Failed in ledger: ${burnHash}`);
+// track with chain "stellar" and tx = burnHash
 ```
+
+### Failures
+
+`sendTransaction` can return an RPC or network error after the wallet has signed. On any network
+error after signing, look up `burnHash` before retrying; retrying could submit the transaction twice.
+The deadline above is a lookup timeout, not proof that the transfer failed.
 
 ## EVM (EIP-1193)
 
@@ -120,6 +129,29 @@ const hash = await provider.request({
 With viem, the same call is `walletClient.sendTransaction({ account, chain, to: step.tx.to, data: step.tx.data, value: 0n })`.
 Gas, nonce and fee settings are the wallet's to choose.
 
+### Failures
+
+Handle wallet rejection (`code: 4001`) separately, and require a little of the chain's native currency
+for gas. Wallets and providers commonly report missing balance or gas as `insufficient funds`, before
+`eth_sendTransaction` returns a hash.
+
+```ts
+try {
+  const hash = await provider.request({
+    method: "eth_sendTransaction",
+    params: [{ from: sender, to: step.tx.to, data: step.tx.data, value: "0x0" }],
+  });
+  const receipt = await provider.request({ method: "eth_getTransactionReceipt", params: [hash] });
+  if (receipt?.status === "0x0") throw new Error("Transaction reverted");
+} catch (err) {
+  if ((err as { code?: number }).code === 4001) throw new Error("The user rejected the transaction");
+  throw err;
+}
+```
+
+On a network error after signing, look up the transaction hash before retrying. A provider timeout or
+connection failure does not prove that the transaction was or was not sent.
+
 ## Sui (Wallet Standard)
 
 `tx.json` is a transaction in the Sui TypeScript SDK's JSON form. Hand it to the wallet's
@@ -143,6 +175,33 @@ const { digest } = await wallet.features["sui:signAndExecuteTransaction"].signAn
 With `@mysten/dapp-kit`, pass `Transaction.from(step.tx.json)` (from `@mysten/sui/transactions`) to
 `signAndExecuteTransaction`.
 
+### Failures
+
+The returned digest means execution was submitted, not that it succeeded. Read the effects and reject
+a failure status before tracking the burn.
+
+```ts
+import { SuiClient } from "@mysten/sui/client";
+
+const { digest } = await wallet.features["sui:signAndExecuteTransaction"].signAndExecuteTransaction({
+  transaction: { toJSON: async () => step.tx.json },
+  account,
+  chain: "sui:mainnet",
+});
+const sui = new SuiClient({ url: "https://fullnode.mainnet.sui.io:443" });
+const result = await sui.getTransactionBlock({
+  digest,
+  options: { showEffects: true },
+});
+if (result.effects?.status.status !== "success") {
+  throw new Error(result.effects?.status.error ?? "Sui transaction failed");
+}
+// track with chain "sui" and tx = digest
+```
+
+On a network error after signing, look up `digest` before retrying. The wallet may have submitted it
+even if the result did not reach your app.
+
 ## Solana (claims)
 
 Solana appears only in claims. `tx.transaction` is a legacy transaction serialized without signatures,
@@ -157,6 +216,30 @@ const signed = await wallet.signTransaction(tx); // Phantom, Solflare, or any wa
 const signature = await connection.sendRawTransaction(signed.serialize());
 await connection.confirmTransaction(signature, "confirmed");
 ```
+
+### Failures
+
+The confirmation result can report an on-chain error in `value.err`, even though confirmation itself
+resolved. It can also expire because the blockhash is too old; rebuild the transaction from a fresh
+API response rather than resending the old one.
+
+```ts
+try {
+  const confirmation = await connection.confirmTransaction(signature, "confirmed");
+  if (confirmation.value.err) {
+    throw new Error(`Solana transaction failed: ${JSON.stringify(confirmation.value.err)}`);
+  }
+} catch (err) {
+  const message = err instanceof Error ? err.message : String(err);
+  if (/blockhash|expired|invalidblockhash/i.test(message)) {
+    throw new Error("Blockhash expired or not found; rebuild the transaction with a fresh blockhash");
+  }
+  throw err;
+}
+```
+
+On a network error after signing or submitting, look up `signature` before retrying. An expired
+blockhash is not a reason to retry the same signed bytes.
 
 See [Claim a stuck transfer](/docs/guides/claim-a-stuck-transfer) for why to rebuild the claim after an
 `open_account` step.
