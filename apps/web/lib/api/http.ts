@@ -46,6 +46,10 @@ const TITLES: Partial<Record<ApiError["code"], string>> = {
 };
 
 export function problem(err: ApiError, headers: Record<string, string> = {}): Response {
+  // A blocking upstream says how long to wait; the wait is a header, never a problem field.
+  const retryAfterMs = (err as ApiError & { retryAfterMs?: number }).retryAfterMs;
+  const retryAfter =
+    err.status === 503 ? String(Math.max(1, Math.ceil((retryAfterMs ?? 10_000) / 1000))) : null;
   return Response.json(
     {
       type: `${ERROR_TYPE_BASE}${err.code}`,
@@ -61,7 +65,7 @@ export function problem(err: ApiError, headers: Record<string, string> = {}): Re
         ...CORS,
         "Content-Type": "application/problem+json",
         "Cache-Control": "no-store",
-        ...(err.status === 503 ? { "Retry-After": "10" } : {}),
+        ...(retryAfter ? { "Retry-After": retryAfter } : {}),
         ...headers,
       },
     },

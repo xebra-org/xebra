@@ -1,5 +1,5 @@
 import { StrKey } from "@stellar/stellar-sdk";
-import type { CircleHealth } from "@xebra/cctp-client";
+import { IrisUnavailable, type CircleHealth } from "@xebra/cctp-client";
 import { type BurnRecipient, FINALITY, encodeReceiveMessage } from "@xebra/cctp-evm";
 import {
   InsufficientUsdcError,
@@ -169,10 +169,14 @@ async function upstream<T>(what: string, read: () => Promise<T>): Promise<T> {
   } catch (err) {
     if (err instanceof ApiError || err instanceof InsufficientUsdcError) throw err;
     console.error(`${what} could not be read`, err);
-    throw new ApiError(
+    const failure = new ApiError(
       "upstream_unavailable",
       `${what} could not be read just now. Try again shortly.`,
     );
+    if (err instanceof IrisUnavailable) {
+      Object.assign(failure, { retryAfterMs: err.retryAfterMs });
+    }
+    throw failure;
   }
 }
 
@@ -333,7 +337,9 @@ export function createService(deps: Deps, now: () => number = Date.now) {
       to === "solana"
         ? stellarDestination("solana").domain
         : EVM_CHAINS[to as EvmChainId].cctpDomainId;
-    const health = newAccount ? await deps.circle(src, dst, true) : await deps.circle(src, dst);
+    const health = await upstream("Circle's delivery fee", () =>
+      newAccount ? deps.circle(src, dst, true) : deps.circle(src, dst),
+    );
     if (!health?.quote) {
       throw new ApiError(
         "upstream_unavailable",

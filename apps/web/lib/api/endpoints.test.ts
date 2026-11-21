@@ -7,6 +7,7 @@ import {
   TransferStatusSchema,
 } from "@xebra/sdk";
 import { stellarDestination } from "@xebra/sdk/core";
+import { IrisUnavailable } from "@xebra/cctp-client";
 import { describe, expect, it } from "vitest";
 import {
   DELETE as catchAllDelete,
@@ -255,6 +256,17 @@ describe("failures on our side", () => {
     );
     expect(res.status).toBe(503);
     expect(res.headers.get("retry-after")).toBe("10");
+    expect((await problemOf(res)).code).toBe("upstream_unavailable");
+  });
+
+  it("answers 503 with the Iris hold duration when the budget is blocking", async () => {
+    const res = await api({
+      circle: async () => {
+        throw new IrisUnavailable("rate_limited", 330_000);
+      },
+    }).quote(get("/quote?from=stellar&to=base&amount=10"));
+    expect(res.status).toBe(503);
+    expect(res.headers.get("retry-after")).toBe("330");
     expect((await problemOf(res)).code).toBe("upstream_unavailable");
   });
 
