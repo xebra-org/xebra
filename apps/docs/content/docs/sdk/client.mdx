@@ -331,20 +331,22 @@ try {
       required: true,
     },
     code: {
-      type: 'ApiErrorCode | "network_error" | "timeout" | "invalid_response"',
-      description: 'Stable. The API codes are listed on [Errors](/docs/errors).',
+      type: 'XebraErrorCode',
+      description:
+        'Stable. `ApiErrorCode` or one of `CLIENT_ERROR_CODES`. The API codes are listed on [Errors](/docs/errors).',
       required: true,
     },
     detail: { type: 'string', description: 'A sentence for a person.', required: true },
     extra: {
-      type: 'Record<string, unknown>',
-      description: "The problem's other fields, such as `minimum`, `maximum`, `have` and `need`.",
+      type: 'Partial<Pick<Problem, "minimum" | "maximum" | "have" | "need" | "total" | "limit" | "needs">> & Record<string, unknown>',
+      description: "The problem's other fields. The amounts and `needs` are typed as strings.",
       required: true,
     },
   }}
 />
 
-Three codes come from the client itself, rather than coming from an API problem response:
+Some codes come from the client itself, rather than coming from an API problem response. They are
+exported as `CLIENT_ERROR_CODES`:
 
 - `network_error` (`status` 0): the request did not reach the API.
 - `timeout` (`status` 0): no answer within `timeoutMs`, or `waitForDelivery` ran out of time.
