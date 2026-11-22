@@ -271,7 +271,7 @@ const status = await xebra.waitForDelivery("stellar", burnHash, {
 });
 ```
 
-If the deadline passes first, it throws `XebraApiError` with code `timeout`. That does not mean the
+If the deadline passes first, it throws `XebraApiError` with code `wait_timeout`. That does not mean the
 transfer failed: it may still settle. Ask again later.
 
 Aborting the signal rejects with the signal's reason, not with an `XebraApiError`.
