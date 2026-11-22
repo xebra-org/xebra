@@ -457,8 +457,8 @@ export function AptosBridgeForm({
           ? units !== null && (
               <Notice tone="info" title="No delivery fee to Stellar" className="-mt-2">
                 Circle does not forward into Stellar, so it is paid nothing. Xebra takes{" "}
-                {formatUsdc6(flatFeeFor(STELLAR_CCTP_DOMAIN, units))} USDC (0.01 plus 0.01% of the amount), a
-                second wallet request after the burn, and the recipient gets{" "}
+                {formatUsdc6(flatFeeFor(STELLAR_CCTP_DOMAIN, units))} USDC (0.01 plus 0.01% of the
+                amount), a second wallet request after the burn, and the recipient gets{" "}
                 {formatUsdc6(
                   units > flatFeeFor(STELLAR_CCTP_DOMAIN, units)
                     ? units - flatFeeFor(STELLAR_CCTP_DOMAIN, units)

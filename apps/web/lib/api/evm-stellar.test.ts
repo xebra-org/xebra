@@ -44,7 +44,7 @@ describe("EVM chains to Stellar", () => {
     expect(routes.find((g) => g.from === "arbitrum")).toBeUndefined();
   });
 
-  it("charges no Circle fee and Xebra's 0.10, from 1.10, and asks Circle nothing", async () => {
+  it("charges no Circle fee and Xebra's 0.01 plus 0.01%, from about 1.0102, and asks Circle nothing", async () => {
     const circle = vi.fn();
     const s = svc({}, { circle });
     const { options } = await s.quoteOptions({ from: "base", to: "stellar", amount: 10_000_000n });
@@ -52,15 +52,17 @@ describe("EVM chains to Stellar", () => {
     const o = options[0];
     if (!o?.ok) throw new Error("not priced");
     expect(o.priced.quote.fees).toEqual({
-      xebra: 100_000n,
+      // 0.01 + 0.01% of 10.
+      xebra: 11_000n,
       circle: 0n,
       delivery: 0n,
-      total: 100_000n,
+      total: 11_000n,
     });
-    expect(o.priced.quote.minimum).toBe(1_100_000n);
-    expect(o.priced.quote.recipientGets).toBe(9_900_000n);
+    // The least amount that still burns the 1 USDC the relayer completes.
+    expect(o.priced.quote.minimum).toBe(1_010_101n);
+    expect(o.priced.quote.recipientGets).toBe(9_989_000n);
     expect(circle).not.toHaveBeenCalled();
-    const low = await s.quoteOptions({ from: "base", to: "stellar", amount: 1_099_999n });
+    const low = await s.quoteOptions({ from: "base", to: "stellar", amount: 1_010_100n });
     expect(low.options[0]?.ok).toBe(false);
     expect(
       (await refusal(s.quote({ from: "base", to: "stellar", amount: 5_000_000n, speed: "fast" })))
@@ -84,7 +86,7 @@ describe("EVM chains to Stellar", () => {
     const { args } = decodeFunctionData({ abi: tokenMessengerAbi, data: burn.tx.data as never });
     const expected = stellarBurnRecipient(STELLAR_RECIPIENT);
     // amount, destinationDomain, mintRecipient, burnToken, destinationCaller, maxFee, finality, hook
-    expect(args[0]).toBe(9_900_000n);
+    expect(args[0]).toBe(9_989_000n);
     expect(args[1]).toBe(27);
     expect(String(args[2]).toLowerCase()).toBe(expected.forwarder.toLowerCase());
     expect(String(args[4]).toLowerCase()).toBe(expected.forwarder.toLowerCase());

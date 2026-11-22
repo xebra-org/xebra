@@ -51,6 +51,7 @@ export function amountForBurn(destinationDomain: number, burn: bigint): bigint {
   const fixed = XEBRA_FLAT_FEE[flatFeeKind(destinationDomain)];
   let amount = ((burn + fixed) * 10_000n) / (10_000n - XEBRA_FEE_BPS);
   while (amount - flatFeeFor(destinationDomain, amount) < burn) amount += 1n;
-  while (amount > 0n && amount - 1n - flatFeeFor(destinationDomain, amount - 1n) >= burn) amount -= 1n;
+  while (amount > 0n && amount - 1n - flatFeeFor(destinationDomain, amount - 1n) >= burn)
+    amount -= 1n;
   return amount;
 }

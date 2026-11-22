@@ -657,7 +657,10 @@ export function SolanaBridgeForm({
                       : "Circle attests the burn; you complete the mint from a Stellar wallet for a few hundredths of an XLM."
                   }
                 />
-                <DataRow label="Xebra fee" value={`−${formatUsdc6(flatFeeFor(STELLAR_CCTP_DOMAIN, units))} USDC`} />
+                <DataRow
+                  label="Xebra fee"
+                  value={`−${formatUsdc6(flatFeeFor(STELLAR_CCTP_DOMAIN, units))} USDC`}
+                />
                 <div className="pt-3">
                   <StripeRule className="mb-3 opacity-50" />
                   <DataRow

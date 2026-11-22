@@ -24,7 +24,7 @@ function svc(top: Partial<Deps> = {}) {
 }
 
 describe("into a chain Circle does not deliver to (Injective, Morph, Pharos)", () => {
-  it("prices Xebra's 0.05 and nothing for Circle, Standard only, without asking Circle", async () => {
+  it("prices Xebra's 0.01 plus 0.01% and nothing for Circle, Standard only, without asking Circle", async () => {
     const circle = vi.fn();
     const { options } = await svc({ circle }).quoteOptions({
       from: "base",
@@ -35,17 +35,19 @@ describe("into a chain Circle does not deliver to (Injective, Morph, Pharos)", (
     const o = options[0];
     if (!o?.ok) throw new Error("not priced");
     expect(o.priced.quote.fees).toEqual({
-      xebra: 50_000n,
+      // 0.01 + 0.01% of 5.
+      xebra: 10_500n,
       circle: 0n,
       delivery: 0n,
-      total: 50_000n,
+      total: 10_500n,
     });
-    expect(o.priced.quote.recipientGets).toBe(4_950_000n);
-    expect(o.priced.quote.minimum).toBe(500_000n);
+    expect(o.priced.quote.recipientGets).toBe(4_989_500n);
+    // The least amount that still burns 0.09 after the fee: fees stay within a tenth.
+    expect(o.priced.quote.minimum).toBe(100_010n);
     expect(circle).not.toHaveBeenCalled();
   });
 
-  it("burns with depositForBurn, no hook, nothing for Circle, then pays 0.05", async () => {
+  it("burns with depositForBurn, no hook, nothing for Circle, then pays Xebra's fee", async () => {
     const { steps } = await svc().buildTransfer({
       from: "base",
       to: "injective",
@@ -61,7 +63,7 @@ describe("into a chain Circle does not deliver to (Injective, Morph, Pharos)", (
       data: burn.tx.data as never,
     });
     expect(functionName).toBe("depositForBurn");
-    expect(args[0]).toBe(4_950_000n);
+    expect(args[0]).toBe(4_989_500n);
     expect(args[1]).toBe(29);
     expect(args[5]).toBe(0n);
     expect(burn.description).toMatch(/claims it on Injective/);
@@ -75,7 +77,7 @@ describe("into a chain Circle does not deliver to (Injective, Morph, Pharos)", (
     });
     const o = options[0];
     if (!o?.ok) throw new Error("not priced");
-    expect(o.priced.quote.fees.xebra).toBe(100_000n);
+    expect(o.priced.quote.fees.xebra).toBe(10_500n);
     expect(o.priced.quote.fees.delivery).toBeGreaterThan(0n);
   });
 });

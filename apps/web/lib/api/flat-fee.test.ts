@@ -90,7 +90,7 @@ function evmCall(step: TransferStep | undefined) {
 }
 
 describe("Xebra's flat fee", () => {
-  it("EVM, straight to Circle: 0.10 out of the amount, the burn is the rest, the fee its own step", async () => {
+  it("EVM, straight to Circle: 0.01 plus 0.01% out of the amount, the burn is the rest, the fee its own step", async () => {
     const { quote, steps } = await svc().buildTransfer({
       from: "arc",
       to: "base",
@@ -98,15 +98,16 @@ describe("Xebra's flat fee", () => {
       sender: EVM_SENDER,
       recipient: RECIPIENT,
     });
-    expect(quote.fees.xebra).toBe(100_000n);
-    expect(quote.recipientGets).toBe(25_000_000n - 100_000n - quote.fees.delivery);
+    // 0.01 + 0.01% of 25.
+    expect(quote.fees.xebra).toBe(12_500n);
+    expect(quote.recipientGets).toBe(25_000_000n - 12_500n - quote.fees.delivery);
     expect(steps.map((s) => s.id)).toEqual(["approve", "burn", "fee"]);
     // The approval covers the burn only; the fee is a plain transfer from the wallet.
-    expect(evmCall(steps[0]).args?.[1]).toBe(24_900_000n);
+    expect(evmCall(steps[0]).args?.[1]).toBe(24_987_500n);
     const fee = evmCall(steps[2]);
     expect(fee.to).toBe(EVM_CHAINS.arc.usdcAddress);
     expect(fee.functionName).toBe("transfer");
-    expect(fee.args).toEqual([FEES.evm, 100_000n]);
+    expect(fee.args).toEqual([FEES.evm, 12_500n]);
   });
 
   it("EVM, through Xebra's wrapper: the wrapper's own fee and no flat fee", async () => {
@@ -144,10 +145,10 @@ describe("Xebra's flat fee", () => {
     expect(value).toBe(25_000_000n);
   });
 
-  it("Solana to Stellar: 0.10, minimum 1.10, burned and paid in one transaction", async () => {
+  it("Solana to Stellar: 0.01 plus 0.01%, minimum about 1.0102, burned and paid in one transaction", async () => {
     const solanaBurn = vi.fn(async () => ({ ...SUI_STEP, chain: "solana" as const }));
     const s = svc({ solanaBurn });
-    const options = await s.quoteOptions({ from: "solana", to: "stellar", amount: 1_050_000n });
+    const options = await s.quoteOptions({ from: "solana", to: "stellar", amount: 1_010_100n });
     expect(options.options[0]).toMatchObject({ ok: false });
     const { quote } = await s.buildTransfer({
       from: "solana",
@@ -156,13 +157,13 @@ describe("Xebra's flat fee", () => {
       sender: SOLANA_SENDER,
       recipient: STELLAR_RECIPIENT,
     });
-    expect(quote.fees).toEqual({ xebra: 100_000n, circle: 0n, delivery: 0n, total: 100_000n });
-    expect(quote.minimum).toBe(1_100_000n);
-    expect(quote.recipientGets).toBe(4_900_000n);
+    expect(quote.fees).toEqual({ xebra: 10_500n, circle: 0n, delivery: 0n, total: 10_500n });
+    expect(quote.minimum).toBe(1_010_101n);
+    expect(quote.recipientGets).toBe(4_989_500n);
     expect(solanaBurn).toHaveBeenCalledWith(
       expect.objectContaining({
-        amount: 4_900_000n,
-        fee: { owner: FEES.solana, amount: 100_000n },
+        amount: 4_989_500n,
+        fee: { owner: FEES.solana, amount: 10_500n },
       }),
     );
   });
@@ -178,9 +179,9 @@ describe("Xebra's flat fee", () => {
     });
     expect(suiBurn).toHaveBeenCalledWith({
       sender: SUI_SENDER,
-      amount: 4_900_000n,
+      amount: 4_989_500n,
       stellarRecipient: STELLAR_RECIPIENT,
-      fee: { address: FEES.sui, amount: 100_000n },
+      fee: { address: FEES.sui, amount: 10_500n },
     });
   });
 
@@ -193,11 +194,11 @@ describe("Xebra's flat fee", () => {
       sender: APTOS_SENDER,
       recipient: STELLAR_RECIPIENT,
     });
-    expect(aptosBuild).toHaveBeenCalledWith(expect.objectContaining({ amount: "9.9" }));
+    expect(aptosBuild).toHaveBeenCalledWith(expect.objectContaining({ amount: "9.989" }));
     expect(steps.map((s) => s.id)).toEqual(["burn", "fee"]);
     expect(steps[1]?.tx).toMatchObject({
       kind: "aptos_call",
-      functionArguments: [APTOS_CCTP.usdc, FEES.aptos, "100000"],
+      functionArguments: [APTOS_CCTP.usdc, FEES.aptos, "11000"],
     });
   });
 
@@ -214,7 +215,7 @@ describe("Xebra's flat fee", () => {
     expect(stellarDestination("base").domain).toBe(6);
   });
 
-  it("Base to Solana, once switched on: listed, priced with 0.10, burned to the token account", async () => {
+  it("Base to Solana, once switched on: listed, priced with 0.01 plus 0.01%, burned to the token account", async () => {
     const s = svc(
       {},
       { evmRoutes: { arcSendsTo: [], arcReceivesFrom: [], evmToSolana: ["base"] } },
@@ -229,9 +230,9 @@ describe("Xebra's flat fee", () => {
       sender: EVM_SENDER,
       recipient: SOLANA_WALLET,
     });
-    expect(quote.fees.xebra).toBe(100_000n);
+    expect(quote.fees.xebra).toBe(12_500n);
     expect(steps.map((x) => x.id)).toEqual(["approve", "burn", "fee"]);
-    expect(evmCall(steps[2]).args).toEqual([FEES.evm, 100_000n]);
+    expect(evmCall(steps[2]).args).toEqual([FEES.evm, 12_500n]);
   });
 
   it("refuses a source whose fee address is not set, rather than serving it free", async () => {
