@@ -47,7 +47,12 @@ The SDK adds three codes of its own, rather than coming from an API problem resp
 - `network_error` (`status` 0): the request did not reach the API.
 - `timeout` (`status` 0): no answer within `timeoutMs`, or `waitForDelivery` ran out of time.
 - `invalid_response` (carries the real HTTP status, such as 502): the API answered with something
-  that is not JSON or does not match the problem schema.
+  that is not JSON or does not match the problem schema. A JSON body, such as a gateway's own error,
+  is on `err.extra.body`.
+
+A code newer than your SDK is not turned into `invalid_response`: `err.code` is the code the API
+sent, `err.detail` its `detail`, and the whole problem is on `err.extra.body`. Treat a code you do
+not know by its `status`.
 
 ## All codes
 

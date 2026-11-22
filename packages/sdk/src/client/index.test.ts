@@ -77,6 +77,63 @@ describe("createXebraClient", () => {
     await expect(client.routes()).rejects.toMatchObject({ code: "invalid_response", status: 502 });
   });
 
+  it("keeps a code newer than this SDK, its detail, and the body, rather than invalid_response", async () => {
+    const body = {
+      type: "https://docs.xebra.exchange/errors/brand_new_code",
+      title: "Brand new",
+      status: 422,
+      detail: "A reason this SDK has never seen.",
+      code: "brand_new_code",
+      floor: "3",
+    };
+    const client = createXebraClient({
+      fetch: async () => json(422, body, "application/problem+json"),
+    });
+    const err = await client.quote({ from: "stellar", to: "base", amount: "1" }).catch((e) => e);
+    expect(err).toBeInstanceOf(XebraApiError);
+    expect(err).toMatchObject({
+      status: 422,
+      code: "brand_new_code",
+      detail: "A reason this SDK has never seen.",
+      message: "A reason this SDK has never seen.",
+      retryable: false,
+      extra: { body },
+    });
+    expect(err.cause).toMatchObject({ issues: expect.any(Array) });
+  });
+
+  it("reports a gateway's own JSON as invalid_response with its status and body", async () => {
+    const body = { error: { code: "FUNCTION_INVOCATION_FAILED", message: "Bad gateway" } };
+    const client = createXebraClient({ fetch: async () => json(502, body) });
+    const err = await client.routes().catch((e) => e);
+    expect(err).toMatchObject({
+      status: 502,
+      code: "invalid_response",
+      detail: "The API answered 502.",
+      extra: { body },
+    });
+  });
+
+  it("keeps a gateway's detail, but not a code that is not shaped like the API's", async () => {
+    const body = { code: "INTERNAL_SERVER_ERROR", detail: "Upstream died." };
+    const client = createXebraClient({ fetch: async () => json(500, body) });
+    await expect(client.routes()).rejects.toMatchObject({
+      status: 500,
+      code: "invalid_response",
+      detail: "Upstream died.",
+      extra: { body },
+    });
+  });
+
+  it("reports a JSON error body that is not an object as invalid_response", async () => {
+    const client = createXebraClient({ fetch: async () => json(503, "Service Unavailable") });
+    await expect(client.routes()).rejects.toMatchObject({
+      status: 503,
+      code: "invalid_response",
+      extra: { body: "Service Unavailable" },
+    });
+  });
+
   it("gives up after its timeout", async () => {
     const client = createXebraClient({
       timeoutMs: 20,

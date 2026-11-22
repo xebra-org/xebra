@@ -194,11 +194,14 @@ export function createXebraClient(opts: XebraClientOptions = {}) {
     if (!res.ok) {
       const p = ProblemSchema.safeParse(body);
       if (!p.success) {
+        // A code newer than this SDK, or a gateway's own JSON: keep what can be read, and the
+        // body itself, rather than only the status. An unknown code is the server's, as it sent it.
+        const loose = looseProblem(body);
         throw new XebraApiError(
           res.status,
-          "invalid_response",
-          `The API answered ${res.status}.`,
-          {},
+          (loose.code ?? "invalid_response") as XebraApiErrorCode,
+          loose.detail ?? `The API answered ${res.status}.`,
+          { body },
           { cause: p.error },
         );
       }
@@ -313,6 +316,19 @@ export function createXebraClient(opts: XebraClientOptions = {}) {
 }
 
 export type XebraClient = ReturnType<typeof createXebraClient>;
+
+/** What the API's codes look like. A gateway's `"code": "FUNCTION_INVOCATION_FAILED"` is not one. */
+const CODE_SHAPE = /^[a-z][a-z0-9_]{0,63}$/;
+
+/** The `code` and `detail` of an error body that failed `ProblemSchema`, where they are usable. */
+function looseProblem(body: unknown): { code?: string; detail?: string } {
+  if (typeof body !== "object" || body === null) return {};
+  const { code, detail } = body as Record<string, unknown>;
+  return {
+    ...(typeof code === "string" && CODE_SHAPE.test(code) ? { code } : {}),
+    ...(typeof detail === "string" && detail.trim() !== "" ? { detail } : {}),
+  };
+}
 
 function sleep(ms: number, signal?: AbortSignal): Promise<void> {
   return new Promise((resolve, reject) => {
