@@ -154,9 +154,9 @@ export type OneClickErrorCode =
   | "invalid_response";
 
 /**
- * A 1Click call failed. `code` says how; `status` is 1Click's HTTP status, or 0 when it sent none.
- * `body` is what 1Click sent (parsed JSON, else the raw text), when it sent anything. `retryable`
- * is true for network errors, timeouts, 429 and 5xx.
+ * A 1Click call failed. `code` says how. `status` is 1Click's HTTP status for `http_error` and
+ * `invalid_response`, else 0. `body` is what 1Click sent (parsed JSON, else the raw text), when it
+ * sent anything. `retryable` is true for network errors, timeouts, 429 and 5xx.
  */
 export class OneClickError extends XebraError {
   declare readonly code: OneClickErrorCode;
