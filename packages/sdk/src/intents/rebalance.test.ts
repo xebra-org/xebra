@@ -201,8 +201,50 @@ describe("withdrawal", () => {
   it("needs a partner key and asks for nothing before it has one", async () => {
     const one = fake1Click();
     const rb = createRebalancer({ xebra: fakeXebra(), fetch: one.fetch, now: () => NOW });
-    await expect(rb.startWithdrawal(REQ)).rejects.toBeInstanceOf(OneClickError);
+    const err = await rb.startWithdrawal(REQ).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(OneClickError);
+    expect(err).toMatchObject({ code: "missing_api_key", status: 0, retryable: false });
     expect(one.calls.some((c) => c.path === "/v0/quote")).toBe(false);
+  });
+
+  it("tells a quote without a deposit address from a missing key", async () => {
+    const one = fake1Click();
+    const fetch = (async (url: string | URL | Request, init?: RequestInit) => {
+      const res = await one.fetch(url, init);
+      if (new URL(String(url)).pathname !== "/v0/quote") return res;
+      const { quote } = (await res.json()) as { quote: Record<string, unknown> };
+      const { depositAddress: _, ...rest } = quote;
+      return new Response(JSON.stringify({ quote: rest }), { status: 200 });
+    }) as typeof globalThis.fetch;
+    const rb = createRebalancer({
+      xebra: fakeXebra(),
+      fetch,
+      now: () => NOW,
+      oneClick: { apiKey: "k" },
+    });
+    const err = await rb.startWithdrawal(REQ).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(OneClickError);
+    expect(err).toMatchObject({ code: "no_deposit_address", status: 0 });
+    expect((err as OneClickError).body).toMatchObject({ minAmountOut: "99999997600" });
+    await expect(rb.prepareDeposit(REQ)).rejects.toMatchObject({ code: "no_deposit_address" });
+  });
+
+  it("keeps 1Click's status and whole body on an HTTP error", async () => {
+    const answer = { message: "Invalid API key", correlationId: "c-9" };
+    const fetch = (async () =>
+      new Response(JSON.stringify(answer), { status: 401 })) as typeof globalThis.fetch;
+    const rb = createRebalancer({ xebra: fakeXebra(), fetch, now: () => NOW });
+    const err = await rb.status("0xdep").catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(OneClickError);
+    expect(err).toMatchObject({ code: "http_error", status: 401, retryable: false, body: answer });
+    expect((err as OneClickError).message).toBe("Invalid API key");
+
+    const text = (async () => new Response("bad gateway", { status: 502 })) as typeof fetch;
+    const err2 = await createRebalancer({ xebra: fakeXebra(), fetch: text, now: () => NOW })
+      .status("0xdep")
+      .catch((e: unknown) => e);
+    expect(err2).toMatchObject({ code: "http_error", status: 502, retryable: true });
+    expect((err2 as OneClickError).body).toBe("bad gateway");
   });
 
   it("quotes same asset out to the market maker's own wallet, refund to its own account", async () => {

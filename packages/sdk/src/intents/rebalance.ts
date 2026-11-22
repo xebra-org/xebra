@@ -144,13 +144,38 @@ export type OneClickStatus =
   | "REFUNDED"
   | "FAILED";
 
-export class OneClickError extends Error {
+/** How a 1Click call failed. */
+export type OneClickErrorCode =
+  | "missing_api_key"
+  | "no_deposit_address"
+  | "http_error"
+  | "network_error"
+  | "timeout"
+  | "invalid_response";
+
+/**
+ * A 1Click call failed. `code` says how. `status` is 1Click's HTTP status for `http_error` and
+ * `invalid_response`, else 0. `body` is what 1Click sent (parsed JSON, else the raw text), when it
+ * sent anything. `retryable` is true for network errors, timeouts, 429 and 5xx.
+ */
+export class OneClickError extends XebraError {
+  declare readonly code: OneClickErrorCode;
+  readonly status: number;
+  readonly body?: unknown;
+
   constructor(
     message: string,
-    readonly status: number,
+    status: number,
+    opts: { code?: OneClickErrorCode; body?: unknown; cause?: unknown } = {},
   ) {
-    super(message);
+    const code = opts.code ?? "http_error";
+    super(code, message, {
+      retryable: code === "network_error" || code === "timeout" || status === 429 || status >= 500,
+      cause: opts.cause,
+    });
     this.name = "OneClickError";
+    this.status = status;
+    if (opts.body !== undefined) this.body = opts.body;
   }
 }
 
@@ -215,6 +240,7 @@ export function createRebalancer(opts: RebalancerOptions) {
       throw new OneClickError(
         "Withdrawing from NEAR Intents needs a 1Click partner API key (oneClick.apiKey).",
         0,
+        { code: "missing_api_key" },
       );
     }
   }
@@ -243,7 +269,7 @@ export function createRebalancer(opts: RebalancerOptions) {
         json && typeof json === "object" && "message" in json && typeof json.message === "string"
           ? json.message
           : `1Click answered ${res.status}`;
-      throw new OneClickError(said, res.status);
+      throw new OneClickError(said, res.status, { body: json ?? (text || undefined) });
     }
     return json as T;
   }
@@ -403,7 +429,12 @@ export function createRebalancer(opts: RebalancerOptions) {
     const { fromToken } = await resolve(r);
     requireKey();
     const { quote: q } = await withdrawQuote(r, fromToken, false);
-    if (!q.depositAddress) throw new OneClickError("1Click issued no deposit address.", 0);
+    if (!q.depositAddress) {
+      throw new OneClickError("1Click issued no deposit address.", 0, {
+        code: "no_deposit_address",
+        body: q,
+      });
+    }
     const { intent } = await call<{ intent: Withdrawal["intent"] }>(
       "/v0/generate-intent",
       {
@@ -454,7 +485,12 @@ export function createRebalancer(opts: RebalancerOptions) {
       throw new Error(`CCTP fees ${x.fees.total} exceed maxTotalFee ${r.maxTotalFee}.`);
     }
     const { quote: q } = await depositQuote(r, toToken, x.recipientGets, false, o.minutes ?? 120);
-    if (!q.depositAddress) throw new OneClickError("1Click issued no deposit address.", 0);
+    if (!q.depositAddress) {
+      throw new OneClickError("1Click issued no deposit address.", 0, {
+        code: "no_deposit_address",
+        body: q,
+      });
+    }
     const build = await router.buildDeposit({
       from,
       depositChain: to,
