@@ -13,14 +13,18 @@ served as `application/problem+json`:
   "status": 422,
   "detail": "Fees would take more than a tenth of this transfer. Send at least 2.4 USDC to Base.",
   "code": "amount_below_minimum",
-  "minimum": "2.4"
+  "minimum": "2.4",
+  "instance": "urn:xebra:request:iad1::7zdhm-1700000000000-0a1b2c3d4e5f"
 }
 ```
 
 - `code` is stable. Branch on it, not on `title` or `detail`.
 - `detail` is a sentence written for a person. You can show it to your user as it is.
 - `type` is the page for that code, on this site.
-- Some codes add fields, such as `minimum`, `maximum`, `have`, `need`, `total` and `limit`.
+- `instance` names this one answer. The part after `urn:xebra:request:` is also in the
+  `X-Request-Id` response header. Quote either when you report a problem: for a `5xx` it is on the
+  line Xebra logged. The API host's own `not_found` and method errors carry no `instance`.
+- Some codes add fields, such as `minimum`, `maximum`, `have`, `need`, `total`, `limit` and `needs`.
   Amounts are decimal strings of USDC, like everywhere else in the API.
 
 The SDK throws these as `XebraApiError`, with the extra fields on `err.extra`:
@@ -38,26 +42,33 @@ try {
 }
 ```
 
-The SDK adds three codes of its own, with `status` 0, for failures that never reached the API:
-`network_error`, `timeout` and `invalid_response`.
+The SDK adds three codes of its own, rather than coming from an API problem response:
+
+- `network_error` (`status` 0): the request did not reach the API.
+- `timeout` (`status` 0): no answer within `timeoutMs`, or `waitForDelivery` ran out of time.
+- `invalid_response` (carries the real HTTP status, such as 502): the API answered with something
+  that is not JSON or does not match the problem schema.
 
 ## All codes
 
-| Code | Status | Title |
-|---|---|---|
-| [`invalid_request`](/docs/errors/invalid_request) | 400 | Invalid request |
-| [`unauthorized`](/docs/errors/unauthorized) | 401 | Unauthorized |
-| [`not_found`](/docs/errors/not_found) | 404 | Not found |
-| [`not_ready`](/docs/errors/not_ready) | 409 | Not ready |
-| [`already_delivered`](/docs/errors/already_delivered) | 409 | Already delivered |
-| [`invalid_amount`](/docs/errors/invalid_amount) | 422 | Invalid amount |
-| [`invalid_recipient`](/docs/errors/invalid_recipient) | 422 | Invalid recipient |
-| [`route_unavailable`](/docs/errors/route_unavailable) | 422 | Route unavailable |
-| [`amount_below_minimum`](/docs/errors/amount_below_minimum) | 422 | Amount below the minimum |
-| [`amount_above_maximum`](/docs/errors/amount_above_maximum) | 422 | Amount above the maximum |
-| [`insufficient_balance`](/docs/errors/insufficient_balance) | 422 | Insufficient balance |
-| [`fee_above_limit`](/docs/errors/fee_above_limit) | 422 | Fee above your limit |
-| [`transaction_rejected`](/docs/errors/transaction_rejected) | 422 | Transaction would be rejected |
-| [`rate_limited`](/docs/errors/rate_limited) | 429 | Rate limited |
-| [`internal_error`](/docs/errors/internal_error) | 500 | Internal error |
-| [`upstream_unavailable`](/docs/errors/upstream_unavailable) | 503 | Upstream unavailable |
+| Code | Status | Title | Retry? | Returned by | Did funds move? |
+|---|---|---|---|---|---|
+| [`invalid_request`](/docs/errors/invalid_request) | 400 | Invalid request | no | any endpoint | no |
+| [`unauthorized`](/docs/errors/unauthorized) | 401 | Unauthorized | no | any endpoint | no |
+| [`not_found`](/docs/errors/not_found) | 404 | Not found | no | `GET /v1/transfers/{chain}/{tx}`, `POST /v1/claims` | no |
+| [`not_ready`](/docs/errors/not_ready) | 409 | Not ready | yes, with backoff | `POST /v1/claims` | no |
+| [`already_delivered`](/docs/errors/already_delivered) | 409 | Already delivered | no | `POST /v1/claims` | no |
+| [`invalid_amount`](/docs/errors/invalid_amount) | 422 | Invalid amount | no | `GET /v1/quote`, `POST /v1/transfers` | no |
+| [`invalid_recipient`](/docs/errors/invalid_recipient) | 422 | Invalid recipient | no | `GET /v1/quote`, `POST /v1/transfers` | no |
+| [`route_unavailable`](/docs/errors/route_unavailable) | 422 | Route unavailable | no | `GET /v1/quote`, `POST /v1/transfers`, `POST /v1/claims` | no |
+| [`amount_below_minimum`](/docs/errors/amount_below_minimum) | 422 | Amount below the minimum | no | `GET /v1/quote`, `POST /v1/transfers` | no |
+| [`amount_above_maximum`](/docs/errors/amount_above_maximum) | 422 | Amount above the maximum | no | `GET /v1/quote`, `POST /v1/transfers` | no |
+| [`insufficient_balance`](/docs/errors/insufficient_balance) | 422 | Insufficient balance | no | `POST /v1/transfers` | no |
+| [`fee_above_limit`](/docs/errors/fee_above_limit) | 422 | Fee above your limit | no | `POST /v1/transfers` | no |
+| [`transaction_rejected`](/docs/errors/transaction_rejected) | 422 | Transaction would be rejected | no | `POST /v1/transfers`, `POST /v1/claims` | no |
+| [`rate_limited`](/docs/errors/rate_limited) | 429 | Rate limited | yes, after Retry-After | any endpoint | no |
+| [`internal_error`](/docs/errors/internal_error) | 500 | Internal error | yes, with backoff | any endpoint | no |
+| [`upstream_unavailable`](/docs/errors/upstream_unavailable) | 503 | Upstream unavailable | yes, after Retry-After | any endpoint | no |
+| `network_error` | 0 | Network error | yes, with backoff | client | unknown, check the transfer |
+| `timeout` | 0 | Timeout | yes, with backoff | client | unknown, check the transfer |
+| `invalid_response` | 502 | Invalid response | yes, with backoff | client | no |

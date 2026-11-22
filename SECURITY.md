@@ -38,8 +38,8 @@ there are still worth reporting, but nothing user-facing depends on them today.
   `apps/web/lib/evm-bridge.ts`) and the pinned table in `packages/network-config/src/evm-chains.ts`
   are the only guard; through the EVM wrapper the contract applies them again.
 
-The contract has had **no external audit**. `MAX_TRANSFER` is deliberately kept low while that's
-true — see [`docs/go-live.md`](./docs/go-live.md) §1. A formal bug bounty is planned
+The contract has had **no external audit**. `MAX_TRANSFER` caps each transfer (10,000,000 USDC
+on Stellar) — see [`docs/go-live.md`](./docs/go-live.md) §1. A formal bug bounty is planned
 (`docs/go-live.md` §5, step 7) but not yet published; until it is, this document is the reporting
 process.
 

@@ -191,8 +191,10 @@ export class SolanaBurnRefused extends Error {
   constructor(
     message: string,
     readonly logs: string[] = [],
+    options?: { cause?: unknown },
   ) {
-    super(message);
+    super(message, options);
+    this.name = "SolanaBurnRefused";
   }
 }
 
@@ -200,8 +202,10 @@ export class InsufficientSolanaUsdcError extends Error {
   constructor(
     readonly have: bigint,
     readonly need: bigint,
+    options?: { cause?: unknown },
   ) {
-    super("This Solana wallet does not hold enough USDC.");
+    super("This Solana wallet does not hold enough USDC.", options);
+    this.name = "InsufficientSolanaUsdcError";
   }
 }
 
@@ -270,9 +274,11 @@ export async function buildSolanaBurnTransaction(
       },
     );
     if (sim.value.err) {
-      throw new SolanaBurnRefused(describeSimulationError(sim.value.err, sim.value.logs ?? []), [
-        ...(sim.value.logs ?? []),
-      ]);
+      throw new SolanaBurnRefused(
+        describeSimulationError(sim.value.err, sim.value.logs ?? []),
+        [...(sim.value.logs ?? [])],
+        { cause: sim.value.err },
+      );
     }
   }
 

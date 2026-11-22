@@ -64,7 +64,7 @@
       "account_fee": "0",
       "fee_bps": 5,
       "max_cctp_fee_bps": 20,
-      "max_transfer": "1000000000",
+      "max_transfer": "100000000000000",
       "min_fee": "1000000",
       "min_transfer": "10000000"
     },

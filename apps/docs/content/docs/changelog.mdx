@@ -3,6 +3,15 @@ title: Changelog
 description: What changed in the Xebra API and SDK, newest first.
 ---
 
+## Unreleased
+
+**SDK**, `@xebra/sdk`:
+
+- `XebraError` (additive): shared base error class exported from `@xebra/sdk` with `code`,
+  `retryable`, and `cause`. `XebraApiError` now extends `XebraError` (keeping `instanceof
+  XebraApiError` compatibility), preserves `cause` when wrapping errors, and marks `network_error`,
+  `timeout`, `rate_limited`, `upstream_unavailable`, and `internal_error` as `retryable`.
+
 ## 0.4.0 (2026-11-15)
 
 **SDK**, `@xebra/sdk` 0.4.0, `@xebra/sdk/intents`:

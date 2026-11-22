@@ -23,6 +23,7 @@ import {
   aptosWalletOnMainnet,
   currentAptosAccount,
   findAptosWallet,
+  readAptosSequenceNumber,
   signAndSubmitAptos,
 } from "../../lib/wallets/aptos";
 import { Button } from "../ui/button";
@@ -33,7 +34,7 @@ import { useWallets } from "../wallet/wallet-provider";
 import { CHAIN_NAMES } from "./chain-glyph";
 import { ChainPicker, PickerLabel } from "./chain-picker";
 import { EvmQuotePanel } from "./evm-quote-panel";
-import { SubmittedNotice } from "./receipt";
+import { CopyButton, SubmittedNotice } from "./receipt";
 
 /**
  * A transfer that starts on Aptos: burn native USDC with Circle's CCTP script, signed in the
@@ -72,12 +73,14 @@ interface Remembered {
   at: number;
 }
 
-function remember(t: Remembered | null) {
+export function remember(t: Remembered | null): boolean {
   try {
     if (t) window.localStorage.setItem(STORAGE_KEY, JSON.stringify(t));
     else window.localStorage.removeItem(STORAGE_KEY);
+    return true;
   } catch {
     // Private mode or blocked storage: the transfer still works, it just cannot be resumed.
+    return false;
   }
 }
 
@@ -99,6 +102,7 @@ export function isDestination(v: unknown): v is AptosDestination {
   return v === "solana" || v === "stellar" || (typeof v === "string" && isEvmChainId(v));
 }
 
+const short = (s: string) => `${s.slice(0, 6)}...${s.slice(-4)}`;
 const explorer = (tx: string) => `https://explorer.aptoslabs.com/txn/${tx}?network=mainnet`;
 const nameOf = (d: AptosDestination) => CHAIN_NAMES[d];
 
@@ -130,6 +134,7 @@ export function AptosBridgeForm({
   const [step, setStep] = useState<"idle" | "preparing" | "signing">("idle");
   const [error, setError] = useState<{ text: string; declined: boolean } | null>(null);
   const [sent, setSent] = useState<Remembered | null>(null);
+  const [saved, setSaved] = useState(true);
 
   // A transfer this browser was following comes back on screen.
   useEffect(() => {
@@ -249,6 +254,8 @@ export function AptosBridgeForm({
       return;
     }
     setStep("preparing");
+    let senderAddress: string | undefined;
+    let envelope: AptosTxEnvelope | undefined;
     try {
       if ((await aptosWalletOnMainnet(wallet)) === false) {
         setError({
@@ -259,6 +266,7 @@ export function AptosBridgeForm({
       }
       // The account the wallet will sign with now, which may not be the one it connected with.
       const sender = (await currentAptosAccount(wallet)) ?? aptos.address;
+      senderAddress = sender;
       const res = await fetch("/api/aptos/build", {
         method: "POST",
         headers: { "content-type": "application/json" },
@@ -287,7 +295,7 @@ export function AptosBridgeForm({
       }
       // Read back, shape-checked, and refused unless it burns native USDC.
       const args = aptosBurnArgsFromJson(body.transaction.arguments);
-      const envelope: AptosTxEnvelope = {
+      envelope = {
         sender: sender as `0x${string}`,
         sequenceNumber: BigInt(body.envelope.sequenceNumber),
         maxGasAmount: BigInt(body.envelope.maxGasAmount),
@@ -298,11 +306,34 @@ export function AptosBridgeForm({
       setStep("signing");
       const tx = await signAndSubmitAptos(wallet, args, envelope);
       const r = { tx, to, at: Date.now() };
-      remember(r);
+      const savedOk = remember(r);
+      setSaved(savedOk);
       setSent(r);
     } catch (err) {
       const text = reportError("aptos burn failed", err);
-      setError({ text, declined: DECLINED.test(text) });
+      const declined = DECLINED.test(text);
+      if (declined) {
+        setError({ text, declined: true });
+      } else if (senderAddress && envelope) {
+        const nextSeq = await readAptosSequenceNumber(senderAddress).catch(() => null);
+        if (nextSeq !== null && nextSeq > envelope.sequenceNumber) {
+          setError({
+            text: "This transfer may have been sent. Check your wallet before trying again.",
+            declined: false,
+          });
+        } else if (nextSeq !== null && nextSeq <= envelope.sequenceNumber) {
+          const base = text.trim();
+          const sentence = base ? (base.endsWith(".") ? base : `${base}.`) : "";
+          setError({
+            text: sentence ? `${sentence} Nothing was sent.` : "Nothing was sent.",
+            declined: false,
+          });
+        } else {
+          setError({ text, declined: false });
+        }
+      } else {
+        setError({ text, declined: false });
+      }
     } finally {
       setStep("idle");
     }
@@ -315,6 +346,7 @@ export function AptosBridgeForm({
 
   function startOver() {
     remember(null);
+    setSaved(true);
     setSent(null);
     setError(null);
     setAmount("");
@@ -341,6 +373,7 @@ export function AptosBridgeForm({
         tx={sent.tx}
         to={sent.to as Exclude<AptosDestination, "stellar">}
         sentAt={sent.at}
+        saved={saved}
         onReset={startOver}
       />
     );
@@ -403,7 +436,10 @@ export function AptosBridgeForm({
             autoComplete="off"
             spellCheck={false}
             value={amount}
-            onChange={(e) => setAmount(e.target.value)}
+            onChange={(e) => {
+              setAmount(e.target.value);
+              setError(null);
+            }}
             placeholder="0.00"
             className="tabular h-12 text-base"
             invalid={amount.trim() !== "" && (units === null || amountError !== null)}
@@ -429,7 +465,10 @@ export function AptosBridgeForm({
             autoComplete="off"
             spellCheck={false}
             value={recipient}
-            onChange={(e) => setRecipient(e.target.value)}
+            onChange={(e) => {
+              setRecipient(e.target.value);
+              setError(null);
+            }}
             placeholder={toStellar ? "G..." : to === "solana" ? "Recipient wallet" : "0x…"}
             className="h-12 font-mono text-xs"
             invalid={recipientCheck.error !== null}
@@ -505,11 +544,13 @@ function Forwarded({
   tx,
   to,
   sentAt,
+  saved = true,
   onReset,
 }: {
   tx: `0x${string}`;
   to: Exclude<AptosDestination, "stellar">;
   sentAt: number;
+  saved?: boolean;
   onReset: () => void;
 }) {
   const dest = routeDestination(to);
@@ -561,11 +602,19 @@ function Forwarded({
         }}
       />
       <div className="flex items-center justify-between gap-3">
-        {!delivered && (
-          <p className="max-w-[18rem] text-xs leading-relaxed text-bone/35">
-            Safe to close this tab. Come back on the same browser and it picks up where it left off.
-          </p>
-        )}
+        {!delivered &&
+          (saved ? (
+            <p className="max-w-[18rem] text-xs leading-relaxed text-bone/35">
+              Safe to close this tab. Come back on the same browser and it picks up where it left
+              off.
+            </p>
+          ) : (
+            <p className="max-w-[20rem] text-xs leading-relaxed text-bone/45">
+              This browser could not save your transfer. Keep this hash to find it again:{" "}
+              <span className="tabular font-mono text-bone/70">{short(tx)}</span>{" "}
+              <CopyButton value={tx} label="transaction hash" />
+            </p>
+          ))}
         <Button
           variant={delivered ? "primary" : "quiet"}
           size="sm"
@@ -577,6 +626,34 @@ function Forwarded({
       </div>
     </div>
   );
+}
+
+export interface RelayerAnswer {
+  status?: string;
+  hash?: string;
+  reason?: string;
+}
+
+export function nextDelivery(
+  current: Delivery,
+  answer: RelayerAnswer | null | undefined,
+): Delivery {
+  if (current.kind === "done" || current.kind === "stuck") {
+    return current;
+  }
+  if (!answer) {
+    return { kind: "idle" };
+  }
+  if (answer.status === "delivered" || (answer.status === "submitted" && Boolean(answer.hash))) {
+    return { kind: "done", hash: answer.hash ?? null };
+  }
+  if (answer.status === "refused" || answer.status === "failed") {
+    return {
+      kind: "stuck",
+      message: answer.reason ?? "The mint could not be completed.",
+    };
+  }
+  return { kind: "idle" };
 }
 
 /**
@@ -604,9 +681,12 @@ function ToStellar({
   const [claiming, setClaiming] = useState(false);
   const [claimError, setClaimError] = useState<string | null>(null);
   const completing = useRef(false);
+  const isTerminal = delivery.kind === "done" || delivery.kind === "stuck";
+  const deliveryRef = useRef(delivery);
+  deliveryRef.current = delivery;
 
   useEffect(() => {
-    if (delivery.kind === "done" || delivery.kind === "stuck") return;
+    if (isTerminal) return;
     let cancelled = false;
     let timer: ReturnType<typeof setTimeout>;
 
@@ -639,27 +719,27 @@ function ToStellar({
         if (state === "complete" && relayerEnabled && !completing.current) {
           completing.current = true;
           setDelivery({ kind: "completing" });
-          const c = await fetch("/api/stellar-inbound/complete", {
-            method: "POST",
-            headers: { "content-type": "application/json" },
-            body: JSON.stringify({ src: APTOS_DOMAIN, tx }),
-          });
-          const result = (await c.json()) as { status?: string; hash?: string; reason?: string };
-          completing.current = false;
-          if (cancelled) return;
-          if (result.status === "delivered" || (result.status === "submitted" && result.hash)) {
-            setDelivery({ kind: "done", hash: result.hash ?? null });
-            remember(null);
-            return;
-          }
-          if (result.status === "refused" || result.status === "failed") {
-            setDelivery({
-              kind: "stuck",
-              message: result.reason ?? "The mint could not be completed.",
+          try {
+            const c = await fetch("/api/stellar-inbound/complete", {
+              method: "POST",
+              headers: { "content-type": "application/json" },
+              body: JSON.stringify({ src: APTOS_DOMAIN, tx }),
             });
-            return;
+            const result = (await c.json()) as RelayerAnswer;
+            const next = nextDelivery(deliveryRef.current, result);
+            setDelivery(next);
+            if (next.kind === "done") {
+              remember(null);
+              return;
+            }
+            if (next.kind === "stuck") {
+              return;
+            }
+          } catch {
+            setDelivery({ kind: "idle" });
+          } finally {
+            completing.current = false;
           }
-          setDelivery({ kind: "idle" });
         }
       } catch {
         completing.current = false;
@@ -673,7 +753,7 @@ function ToStellar({
       cancelled = true;
       clearTimeout(timer);
     };
-  }, [tx, delivery.kind, relayerEnabled]);
+  }, [tx, isTerminal, relayerEnabled]);
 
   async function onClaim() {
     if (!stellarAddress) return;

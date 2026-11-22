@@ -15,6 +15,7 @@ import {
   readChainId,
   sendTransaction,
   waitForReceipt,
+  walletErrorCode,
 } from "./evm-rpc";
 import { formatError } from "./format-error";
 import type { Eip1193Provider } from "./wallets/types";
@@ -58,6 +59,53 @@ export const EVM_STEP_LABEL: Record<EvmBridgeStep, (source: string) => string> =
 /** Long enough for a transaction priced low on a busy chain; the node is the wallet's, not ours. */
 const RECEIPT_TIMEOUT_MS = 10 * 60_000;
 const RECEIPT_POLL_MS = 2_000;
+const NONCE_POLL_ATTEMPTS = 5;
+const NONCE_POLL_INTERVAL_MS = 3_000;
+
+/**
+ * Thrown when `eth_sendTransaction` fails and pending-nonce checks show (or cannot rule out)
+ * that the wallet broadcast the burn before dropping the connection.
+ */
+export class EvmBurnUncertainError extends Error {
+  readonly mayHaveSent = true;
+
+  constructor(message: string, cause?: unknown) {
+    super(message, { cause });
+    this.name = "EvmBurnUncertainError";
+  }
+}
+
+function errorCodeChain(err: unknown): number | null {
+  const direct = walletErrorCode(err);
+  if (direct !== null) return direct;
+  if (err instanceof Error && err.cause !== undefined) {
+    return walletErrorCode(err.cause);
+  }
+  return null;
+}
+
+function isClearDecline(err: unknown): boolean {
+  const code = errorCodeChain(err);
+  return code === 4001 || code === 4100;
+}
+
+async function readPendingNonce(provider: Eip1193Provider, from: string): Promise<bigint | null> {
+  try {
+    const raw = await provider.request({
+      method: "eth_getTransactionCount",
+      params: [from, "pending"],
+    });
+    if (typeof raw === "string" && /^0x[0-9a-fA-F]+$/.test(raw)) {
+      return BigInt(raw);
+    }
+    if (typeof raw === "number" && Number.isSafeInteger(raw) && raw >= 0) {
+      return BigInt(raw);
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
 
 /**
  * Arc pays gas in the same USDC it is asked to burn. A transfer of the whole balance leaves
@@ -65,6 +113,27 @@ const RECEIPT_POLL_MS = 2_000;
  * transactions on Arc have cost well under a cent each.
  */
 export const ARC_GAS_RESERVE_UNITS = 50_000n;
+
+/**
+ * Rough gas for the two transactions where gas is the chain's own coin. Margins, not measurements:
+ * an approval costs about 46k and Circle's burn, or the wrapper's, well under 200k. A rollup's L1
+ * data fee is not in `eth_gasPrice`, so a wallet that passes this may still be asked for a little more.
+ */
+const APPROVE_GAS = 60_000n;
+const BURN_GAS = 250_000n;
+
+/** A wei amount from the wallet's node, read as a quantity and never guessed. */
+async function readQuantity(
+  provider: Eip1193Provider,
+  method: string,
+  params?: unknown[],
+): Promise<bigint> {
+  const raw = await provider.request(params ? { method, params } : { method });
+  if (typeof raw !== "string" || !/^0x[0-9a-fA-F]+$/.test(raw)) {
+    throw new Error(`The wallet's network returned an unreadable answer to ${method}.`);
+  }
+  return BigInt(raw);
+}
 
 /** How much USDC `owner` can send from `chain`, leaving gas where gas is USDC. */
 export function spendableUsdc(chain: EvmChain, balance: bigint): bigint {
@@ -119,6 +188,8 @@ export interface EvmBridgeRequest {
    * fee included). Absent: call Circle directly.
    */
   via?: { address: string; maxWrapperFee: bigint } | null;
+  /** Optional polling overrides used in tests for the post-error pending-nonce check. */
+  nonceCheck?: { attempts?: number; intervalMs?: number };
 }
 
 /** How long a request through the wrapper stays good, from the chain's latest block. */
@@ -169,8 +240,22 @@ export async function submitEvmBridge(req: EvmBridgeRequest): Promise<EvmBridgeR
     );
   }
 
+  const needsApproval = (await getAllowance(provider, source, from, target)) < amount;
+
+  // Without the chain's own coin the wallet fails with a raw "insufficient funds for gas * price +
+  // value". Arc is covered above: its gas is the USDC kept back by `spendableUsdc`.
+  if (source.id !== "arc") {
+    const native = await readQuantity(provider, "eth_getBalance", [from, "latest"]);
+    const gas = BURN_GAS + (needsApproval ? APPROVE_GAS : 0n);
+    if (native === 0n || native < (await readQuantity(provider, "eth_gasPrice")) * gas) {
+      throw new Error(
+        `You need some ${source.nativeCurrency.symbol} on ${source.name} to pay the network fee. Nothing was sent.`,
+      );
+    }
+  }
+
   let approvalTxHash: Hex | null = null;
-  if ((await getAllowance(provider, source, from, target)) < amount) {
+  if (needsApproval) {
     step("approving");
     approvalTxHash = await sendTransaction(provider, {
       from,
@@ -223,12 +308,43 @@ export async function submitEvmBridge(req: EvmBridgeRequest): Promise<EvmBridgeR
   }
 
   step("burning");
-  const txHash = await sendTransaction(provider, {
-    from,
-    to: target,
-    data: burn,
-    chainId: source.chainId,
-  });
+  const nonceBefore = await readPendingNonce(provider, from);
+  let txHash: Hex;
+  try {
+    txHash = await sendTransaction(provider, {
+      from,
+      to: target,
+      data: burn,
+      chainId: source.chainId,
+    });
+  } catch (err) {
+    if (isClearDecline(err)) throw err;
+    const attempts = Math.max(1, req.nonceCheck?.attempts ?? NONCE_POLL_ATTEMPTS);
+    const intervalMs = Math.max(0, req.nonceCheck?.intervalMs ?? NONCE_POLL_INTERVAL_MS);
+    let sawSameNonce = false;
+    if (nonceBefore !== null) {
+      for (let i = 0; i < attempts; i++) {
+        const nonceAfter = await readPendingNonce(provider, from);
+        if (nonceAfter !== null) {
+          if (nonceAfter > nonceBefore) {
+            throw new EvmBurnUncertainError(
+              "Your burn transaction may have been sent before the wallet connection failed. Check your wallet's activity before trying again.",
+              err,
+            );
+          }
+          sawSameNonce = true;
+        }
+        if (i + 1 < attempts && intervalMs > 0) {
+          await new Promise((r) => setTimeout(r, intervalMs));
+        }
+      }
+      if (sawSameNonce) throw err;
+    }
+    throw new EvmBurnUncertainError(
+      "Your burn transaction may have been sent — the wallet failed and its pending nonce could not be verified. Check your wallet's activity before trying again.",
+      err,
+    );
+  }
   return { txHash, approvalTxHash };
 }
 

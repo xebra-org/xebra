@@ -65,7 +65,7 @@ From Stellar, Xebra charges ${xebraFeeRule}, and Circle's delivery fee is paid o
 
 ## Safety
 
-Xebra's contracts are open source and cap each transfer through them at ${FEES.maxTransferUsdc} USDC while they have had no external audit; they can be paused instantly and any other change waits 48 hours. See [security](/security).
+Xebra's contracts are open source and cap each transfer through them: ${FEES.minTransferUsdc} to ${FEES.stellarMaxTransferUsdc} USDC from Stellar (as of ${FEES.asOf}) and ${FEES.minTransferUsdc} to ${FEES.arcMaxTransferUsdc} USDC from Arc (as of ${FEES.asOf}). The contracts have had no external audit; they can be paused instantly and any other change waits 48 hours. See [security](/security).
 `,
   };
 }
@@ -148,13 +148,13 @@ Xebra's fee is **${xebraFeeRule}**. Circle's delivery fee is paid **out of** Xeb
 | 50 USDC | 0.10 USDC | 49.90 USDC |
 | 100 USDC | 0.10 USDC | 99.90 USDC |
 
-The only other cost is the Stellar network fee, a fraction of a cent in XLM. Each transfer is ${FEES.minTransferUsdc} to ${FEES.maxTransferUsdc} USDC.
+The only other cost is the Stellar network fee, a fraction of a cent in XLM. Each transfer is ${FEES.minTransferUsdc} to ${FEES.stellarMaxTransferUsdc} USDC (as of ${FEES.asOf}).
 
 ## From Arc
 
 ${
   arcViaWrapper
-    ? `Transfers out of Arc go through Xebra's contract on Arc with the same rule: **${xebraFeeRule}**, with Circle's delivery fee paid out of it.`
+    ? `Transfers out of Arc go through Xebra's contract on Arc with the same rule: **${xebraFeeRule}**, with Circle's delivery fee paid out of it. Each transfer is ${FEES.minTransferUsdc} to ${FEES.arcMaxTransferUsdc} USDC (as of ${FEES.asOf}).`
     : "There is **no Xebra fee** on transfers out of Arc: your wallet calls Circle directly. You pay Circle's delivery fee, usually a few cents, which is taken out of the amount."
 } Arc charges gas in USDC, a fraction of a cent per transaction; keep a few cents in the wallet.
 
@@ -225,7 +225,7 @@ function security(arcViaWrapper: boolean): Doc {
 | Xebra fee wrapper v2 | Stellar | [\`${CONTRACTS.stellarWrapper.address}\`](${CONTRACTS.stellarWrapper.explorer}) |
 | Xebra fee wrapper | Arc | [\`${CONTRACTS.arcWrapper.address}\`](${CONTRACTS.arcWrapper.explorer}) |
 
-Both are open source: [github.com/drydocs/xebra](https://github.com/drydocs/xebra). Burning, attesting and minting are Circle's contracts and Circle's service.
+Both are open source: [github.com/xebra-org/xebra](https://github.com/xebra-org/xebra). Burning, attesting and minting are Circle's contracts and Circle's service.
 
 ## Custody
 
@@ -239,13 +239,13 @@ Both are open source: [github.com/drydocs/xebra](https://github.com/drydocs/xebr
 
 ## Limits and governance
 
-- Each transfer through Xebra's contracts is capped at ${FEES.maxTransferUsdc} USDC while they have had no external audit.
+- Each transfer through Xebra's contracts is capped: ${FEES.minTransferUsdc} to ${FEES.stellarMaxTransferUsdc} USDC from Stellar (as of ${FEES.asOf}) and ${FEES.minTransferUsdc} to ${FEES.arcMaxTransferUsdc} USDC from Arc (as of ${FEES.asOf}). The contracts have had no external audit.
 - The fee can never exceed 1%, and Circle's delivery fee can never exceed a set limit per chain or a tenth of the transfer. These ceilings are written into the contracts.
 - A pauser can stop new transfers instantly. Every change that loosens anything (fees, limits, chains, keys) is announced on chain and takes effect only after 48 hours, during which the pauser can cancel it.
 
 ## Audits
 
-The contracts have **not had an external audit**. They are tested (unit, property and fork tests, and real transfers on testnet and mainnet), and limits are kept low until that changes.
+The contracts have **not had an external audit**. They are tested (unit, property and fork tests, and real transfers on testnet and mainnet).
 
 ## Reporting a problem
 
@@ -319,9 +319,11 @@ function routeDoc(r: RouteInfo, all: RouteInfo[]): Doc {
   const wallet = fromStellar
     ? "Freighter or the LOBSTR extension"
     : "any browser EVM wallet (MetaMask, Rabby and others)";
-  const limits = viaXebra
-    ? `${FEES.minTransferUsdc} to ${FEES.maxTransferUsdc} USDC per transfer`
-    : "No Xebra limit; Circle's fee may be at most a tenth of the amount";
+  const limits = fromStellar
+    ? `${FEES.minTransferUsdc} to ${FEES.stellarMaxTransferUsdc} USDC per transfer (as of ${FEES.asOf})`
+    : viaXebra
+      ? `${FEES.minTransferUsdc} to ${FEES.arcMaxTransferUsdc} USDC per transfer (as of ${FEES.asOf})`
+      : "No Xebra limit; Circle's fee may be at most a tenth of the amount";
   const evmSource = r.from !== "stellar" ? EVM_CHAINS[r.from as EvmChainId] : null;
   const siblings = all.filter((o) => o.from === r.from && o.slug !== r.slug);
   return {

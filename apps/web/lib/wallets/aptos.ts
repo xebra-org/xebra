@@ -184,6 +184,34 @@ export async function signAndSubmitAptos(
   return hash as `0x${string}`;
 }
 
+/**
+ * Reads an account's current sequence number from the Aptos fullnode REST API.
+ * Returns null if the account does not exist (404) or on network/parse failure.
+ */
+export async function readAptosSequenceNumber(
+  address: string,
+  options?: { nodeUrl?: string; fetch?: typeof fetch },
+): Promise<bigint | null> {
+  const nodeUrl = (options?.nodeUrl || "https://api.mainnet.aptoslabs.com/v1").replace(/\/+$/, "");
+  const runFetch = options?.fetch ?? fetch;
+  try {
+    const res = await runFetch(`${nodeUrl}/accounts/${address}`, {
+      cache: "no-store",
+    });
+    if (!res.ok) return null;
+    const body = (await res.json()) as { sequence_number?: unknown };
+    if (typeof body?.sequence_number === "string" && /^\d+$/.test(body.sequence_number)) {
+      return BigInt(body.sequence_number);
+    }
+    if (typeof body?.sequence_number === "number" && Number.isSafeInteger(body.sequence_number)) {
+      return BigInt(body.sequence_number);
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
+
 export function watchAptosWallets(onChange: (w: Wallet[]) => void): () => void {
   const registry = getWallets();
   const emit = () => onChange([...registry.get()].filter(isAptosWallet));

@@ -60,6 +60,35 @@ export function keepDetected(previous: WalletEntry[], next: WalletEntry[]): Wall
   );
 }
 
+export const STELLAR_MAINNET_PASSPHRASE = "Public Global Stellar Network ; September 2015";
+
+/**
+ * Checks whether the Stellar wallet is on the expected network (defaulting to Mainnet).
+ * Wallets that support getNetwork() (where the wallet supports it) are checked against the expected passphrase;
+ * wallets that cannot report a network (or throw an error) are allowed through.
+ *
+ * On mismatch, throws: "Your wallet is on Testnet. Switch it to Mainnet, then try again."
+ */
+export async function checkStellarNetwork(
+  kit: { getNetwork?: () => Promise<{ networkPassphrase?: string; network?: string }> },
+  expectedPassphrase = STELLAR_MAINNET_PASSPHRASE,
+): Promise<void> {
+  if (typeof kit?.getNetwork !== "function") return;
+  let net: { network?: string; networkPassphrase?: string } | undefined;
+  try {
+    net = await kit.getNetwork();
+  } catch {
+    // Wallets that cannot report a network are allowed through, as today.
+    return;
+  }
+  const passphrase = net?.networkPassphrase;
+  if (passphrase && passphrase !== expectedPassphrase) {
+    throw new Error("Your wallet is on Testnet. Switch it to Mainnet, then try again.");
+  }
+}
+
+export const assertStellarNetwork = checkStellarNetwork;
+
 export async function connectStellar(
   kit: StellarWalletsKit,
   entry: WalletEntry,
@@ -68,8 +97,12 @@ export async function connectStellar(
   let address: string;
   try {
     ({ address } = await kit.getAddress());
+    await checkStellarNetwork(kit);
   } catch (err) {
     const raw = err instanceof Error ? err.message : JSON.stringify(err);
+    if (/Your wallet is on Testnet/i.test(raw)) {
+      throw err;
+    }
     // The kit's own text ("Freighter is not connected") names neither cause nor cure.
     if (/not connected|not available|not installed/i.test(raw)) {
       throw new Error(

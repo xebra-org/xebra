@@ -2,6 +2,7 @@ import { xebraWrapperAbi } from "@xebra/cctp-evm";
 import { XEBRA_WRAPPERS, evmChainForDomain } from "@xebra/network-config";
 import { http, type Address, createPublicClient, getAddress } from "viem";
 import type { WrapperState } from "../../../lib/evm-wrapper";
+import { logFailure } from "../../../lib/server/log";
 import { readDomain } from "../../../lib/server/routes";
 import { createTtlCache } from "../../../lib/server/ttl-cache";
 
@@ -93,7 +94,10 @@ export async function GET(request: Request): Promise<Response> {
         maxForwardFeeNewAccount: d.maxForwardFeeNewAccount.toString(),
       })),
     } satisfies WrapperState;
-  }).catch((err: unknown) => ({ error: `could not read the wrapper: ${String(err)}` }));
+  }).catch((err: unknown) => {
+    logFailure("/api/evm-wrapper", err, { chain: chain.id, src }, request);
+    return { error: "could not read the wrapper" };
+  });
 
   return Response.json(state, {
     status: "error" in state ? 502 : 200,

@@ -38,7 +38,7 @@ any URL.
    the single remaining thing nothing has exercised. It costs about 3.6 USDC for Solana (or 1 USDC to
    Arc) and is best done on the preview deployment in step 4. Skipping it is your call; it is the one
    step I would not skip.
-4. **Commit.** Vercel deploys from GitHub (`drydocs/xebra`). Nothing here has been committed, and
+4. **Commit.** Vercel deploys from GitHub (`xebra-org/xebra`). Nothing here has been committed, and
    `deployments/mainnet.json` records v2 as deployed from an uncommitted tree. Commit the branch (no
    co-author line, per your rule) before step 3.
 

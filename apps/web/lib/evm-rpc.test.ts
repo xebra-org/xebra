@@ -163,6 +163,122 @@ describe("sendTransaction", () => {
     expect(err.cause).toBe(raw);
   });
 
+  it("turns a 4900 disconnect into a sentence", async () => {
+    const raw = { code: 4900, message: "Disconnected" };
+    const w = wallet(() => {
+      throw raw;
+    });
+    const err = await sendTransaction(w, tx).catch((e) => e);
+    expect(err.message).toBe("Your wallet is disconnected from all chains.");
+    expect(err.cause).toBe(raw);
+  });
+
+  it("turns a 4901 chain disconnect into a sentence", async () => {
+    const raw = { code: 4901, message: "Chain disconnected" };
+    const w = wallet(() => {
+      throw raw;
+    });
+    const err = await sendTransaction(w, tx).catch((e) => e);
+    expect(err.message).toBe("Your wallet is disconnected from this chain.");
+    expect(err.cause).toBe(raw);
+  });
+
+  it("turns a WalletConnect 5000 rejection into a sentence", async () => {
+    const raw = { code: 5000, message: "User rejected methods" };
+    const w = wallet(() => {
+      throw raw;
+    });
+    const err = await sendTransaction(w, tx).catch((e) => e);
+    expect(err.message).toBe("You declined the request in your wallet.");
+    expect(err.cause).toBe(raw);
+  });
+
+  it("turns an error that says User denied with no code into a sentence", async () => {
+    const raw = { message: "User denied transaction signature" };
+    const w = wallet(() => {
+      throw raw;
+    });
+    const err = await sendTransaction(w, tx).catch((e) => e);
+    expect(err.message).toBe("You declined the request in your wallet.");
+    expect(err.cause).toBe(raw);
+  });
+
+  it("turns an Error instance with User denied and no code into a sentence", async () => {
+    const raw = new Error("User denied message signature");
+    const w = wallet(() => {
+      throw raw;
+    });
+    const err = await sendTransaction(w, tx).catch((e) => e);
+    expect(err.message).toBe("You declined the request in your wallet.");
+    expect(err.cause).toBe(raw);
+  });
+
+  it("unwraps a -32603 error with a nested reason in data.message", async () => {
+    const raw = {
+      code: -32603,
+      message: "Internal JSON-RPC error.",
+      data: { message: "execution reverted: transfer amount exceeds balance" },
+    };
+    const w = wallet(() => {
+      throw raw;
+    });
+    const err = await sendTransaction(w, tx).catch((e) => e);
+    expect(err.message).toBe("execution reverted: transfer amount exceeds balance");
+    expect(err.cause).toBe(raw);
+  });
+
+  it("unwraps a -32603 error with a nested reason in data.originalError", async () => {
+    const raw = {
+      code: -32603,
+      message: "Internal JSON-RPC error.",
+      data: {
+        originalError: { message: "execution reverted: TransferHelper: TRANSFER_FAILED" },
+      },
+    };
+    const w = wallet(() => {
+      throw raw;
+    });
+    const err = await sendTransaction(w, tx).catch((e) => e);
+    expect(err.message).toBe("execution reverted: TransferHelper: TRANSFER_FAILED");
+    expect(err.cause).toBe(raw);
+  });
+
+  it("unwraps a -32603 error with a string in data.originalError", async () => {
+    const raw = {
+      code: -32603,
+      message: "Internal JSON-RPC error.",
+      data: { originalError: "execution reverted: gas required exceeds allowance" },
+    };
+    const w = wallet(() => {
+      throw raw;
+    });
+    const err = await sendTransaction(w, tx).catch((e) => e);
+    expect(err.message).toBe("execution reverted: gas required exceeds allowance");
+    expect(err.cause).toBe(raw);
+  });
+
+  it("turns a -32603 error with nested User denied into the user declined sentence", async () => {
+    const raw = {
+      code: -32603,
+      message: "Internal JSON-RPC error.",
+      data: { message: "User denied transaction signature" },
+    };
+    const w = wallet(() => {
+      throw raw;
+    });
+    const err = await sendTransaction(w, tx).catch((e) => e);
+    expect(err.message).toBe("You declined the request in your wallet.");
+    expect(err.cause).toBe(raw);
+  });
+
+  it("passes on a -32603 error with no nested reason in data untouched", async () => {
+    const raw = { code: -32603, message: "Internal JSON-RPC error." };
+    const w = wallet(() => {
+      throw raw;
+    });
+    await expect(sendTransaction(w, tx)).rejects.toBe(raw);
+  });
+
   it("passes on an error it has no sentence for, untouched", async () => {
     const raw = { code: -32000, message: "insufficient funds for gas" };
     const w = wallet(() => {

@@ -89,6 +89,13 @@ const STANDARD_FINALITY_THRESHOLD = 2000;
 /** How long a signed request stays valid. The contract caps this at one hour. */
 const REQUEST_TTL_SECONDS = 600;
 
+/** Stop polling after ~30 minutes without progress. */
+const POLL_CAP_MS = 30 * 60_000;
+/** How many consecutive status poll failures before alerting the user. */
+const CONSECUTIVE_POLL_FAILURES_THRESHOLD = 5;
+/** Backoff interval when consecutive poll failures occur. */
+const POLL_BACKOFF_MS = 30_000;
+
 export function StellarBridgeForm({
   sourcePicker,
   onBusyChange,
@@ -128,6 +135,8 @@ export function StellarBridgeForm({
   const [txHash, setTxHash] = useState<string | null>(null);
   // Circle's own account of the transfer. `null` until the first answer.
   const [delivery, setDelivery] = useState<DeliveryView | null>(null);
+  const [pollError, setPollError] = useState<string | null>(null);
+  const [stalled, setStalled] = useState(false);
   // Whether Circle looks able to carry a transfer right now. `null` means not checked or the check
   // could not run — which must never block anyone.
   const [healthState, setHealthState] = useState<{
@@ -413,20 +422,50 @@ export function StellarBridgeForm({
   useEffect(() => {
     if (!txHash) {
       setDelivery(null);
+      setPollError(null);
+      setStalled(false);
       return;
     }
     let cancelled = false;
     let timer: ReturnType<typeof setTimeout>;
+    let consecutiveFailures = 0;
     const startedAt = Date.now();
 
     const poll = async () => {
       const result = await getDelivery(txHash);
       if (cancelled) return;
-      setDelivery(result);
+
+      if (result.status === "known") {
+        consecutiveFailures = 0;
+        setPollError(null);
+        setDelivery(result);
+      } else {
+        consecutiveFailures += 1;
+        if (consecutiveFailures >= CONSECUTIVE_POLL_FAILURES_THRESHOLD) {
+          setPollError("can't reach the status service");
+        }
+        setDelivery(result);
+      }
+
       const settled =
         result.status === "known" &&
         (result.state === "delivered" || result.state === "failed" || result.state === "claimable");
-      if (!settled) timer = setTimeout(poll, Date.now() - startedAt < 120_000 ? 5_000 : 15_000);
+
+      if (settled) return;
+
+      const waited = Date.now() - startedAt;
+      if (waited >= POLL_CAP_MS) {
+        setStalled(true);
+        return;
+      }
+
+      const delay =
+        consecutiveFailures >= CONSECUTIVE_POLL_FAILURES_THRESHOLD
+          ? POLL_BACKOFF_MS
+          : waited < 120_000
+            ? 5_000
+            : 15_000;
+      timer = setTimeout(poll, delay);
     };
     void poll();
 
@@ -554,6 +593,8 @@ export function StellarBridgeForm({
     setSentTo(destId);
     setSubmitError(null);
     setTxHash(null);
+    setPollError(null);
+    setStalled(false);
     try {
       // The checks the page already ran may be a minute old. Ask again now that the user has
       // committed, because this is the last moment declining costs nothing: the contract's switch
@@ -720,7 +761,10 @@ export function StellarBridgeForm({
               inputMode="decimal"
               autoComplete="off"
               value={amountInput}
-              onChange={(e) => setAmountInput(e.target.value)}
+              onChange={(e) => {
+                setAmountInput(e.target.value);
+                setSubmitError(null);
+              }}
               invalid={Boolean(amountProblem)}
               aria-invalid={amountProblem ? "true" : undefined}
               aria-describedby={amountProblem ? "amount-error" : undefined}
@@ -764,7 +808,10 @@ export function StellarBridgeForm({
             spellCheck={false}
             autoComplete="off"
             value={destination}
-            onChange={(e) => setDestination(e.target.value)}
+            onChange={(e) => {
+              setDestination(e.target.value);
+              setSubmitError(null);
+            }}
             placeholder={dest.addressPlaceholder}
             invalid={Boolean(destinationCheck.error)}
             aria-invalid={destinationCheck.error ? "true" : undefined}
@@ -854,11 +901,38 @@ export function StellarBridgeForm({
         )}
 
         {txHash ? (
-          <SubmittedNotice
-            txHash={txHash}
-            delivery={delivery}
-            destination={stellarDestination(sentTo)}
-          />
+          <>
+            <SubmittedNotice
+              txHash={txHash}
+              delivery={delivery}
+              destination={stellarDestination(sentTo)}
+            />
+            {pollError && !stalled && (
+              <Notice tone="alarm" title={pollError} className="mt-3">
+                We can&rsquo;t reach the status service right now. Your transfer is not affected;
+                check {stellarDestination(sentTo).name} for the USDC, or try again shortly.
+              </Notice>
+            )}
+            {stalled && (
+              <Notice tone="info" title="Still waiting for delivery" className="mt-3">
+                <p>
+                  {delivery?.status === "known" && delivery.state === "forwarding"
+                    ? `Circle is delivering to ${stellarDestination(sentTo).name}.`
+                    : "Waiting for Circle to attest the transfer."}
+                </p>
+                <p className="mt-1.5">
+                  You can track or complete the transfer on the{" "}
+                  <a
+                    href={`/claim?tx=${encodeURIComponent(txHash)}`}
+                    className="underline underline-offset-2 hover:text-bone"
+                  >
+                    claim page
+                  </a>
+                  .
+                </p>
+              </Notice>
+            )}
+          </>
         ) : (
           <Button
             size="lg"

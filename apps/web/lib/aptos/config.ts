@@ -94,6 +94,13 @@ export function aptosApiKey(): string | null {
   return v ? v : null;
 }
 
+/**
+ * What a route answers while its switch is off: the same answer as the Sui routes give
+ * (`lib/sui-stellar/config.ts`), a 404 that says it is a switch and is never cached.
+ */
 export function notFound(): Response {
-  return Response.json({ error: "not available" }, { status: 404 });
+  return Response.json(
+    { error: "This route is switched off on this deployment.", code: "feature_disabled" },
+    { status: 404, headers: { "cache-control": "no-store" } },
+  );
 }

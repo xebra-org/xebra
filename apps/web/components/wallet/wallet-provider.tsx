@@ -11,7 +11,7 @@ import {
   useRef,
   useState,
 } from "react";
-import { formatError, reportError } from "../../lib/format-error";
+import { reportError } from "../../lib/format-error";
 import { createStellarWalletKit, probeStellarWallet } from "../../lib/stellar-wallet";
 import {
   aptosEntries,
@@ -30,6 +30,7 @@ import {
   watchEvmWallets,
 } from "../../lib/wallets/evm";
 import {
+  broadcastSolana,
   connectSolana,
   sendSolanaTransaction,
   solanaEntries,
@@ -83,27 +84,7 @@ interface WalletContextValue {
   sendSolana: (transactionBase64: string) => Promise<string>;
 }
 
-/**
- * Broadcasts signed bytes through our RPC proxy (`/api/solana-rpc`): Solana's public RPC refuses
- * browsers. A plain fetch, so the wallet layer loads no Solana SDK.
- */
-async function broadcastSolana(signed: Uint8Array): Promise<string> {
-  let binary = "";
-  for (const b of signed) binary += String.fromCharCode(b);
-  const res = await fetch("/api/solana-rpc", {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({
-      jsonrpc: "2.0",
-      id: 1,
-      method: "sendTransaction",
-      params: [btoa(binary), { encoding: "base64", preflightCommitment: "confirmed" }],
-    }),
-  });
-  const body = (await res.json()) as { result?: string; error?: { message?: string } };
-  if (typeof body.result === "string") return body.result;
-  throw new Error(body.error?.message ?? `Solana refused the transaction (${res.status}).`);
-}
+export { broadcastSolana };
 
 export interface SuiSigner {
   wallet: SuiWalletEntry;
@@ -130,6 +111,26 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
   const [families, setFamilies] = useState<readonly Family[] | null>(null);
   const [pending, setPending] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const connectAttempt = useRef(0);
+  const connectTimeout = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const cancelConnect = useCallback(() => {
+    connectAttempt.current += 1;
+    if (connectTimeout.current) {
+      clearTimeout(connectTimeout.current);
+      connectTimeout.current = null;
+    }
+    setPending(null);
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      if (connectTimeout.current) {
+        clearTimeout(connectTimeout.current);
+        connectTimeout.current = null;
+      }
+    };
+  }, []);
   const evmCleanup = useRef<(() => void) | null>(null);
 
   // The kit touches `window` on construction, so it only exists after mount.
@@ -202,8 +203,23 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
 
   const connect = useCallback(
     async (entry: WalletEntry) => {
+      const id = ++connectAttempt.current;
+      if (connectTimeout.current) {
+        clearTimeout(connectTimeout.current);
+        connectTimeout.current = null;
+      }
       setError(null);
       setPending(entry.key);
+
+      connectTimeout.current = setTimeout(() => {
+        if (connectAttempt.current === id) {
+          connectAttempt.current += 1;
+          connectTimeout.current = null;
+          setPending(null);
+          setError("The wallet did not answer. If no window opened, allow pop-ups for this site.");
+        }
+      }, 60_000);
+
       try {
         let conn: Connection;
         if (entry.family === "stellar") {
@@ -244,11 +260,28 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
             provider.removeListener?.("chainChanged", onChain);
           };
         }
+
+        if (connectAttempt.current !== id) return;
+        if (connectTimeout.current) {
+          clearTimeout(connectTimeout.current);
+          connectTimeout.current = null;
+        }
         setConn(conn, entry.family);
       } catch (err) {
+        if (connectAttempt.current !== id) return;
+        if (connectTimeout.current) {
+          clearTimeout(connectTimeout.current);
+          connectTimeout.current = null;
+        }
         setError(reportError("wallet connect failed", err));
       } finally {
-        setPending(null);
+        if (connectAttempt.current === id) {
+          if (connectTimeout.current) {
+            clearTimeout(connectTimeout.current);
+            connectTimeout.current = null;
+          }
+          setPending(null);
+        }
       }
     },
     [kit, solWallets, suiWallets, evmMap, setConn, applyEvm],
@@ -284,11 +317,12 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
 
   const open = useCallback(
     (f?: readonly Family[]) => {
+      cancelConnect();
       setError(null);
       setFamilies(f ?? ["stellar", "solana", "evm", "sui"]);
       void refreshStellar();
     },
-    [refreshStellar],
+    [cancelConnect, refreshStellar],
   );
 
   const evmProvider = connections.evm?.provider;
@@ -333,8 +367,12 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
         pending={pending}
         error={error}
         onConnect={connect}
+        onCancel={cancelConnect}
         onDisconnect={disconnect}
-        onClose={() => setFamilies(null)}
+        onClose={() => {
+          cancelConnect();
+          setFamilies(null);
+        }}
       />
     </Ctx.Provider>
   );

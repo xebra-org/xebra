@@ -40,8 +40,104 @@ export function walletErrorCode(err: unknown): number | null {
 export const WALLET_SENTENCES: Record<number, string> = {
   4001: "You declined the request in your wallet.",
   4100: "Your wallet has not given this site access to that account.",
+  4900: "Your wallet is disconnected from all chains.",
+  4901: "Your wallet is disconnected from this chain.",
+  5000: "You declined the request in your wallet.",
   [-32002]: "Your wallet already has a request open. Finish or dismiss it there, then try again.",
 };
+
+function extractNestedReason(err: unknown): string | null {
+  if (!err || typeof err !== "object") return null;
+  const data = (err as { data?: unknown }).data;
+  if (!data) return null;
+  if (typeof data === "string" && data.trim() !== "") {
+    const trimmed = data.trim();
+    if (trimmed !== "Internal JSON-RPC error.") return trimmed;
+    return null;
+  }
+  if (typeof data === "object") {
+    const orig = (data as { originalError?: unknown }).originalError;
+    if (typeof orig === "string" && orig.trim() !== "") {
+      const trimmed = orig.trim();
+      if (trimmed !== "Internal JSON-RPC error.") return trimmed;
+    } else if (orig && typeof orig === "object") {
+      const origMsg = (orig as { message?: unknown }).message;
+      if (typeof origMsg === "string" && origMsg.trim() !== "") {
+        const trimmed = origMsg.trim();
+        if (trimmed !== "Internal JSON-RPC error.") return trimmed;
+      }
+    }
+    const msg = (data as { message?: unknown }).message;
+    if (typeof msg === "string" && msg.trim() !== "") {
+      const trimmed = msg.trim();
+      if (trimmed !== "Internal JSON-RPC error.") return trimmed;
+    }
+  }
+  return null;
+}
+
+function extractNestedCode(err: unknown): number | null {
+  if (!err || typeof err !== "object") return null;
+  const data = (err as { data?: unknown }).data;
+  if (!data || typeof data !== "object") return null;
+  const orig = (data as { originalError?: unknown }).originalError;
+  if (orig && typeof orig === "object") {
+    const c = (orig as { code?: unknown }).code;
+    if (typeof c === "number") return c;
+  }
+  const c = (data as { code?: unknown }).code;
+  if (typeof c === "number") return c;
+  return null;
+}
+
+function isUserDenied(err: unknown): boolean {
+  if (!err) return false;
+  if (typeof err === "string") return /user denied/i.test(err);
+  if (typeof err === "object") {
+    const msg = (err as { message?: unknown }).message;
+    if (typeof msg === "string" && /user denied/i.test(msg)) return true;
+    const nested = extractNestedReason(err);
+    if (nested && /user denied/i.test(nested)) return true;
+  }
+  return false;
+}
+
+/** Human-readable sentence for an EVM wallet error, if one applies. */
+export function walletSentence(err: unknown): string | null {
+  const code = walletErrorCode(err);
+
+  // For -32603, check data for a nested reason before falling back
+  if (code === -32603) {
+    const nestedCode = extractNestedCode(err);
+    if (nestedCode !== null && WALLET_SENTENCES[nestedCode]) {
+      return WALLET_SENTENCES[nestedCode];
+    }
+    const nestedReason = extractNestedReason(err);
+    if (nestedReason) {
+      if (/user denied/i.test(nestedReason)) {
+        return WALLET_SENTENCES[4001] ?? null;
+      }
+      return nestedReason;
+    }
+    return null;
+  }
+
+  if (code !== null && WALLET_SENTENCES[code]) {
+    return WALLET_SENTENCES[code];
+  }
+
+  const nestedCode = extractNestedCode(err);
+  if (nestedCode !== null && WALLET_SENTENCES[nestedCode]) {
+    return WALLET_SENTENCES[nestedCode];
+  }
+
+  // Wallets that say "User denied" with no code (or an unrecognized code)
+  if (isUserDenied(err)) {
+    return WALLET_SENTENCES[4001] ?? null;
+  }
+
+  return null;
+}
 
 export async function request(
   provider: Eip1193Provider,
@@ -51,7 +147,7 @@ export async function request(
   try {
     return await provider.request(params ? { method, params } : { method });
   } catch (err) {
-    const sentence = WALLET_SENTENCES[walletErrorCode(err) ?? 0];
+    const sentence = walletSentence(err);
     if (sentence) throw new Error(sentence, { cause: err });
     throw err;
   }

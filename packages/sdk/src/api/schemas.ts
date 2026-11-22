@@ -205,6 +205,11 @@ export const ProblemSchema = z
     title: z.string(),
     status: z.number().int(),
     detail: z.string(),
+    instance: z.string().optional().meta({
+      description:
+        "A URI for this one occurrence: `urn:xebra:request:<id>`. Quote it when you report a problem. The same id is in the `X-Request-Id` response header and in Xebra's logs.",
+      example: "urn:xebra:request:iad1::7zdhm-1700000000000-0a1b2c3d4e5f",
+    }),
     code: z.enum(ERROR_CODES as [string, ...string[]]),
     minimum: AmountOutSchema.optional(),
     maximum: AmountOutSchema.optional(),

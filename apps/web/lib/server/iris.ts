@@ -85,6 +85,26 @@ export function irisBaseUrl(): string {
   return process.env.IRIS_BASE_URL ?? "https://iris-api.circle.com";
 }
 
+/** Stellar's CCTP domain, as Circle numbers it. */
+const STELLAR_CCTP_DOMAIN = 27;
+let warnedStellarDomain = false;
+
+/**
+ * Stellar's CCTP domain: 27, unless `STELLAR_CCTP_DOMAIN_ID` names another non-negative whole
+ * number. Anything else is ignored and reported once. It used to be passed to `Number()`, so a typo
+ * became `NaN`: `readSource` then matched no source to Stellar, and every Stellar status call
+ * answered 400 "src is not a chain transfers start from", as if the caller had made the mistake.
+ * An empty value counts as unset; `Number("")` had read it as domain 0, which is Ethereum's.
+ */
 export function stellarDomainId(): number {
-  return Number(process.env.STELLAR_CCTP_DOMAIN_ID ?? "27");
+  const raw = process.env.STELLAR_CCTP_DOMAIN_ID?.trim();
+  if (!raw) return STELLAR_CCTP_DOMAIN;
+  if (/^\d+$/.test(raw) && Number.isSafeInteger(Number(raw))) return Number(raw);
+  if (!warnedStellarDomain) {
+    warnedStellarDomain = true;
+    console.error(
+      `STELLAR_CCTP_DOMAIN_ID=${JSON.stringify(raw)} is not a CCTP domain (a non-negative whole number), so Stellar's own, ${STELLAR_CCTP_DOMAIN}, is used.`,
+    );
+  }
+  return STELLAR_CCTP_DOMAIN;
 }

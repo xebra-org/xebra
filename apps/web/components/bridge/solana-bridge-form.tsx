@@ -19,6 +19,7 @@ import { type DeliveryView, getDelivery, getRouteHealth } from "../../lib/circle
 import { reportError } from "../../lib/format-error";
 import { waitForSignature } from "../../lib/solana-confirm";
 import { claimOnStellar } from "../../lib/sui-stellar/claim-client";
+import { type ClassifiedError, classifyWalletError } from "../../lib/wallet-error";
 import { Button } from "../ui/button";
 import { DataRow } from "../ui/data-row";
 import { Field, Input } from "../ui/field";
@@ -30,7 +31,7 @@ import { useWallets } from "../wallet/wallet-provider";
 import type { Chain } from "./chain-glyph";
 import { ChainPicker, PickerLabel } from "./chain-picker";
 import { EvmQuotePanel } from "./evm-quote-panel";
-import { SubmittedNotice } from "./receipt";
+import { CopyButton, SubmittedNotice } from "./receipt";
 
 /**
  * A transfer that starts on Solana: burn native USDC there with the connected Solana wallet, and
@@ -71,12 +72,14 @@ interface Remembered {
   at: number;
 }
 
-function remember(t: Remembered | null) {
+export function remember(t: Remembered | null): boolean {
   try {
     if (t) window.localStorage.setItem(STORAGE_KEY, JSON.stringify(t));
     else window.localStorage.removeItem(STORAGE_KEY);
+    return true;
   } catch {
     // Private mode or blocked storage: the transfer still works, it just cannot be resumed.
+    return false;
   }
 }
 
@@ -116,6 +119,34 @@ function proxyConnection(): Connection {
   });
 }
 
+export interface RelayerAnswer {
+  status?: string;
+  hash?: string;
+  reason?: string;
+}
+
+export function nextStellarDelivery(
+  current: Delivery,
+  answer: RelayerAnswer | null | undefined,
+): Delivery {
+  if (current.kind === "done" || current.kind === "stuck") {
+    return current;
+  }
+  if (!answer) {
+    return { kind: "idle" };
+  }
+  if (answer.status === "delivered" || (answer.status === "submitted" && Boolean(answer.hash))) {
+    return { kind: "done", hash: answer.hash ?? null };
+  }
+  if (answer.status === "refused" || answer.status === "failed") {
+    return {
+      kind: "stuck",
+      message: answer.reason ?? "The mint could not be completed.",
+    };
+  }
+  return { kind: "idle" };
+}
+
 export function SolanaBridgeForm({
   config,
   sourcePicker,
@@ -137,7 +168,7 @@ export function SolanaBridgeForm({
   const [amount, setAmount] = useState("");
   const [recipient, setRecipient] = useState("");
   const [step, setStep] = useState<"idle" | "preparing" | "signing" | "confirming">("idle");
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<ClassifiedError | null>(null);
   const [health, setHealth] = useState<CircleHealth | null>(null);
 
   // A burn on screen: its signature, where it went, when.
@@ -148,6 +179,7 @@ export function SolanaBridgeForm({
   const [recipientSeen, setRecipientSeen] = useState<string | null>(null);
   const [claiming, setClaiming] = useState(false);
   const [claimError, setClaimError] = useState<string | null>(null);
+  const [saved, setSaved] = useState(true);
 
   // A transfer this browser was following comes back on screen.
   useEffect(() => {
@@ -209,9 +241,13 @@ export function SolanaBridgeForm({
 
   // A Stellar-bound burn: ask Circle until it attests, then ask the relayer to finish the mint.
   const completing = useRef(false);
+  const stellarDeliveryRef = useRef(stellarDelivery);
+  stellarDeliveryRef.current = stellarDelivery;
+  const isStellarTerminal = stellarDelivery.kind === "done" || stellarDelivery.kind === "stuck";
+
   useEffect(() => {
     if (!sent || sent.to !== "stellar") return;
-    if (stellarDelivery.kind === "done" || stellarDelivery.kind === "stuck") return;
+    if (isStellarTerminal) return;
     let cancelled = false;
     let timer: ReturnType<typeof setTimeout>;
     const tx = sent.tx;
@@ -245,27 +281,27 @@ export function SolanaBridgeForm({
         if (state === "complete" && config.relayer && !completing.current) {
           completing.current = true;
           setStellarDelivery({ kind: "completing" });
-          const c = await fetch("/api/stellar-inbound/complete", {
-            method: "POST",
-            headers: { "content-type": "application/json" },
-            body: JSON.stringify({ src: SOLANA_DOMAIN, tx }),
-          });
-          const result = (await c.json()) as { status?: string; hash?: string; reason?: string };
-          completing.current = false;
-          if (cancelled) return;
-          if (result.status === "delivered" || (result.status === "submitted" && result.hash)) {
-            setStellarDelivery({ kind: "done", hash: result.hash ?? null });
-            remember(null);
-            return;
-          }
-          if (result.status === "refused" || result.status === "failed") {
-            setStellarDelivery({
-              kind: "stuck",
-              message: result.reason ?? "The mint could not be completed.",
+          try {
+            const c = await fetch("/api/stellar-inbound/complete", {
+              method: "POST",
+              headers: { "content-type": "application/json" },
+              body: JSON.stringify({ src: SOLANA_DOMAIN, tx }),
             });
-            return;
+            const result = (await c.json()) as RelayerAnswer;
+            const next = nextStellarDelivery(stellarDeliveryRef.current, result);
+            setStellarDelivery(next);
+            if (next.kind === "done") {
+              remember(null);
+              return;
+            }
+            if (next.kind === "stuck") {
+              return;
+            }
+          } catch {
+            setStellarDelivery({ kind: "idle" });
+          } finally {
+            completing.current = false;
           }
-          setStellarDelivery({ kind: "idle" });
         }
       } catch {
         completing.current = false;
@@ -278,7 +314,7 @@ export function SolanaBridgeForm({
       cancelled = true;
       clearTimeout(timer);
     };
-  }, [sent, stellarDelivery.kind, config.relayer]);
+  }, [sent, isStellarTerminal, config.relayer]);
 
   const units = parseAmount(amount);
   const tier = health?.tiers.standard ?? null;
@@ -352,7 +388,9 @@ export function SolanaBridgeForm({
       });
       const body = (await res.json()) as { transaction?: string; error?: string };
       if (!res.ok || !body.transaction) {
-        setError(body.error ?? "Could not prepare the transfer.");
+        const classified = classifyWalletError(body.error ?? "Could not prepare the transfer.");
+        reportError("solana prepare failed", classified.raw);
+        setError(classified);
         // A fee that moved is shown again from a fresh quote before anything is signed.
         if (res.status === 409 && chain) {
           setHealth(await getRouteHealth(SOLANA_DOMAIN, chain.cctpDomainId));
@@ -363,7 +401,8 @@ export function SolanaBridgeForm({
       const tx = await sendSolana(body.transaction);
       // Remembered before it is confirmed: a burn that lands while this tab waits must not be lost.
       const record: Remembered = { tx, to, at: Date.now() };
-      remember(record);
+      const savedOk = remember(record);
+      setSaved(savedOk);
       setStep("confirming");
       try {
         await waitForSignature(proxyConnection(), tx);
@@ -381,12 +420,9 @@ export function SolanaBridgeForm({
       setStellarDelivery({ kind: "idle" });
       setSent(record);
     } catch (err) {
-      const text = reportError("solana burn failed", err);
-      setError(
-        /blockhash/i.test(text)
-          ? "The transaction expired before it was signed: Solana transactions are good for about a minute. Nothing was burned. Send again."
-          : text,
-      );
+      const classified = classifyWalletError(err);
+      reportError("solana burn failed", classified.raw);
+      setError(classified);
     } finally {
       setStep("idle");
     }
@@ -394,6 +430,7 @@ export function SolanaBridgeForm({
 
   function startOver() {
     remember(null);
+    setSaved(true);
     completing.current = false;
     setSent(null);
     setDelivery(null);
@@ -487,12 +524,19 @@ export function SolanaBridgeForm({
               }}
             />
             <div className="flex items-center justify-between gap-3">
-              {!finished && (
-                <p className="max-w-[18rem] text-xs leading-relaxed text-bone/35">
-                  Safe to close this tab. Come back on the same browser and it picks up where it
-                  left off.
-                </p>
-              )}
+              {!finished &&
+                (saved ? (
+                  <p className="max-w-[18rem] text-xs leading-relaxed text-bone/35">
+                    Safe to close this tab. Come back on the same browser and it picks up where it
+                    left off.
+                  </p>
+                ) : (
+                  <p className="max-w-[20rem] text-xs leading-relaxed text-bone/45">
+                    This browser could not save your transfer. Keep this hash to find it again:{" "}
+                    <span className="tabular font-mono text-bone/70">{short(sent.tx)}</span>{" "}
+                    <CopyButton value={sent.tx} label="transaction hash" />
+                  </p>
+                ))}
               <Button
                 variant={finished ? "primary" : "quiet"}
                 size="sm"
@@ -591,7 +635,10 @@ export function SolanaBridgeForm({
               autoComplete="off"
               spellCheck={false}
               value={amount}
-              onChange={(e) => setAmount(e.target.value)}
+              onChange={(e) => {
+                setAmount(e.target.value);
+                setError(null);
+              }}
               placeholder="0.00"
               className="tabular h-12 text-base"
               invalid={amountError !== null}
@@ -613,7 +660,10 @@ export function SolanaBridgeForm({
               autoComplete="off"
               spellCheck={false}
               value={recipient}
-              onChange={(e) => setRecipient(e.target.value)}
+              onChange={(e) => {
+                setRecipient(e.target.value);
+                setError(null);
+              }}
               placeholder={to === "stellar" ? "G..." : "0x…"}
               className="h-12 font-mono text-xs"
               invalid={recipientError !== null}
@@ -658,11 +708,20 @@ export function SolanaBridgeForm({
             </InsetTray>
           )}
 
-          {error && (
-            <Notice tone="alarm" title="Could not send">
-              {error}
-            </Notice>
-          )}
+          {error &&
+            (error.kind === "declined" || error.kind === "popup" ? (
+              <Notice tone="info" title="Wallet request cancelled">
+                You cancelled in your wallet. Nothing was sent.
+              </Notice>
+            ) : error.maybeSent ? (
+              <Notice tone="alarm" title="Could not confirm transfer">
+                {error.message}
+              </Notice>
+            ) : (
+              <Notice tone="alarm" title="Could not send">
+                {error.message}
+              </Notice>
+            ))}
 
           <Button
             size="lg"

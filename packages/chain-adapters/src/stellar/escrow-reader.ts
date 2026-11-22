@@ -60,7 +60,12 @@ const STATUSES: readonly EscrowStatus[] = [
   "Refunded",
 ];
 
-export class EscrowReadError extends Error {}
+export class EscrowReadError extends Error {
+  constructor(message: string, options?: { cause?: unknown }) {
+    super(message, options);
+    this.name = "EscrowReadError";
+  }
+}
 
 /**
  * Returns the escrow for `intentHash` (0x-prefixed or bare 32-byte hex), or `null` when the
@@ -99,6 +104,7 @@ export async function readEscrow(
       throw new EscrowReadError(
         "get_escrow came back in a form this stellar-sdk cannot decode, which on testnet meant the " +
           "escrow's ledger entry had expired and needs restoring",
+        { cause: err },
       );
     }
     throw err;

@@ -51,6 +51,8 @@ export function EvmClaim({
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [hash, setHash] = useState<string | null>(null);
+  const [sent, setSent] = useState<string | null>(null);
+  const [confirming, setConfirming] = useState(false);
   const [alreadyMinted, setAlreadyMinted] = useState(false);
   const [expired, setExpired] = useState(false);
   const [refreshed, setRefreshed] = useState(false);
@@ -58,6 +60,8 @@ export function EvmClaim({
   async function claim() {
     if (!provider || !wallet) return;
     setError(null);
+    setSent(null);
+    setConfirming(false);
     try {
       // First, always. Circle's transmitter has the same address on every chain, so every question
       // below would be answered, wrongly, by whichever chain the wallet happened to be on.
@@ -81,12 +85,22 @@ export function EvmClaim({
       }
 
       setBusy("Confirm in your wallet…");
-      const sent = await sendClaim(provider, target, wallet, message, attestation);
+      const sentHash = await sendClaim(provider, target, wallet, message, attestation);
+      setSent(sentHash);
 
       setBusy(`Waiting for ${target.name}…`);
-      const outcome = await waitForClaim(provider, sent);
-      if (outcome !== "success") throw new Error(`the transaction ${sent} reverted on chain`);
-      setHash(sent);
+      try {
+        const outcome = await waitForClaim(provider, sentHash);
+        if (outcome !== "success") throw new Error(`the transaction ${sentHash} reverted on chain`);
+        setHash(sentHash);
+      } catch (waitErr) {
+        const message = waitErr instanceof Error ? waitErr.message : String(waitErr);
+        if (/no receipt|timeout/i.test(message)) {
+          setConfirming(true);
+        } else {
+          throw waitErr;
+        }
+      }
     } catch (err) {
       setError(reportError("claim failed", err));
     } finally {
@@ -127,6 +141,22 @@ export function EvmClaim({
           target="_blank"
           rel="noreferrer"
           className="mt-2 inline-block text-[0.8125rem] text-signal underline underline-offset-2"
+        >
+          View on the {target.name} explorer
+        </a>
+      </Notice>
+    );
+  }
+
+  if (confirming && sent) {
+    return (
+      <Notice tone="info" title="Your claim was sent and is still confirming">
+        <p className="break-all font-mono text-[0.75rem] text-bone/60">{sent}</p>
+        <a
+          href={`${target.explorerUrl}/tx/${sent}`}
+          target="_blank"
+          rel="noreferrer"
+          className="mt-2 inline-block text-[0.8125rem] text-bone/70 underline underline-offset-2 hover:text-bone"
         >
           View on the {target.name} explorer
         </a>

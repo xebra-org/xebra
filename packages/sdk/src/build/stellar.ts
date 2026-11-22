@@ -6,6 +6,7 @@ import {
   TransactionBuilder,
   nativeToScVal,
 } from "@stellar/stellar-sdk";
+import { XebraError } from "../errors.js";
 import type { TransferStep } from "./types.js";
 
 /**
@@ -126,14 +127,90 @@ export interface StellarBridgeInput {
   ttlSeconds: number;
 }
 
+/** Known error numbers from the wrapper contract (contracts/stellar-cctp-wrapper-v2/src/lib.rs). */
+export const WRAPPER_ERRORS: Record<number, string> = {
+  1: "NotAuthorized",
+  2: "Paused",
+  3: "NotPaused",
+  4: "Reentrancy",
+  5: "RequestExpired",
+  6: "DeadlineTooFar",
+  7: "DomainNotAllowed",
+  8: "MintRecipientZero",
+  9: "MintRecipientShape",
+  10: "BadFinalityThreshold",
+  11: "AmountNotPositive",
+  12: "AmountBelowMin",
+  13: "AmountAboveMax",
+  14: "AmountBelowFee",
+  15: "NetTooSmall",
+  16: "MaxFeeNegative",
+  17: "MaxFeeExceedsNet",
+  18: "MaxFeeTooHigh",
+  19: "WrapperFeeAboveUserCap",
+  20: "FeeBpsTooHigh",
+  21: "MinFeeTooHigh",
+  22: "MinTransferTooLow",
+  23: "MaxTransferTooHigh",
+  24: "CctpFeeBpsTooHigh",
+  25: "BadTransferRange",
+  26: "MathOverflow",
+  27: "InvariantViolated",
+  28: "NothingPending",
+  29: "TimelockNotElapsed",
+  30: "InsufficientAccruedFees",
+  31: "NotTightening",
+  32: "DomainAlreadyAllowed",
+  34: "SelfDomain",
+  35: "AlreadyInitialized",
+  36: "ApprovalExpiryPast",
+  37: "ApprovalExpiryTooFar",
+  38: "AccountFeeTooHigh",
+  39: "ForwardFeeZero",
+  40: "ForwardFeeAboveCap",
+  41: "ForwardFeeTooHigh",
+  42: "BadForwardConfig",
+  43: "RecipientOwnerMissing",
+  44: "RecipientOwnerUnexpected",
+  45: "MintRecipientIsOwner",
+};
+
 /**
  * The contract (or the SAC) refused the call when it was simulated: a real rejection, as opposed to
- * the RPC being unreachable. Carries the RPC's message.
+ * the RPC being unreachable. Carries the RPC's message, original cause, and parsed contract error.
  */
 export class StellarSimulationError extends Error {
-  constructor(message: string) {
-    super(message);
+  readonly contractCode?: number | undefined;
+  readonly contractError?: string | undefined;
+
+  constructor(
+    message: string,
+    options?: {
+      cause?: unknown;
+      contractCode?: number | undefined;
+      contractError?: string | undefined;
+    },
+  ) {
+    super(message, { cause: options?.cause });
     this.name = "StellarSimulationError";
+    this.contractCode = options?.contractCode;
+    this.contractError = options?.contractError;
+  }
+}
+
+/**
+ * An error the builder rejects before submission: an API-style `code` and, when one input is at
+ * fault, its `field`. A `XebraError`, so callers can match every SDK error the same way.
+ */
+export class StellarBuildError extends XebraError {
+  readonly field?: string;
+
+  constructor(code: string, message: string, field?: string) {
+    super(code, message);
+    this.name = "StellarBuildError";
+    if (field !== undefined) {
+      this.field = field;
+    }
   }
 }
 
@@ -162,8 +239,48 @@ export async function buildStellarBridge(
   p: StellarBridgeInput,
   now: number = Date.now(),
 ): Promise<TransferStep> {
+  if (p.amount <= 0n) {
+    throw new StellarBuildError("invalid_amount", "amount must be greater than zero", "amount");
+  }
+  if (p.ttlSeconds <= 0 || p.ttlSeconds > 3600) {
+    throw new StellarBuildError(
+      "invalid_request",
+      "ttlSeconds must be between 1 and 3600",
+      "ttlSeconds",
+    );
+  }
+  if (p.mintRecipient.length !== 32) {
+    throw new StellarBuildError(
+      "invalid_request",
+      "mintRecipient must be 32 bytes",
+      "mintRecipient",
+    );
+  }
+  if (p.recipientOwner && p.recipientOwner.length !== 32) {
+    throw new StellarBuildError(
+      "invalid_request",
+      "recipientOwner must be 32 bytes",
+      "recipientOwner",
+    );
+  }
+
   const contract = new Contract(cfg.wrapperContractId);
-  const account = await server.getAccount(p.user);
+  let account: Account;
+  try {
+    account = await server.getAccount(p.user);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    const status =
+      (err as { status?: number })?.status ??
+      (err as { response?: { status?: number } })?.response?.status;
+    if (/account not found/i.test(message) || status === 404) {
+      throw new StellarBuildError(
+        "account_not_found",
+        "This Stellar account does not exist yet. Fund it with XLM first.",
+      );
+    }
+    throw err;
+  }
   const deadline = BigInt(Math.floor(now / 1000) + p.ttlSeconds);
 
   // The ledger at which the one-shot allowance to Circle's TokenMessenger expires, sent as
@@ -210,7 +327,12 @@ export async function buildStellarBridge(
     // prepareTransaction throws for a failed simulation and for a failed request alike; only the
     // first is the contract saying no.
     const message = err instanceof Error ? err.message : String(err);
-    if (/HostError|Error\(|simulat/i.test(message)) throw new StellarSimulationError(message);
+    if (/HostError|Error\(|simulat/i.test(message)) {
+      const match = /Error\(Contract,\s*#(\d+)\)/.exec(message);
+      const contractCode = match?.[1] ? Number.parseInt(match[1], 10) : undefined;
+      const contractError = contractCode !== undefined ? WRAPPER_ERRORS[contractCode] : undefined;
+      throw new StellarSimulationError(message, { cause: err, contractCode, contractError });
+    }
     throw err;
   }
   const maxTime = Number(prepared.timeBounds?.maxTime ?? 0);

@@ -73,13 +73,31 @@ Server environment (Vercel, read at request time, not build inputs):
 |---|---|
 | `SUI_STELLAR_ENABLED` | `true` to serve `/sui` and its routes. Anything else: 404. |
 | `SUI_STELLAR_RELAYER_SECRET` | Funded mainnet Stellar secret that pays the fee (about 0.02 XLM per completion). Unset: users can burn but nothing completes it. Use a dedicated account holding a small float. |
-| `SUI_STELLAR_MAX_USDC` | Optional per-transfer cap in USDC. Unset means no cap (it was 10 until 2026-11-08). |
+| `SUI_STELLAR_MAX_USDC` | Optional per-transfer cap in USDC, written as plain digits with at most six decimals (`250`, `0.5`). Unset means no cap (it was 10 until 2026-11-08). A value that cannot be read as a positive amount (`1,000`, `$500`, `0`) refuses every transfer and is logged once; it used to mean no cap. |
 | `SUI_RPC_URL` | Sui fullnode, default Mysten's public mainnet node. |
 | `SUI_SENDS_TO_EVM` | EVM chains Sui also sends to: a comma list of chain ids (e.g. `monad,base`), `all` for every chain in the EVM table (Arc included), or `none`. Unset means `monad`. Unknown names are ignored. Only while `SUI_STELLAR_ENABLED=true`. |
 | `SUI_SENDS_TO_SOLANA` | `true` to let Sui send to Solana as well (Circle's Forwarding Service, into the recipient's USDC account). Off unless set. Only while `SUI_STELLAR_ENABLED=true`. |
 
 On the main bridge screen, Sui appears in the "Send from" picker when `SUI_STELLAR_ENABLED=true`
 (`/api/sui-stellar/config` tells the page). It is the same transfer as `/sui`, embedded in the plate.
+
+**A relayer secret that is not a secret seed counts as unset.** `SUI_STELLAR_RELAYER_SECRET` has to be a Stellar secret
+seed (`S...`, 56 characters). With a typo in it, or a public key pasted by mistake, the page is told there is no relayer and
+completion answers 404 with `code: "feature_disabled"`, exactly as when the variable is missing, and the server logs the
+problem once, never the value. Before, such a value left the config route saying `relayer: true` while every completion
+failed and asked to be retried.
+
+**What the completion routes answer.** `POST /api/sui-stellar/complete` and `POST /api/stellar-inbound/complete` share one
+table. The body's `status` is what the pages read; the HTTP status says the same thing to a caller that reads nothing else.
+
+| HTTP | Body `status` | Meaning |
+| --- | --- | --- |
+| 200 | `delivered`, `submitted` | The mint is on Stellar, or sent and on its way. |
+| 202 | `pending`, `unknown` | Nothing to show yet: Circle has not attested or indexed the burn, or a completion is already under way. Ask again. |
+| 404 | none (`code: "feature_disabled"`) | No relayer on this deployment, or the Sui page is off. It was a 503 without `Retry-After`, which read as an outage. |
+| 422 | `refused` | This burn cannot be completed as it stands; `reason` says why. |
+| 502 | `failed` | The mint was sent and did not land, or something failed that has no better name. |
+| 503 + `Retry-After` | `pending` | Stellar declined to queue the mint, or our calls to Circle are paused (our own rate budget, or a 429 from Circle). It used to be a 502 with `status: "failed"` when Circle was the cause, which made the pages show the transfer as stuck. |
 
 **Claiming without a relayer.** Once Circle has attested a burn, the page offers "Claim on Stellar": the server prepares the
 `mint_and_forward` call with the user's own Stellar wallet as the source (`POST /api/sui-stellar/claim`), the wallet signs,

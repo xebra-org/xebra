@@ -13,6 +13,8 @@ Nothing answers at this path. On `api.xebra.exchange`, everything lives under `/
 
 Check the path against the [API reference](/docs/api).
 
+Before waiting, confirm the burn succeeded on the source chain (check the transaction on the source chain's [block explorer](https://stellar.expert/explorer/public)). A hash Circle has never seen stays `pending`; it is not a 404.
+
 ## Example
 
 ```json
@@ -20,7 +22,7 @@ Check the path against the [API reference](/docs/api).
   "type": "https://docs.xebra.exchange/errors/not_found",
   "title": "Not found",
   "status": 404,
-  "detail": "…",
+  "detail": "The API has no such endpoint. See https://docs.xebra.exchange/api.",
   "code": "not_found"
 }
 ```

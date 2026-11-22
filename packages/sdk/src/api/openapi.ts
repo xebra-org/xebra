@@ -31,6 +31,21 @@ const problem = (description: string) => ({
   content: { "application/problem+json": { schema: ProblemSchema } },
 });
 
+// The 503 problem. The server sends `Retry-After` (seconds) on every one.
+const unavailable = (description: string) => ({
+  ...problem(description),
+  headers: {
+    "Retry-After": {
+      description: "Seconds to wait before asking again.",
+      schema: { type: "integer" as const, example: 10 },
+    },
+  },
+});
+
+const INTERNAL_ERROR = problem(
+  "Something failed on Xebra's side (`internal_error`). Nothing was decided; ask again.",
+);
+
 const json = (description: string, schema: ZodType) => ({
   description,
   content: { "application/json": { schema } },
@@ -42,7 +57,10 @@ const COMMON: ZodOpenApiResponsesObject = {
     "The request is malformed: a missing or unknown field, or a value of the wrong shape.",
   ),
   "429": problem("Too many requests. Wait for `Retry-After` seconds."),
-  "503": problem("Circle or a chain could not be read just now. Nothing was decided; ask again."),
+  "500": INTERNAL_ERROR,
+  "503": unavailable(
+    "Circle or a chain could not be read just now (`upstream_unavailable`). Nothing was decided; ask again after `Retry-After` seconds.",
+  ),
 };
 
 /**
@@ -92,7 +110,9 @@ export function buildOpenApiDocument(): OpenApiDocument {
           requestParams: { query: QuoteRequestSchema },
           responses: {
             "200": json("The price.", QuoteSchema),
-            "422": problem("The route is not offered, or the amount is outside its bounds."),
+            "422": problem(
+              "The quote is refused; `code` says why: `route_unavailable` (the route is not offered), `invalid_amount`, `invalid_recipient`, `amount_below_minimum` or `amount_above_maximum`.",
+            ),
             ...COMMON,
           },
         },
@@ -118,7 +138,13 @@ export function buildOpenApiDocument(): OpenApiDocument {
           tags: ["Transfers"],
           summary: "A transfer's status",
           requestParams: { path: TransferPathSchema },
-          responses: { "200": json("Where the transfer is.", TransferStatusSchema), ...COMMON },
+          responses: {
+            "200": json("Where the transfer is.", TransferStatusSchema),
+            "422": problem(
+              "The transfer cannot be tracked on this chain (`route_unavailable`, for example Sui and Aptos).",
+            ),
+            ...COMMON,
+          },
         },
       },
       "/v1/claims": {
@@ -142,7 +168,10 @@ export function buildOpenApiDocument(): OpenApiDocument {
           operationId: "getHealth",
           tags: ["System"],
           summary: "Liveness",
-          responses: { "200": json("The API is up.", HealthSchema) },
+          responses: {
+            "200": json("The API is up.", HealthSchema),
+            "500": INTERNAL_ERROR,
+          },
         },
       },
     },

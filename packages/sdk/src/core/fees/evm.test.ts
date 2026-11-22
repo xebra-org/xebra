@@ -1,8 +1,10 @@
 import { describe, expect, it } from "vitest";
+import { formatUsdc6 } from "../amounts.js";
 import {
   type FeeTier,
   type WrapperTerms,
   minimumEvmAmount,
+  minimumWrapperAmount,
   planEvmFee,
   planWrapperFee,
   speedFeeFor,
@@ -204,6 +206,19 @@ describe("planWrapperFee", () => {
     const named = BigInt(Math.round(Number(figure) * 1e6));
     expect(named).toBeGreaterThan(0n);
     expect(plan(named, 54_099).ok).toBe(true);
+  });
+
+  it("names the minimum minimumWrapperAmount finds, and nothing below it fits", () => {
+    for (const high of [54_099, 280_000]) {
+      const min = minimumWrapperAmount(standard(high), terms);
+      expect(min).toBeGreaterThanOrEqual(terms.minTransfer);
+      expect(plan(min, high).ok).toBe(true);
+      expect(plan(min - 1n, high)).toMatchObject({ ok: false, kind: "minimum" });
+      const shown = suggestedEvmMinimum(min);
+      expect((plan(min - 1n, high) as { reason: string }).reason).toContain(
+        `least ${formatUsdc6(shown)} USDC`,
+      );
+    }
   });
 
   it("allows Fast its speed fee on top of the destination's cap", () => {

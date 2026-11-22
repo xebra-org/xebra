@@ -17,14 +17,6 @@ Wait for the number of seconds in the `Retry-After` header, then ask again. The 
 
 ## Example
 
-```json
-{
-  "type": "https://docs.xebra.exchange/errors/rate_limited",
-  "title": "Rate limited",
-  "status": 429,
-  "detail": "…",
-  "code": "rate_limited"
-}
-```
-
-Every error has this shape. See [Errors](/docs/errors) for how to handle them.
+The API does not return `rate_limited` today: no limits are enforced yet, so there is no real
+response to show. When limits arrive, it will have the same shape as every other error. See
+[Errors](/docs/errors) for that shape and how to handle errors.

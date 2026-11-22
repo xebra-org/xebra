@@ -29,17 +29,22 @@ export function Notice({
   title,
   children,
   className,
+  live,
 }: {
   tone?: Tone;
   title: string;
   children?: React.ReactNode;
   className?: string;
+  live?: "polite" | "assertive";
 }) {
   const styles = TONES[tone];
   const Icon = ICONS[tone];
+  const role = tone === "alarm" ? "alert" : live ? "status" : undefined;
+  const ariaLive = live ?? (tone === "alarm" ? "assertive" : undefined);
   return (
     <div
-      role={tone === "alarm" ? "alert" : undefined}
+      role={role}
+      aria-live={ariaLive}
       className={cn("rounded-tray px-4 py-4 ring-1 ring-inset", styles.shell, className)}
     >
       <div className="flex items-center gap-2.5">

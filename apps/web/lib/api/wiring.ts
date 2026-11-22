@@ -214,10 +214,13 @@ export const liveDeps: Deps = {
       const prep = await prepareClaim(connection, input);
       if (prep.status === "already-minted") return { state: "delivered" };
       if (prep.status === "needs-owner") return { state: "needs-owner", reason: prep.reason };
+      if (prep.setup) {
+        return { state: "ready", setup: unsigned(prep.setup), mint: null };
+      }
       const mint = await buildMintTransaction(connection, input);
       return {
         state: "ready",
-        setup: prep.setup ? unsigned(prep.setup) : null,
+        setup: null,
         mint: unsigned(mint),
       };
     },

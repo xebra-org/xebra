@@ -1,3 +1,4 @@
+import { OneClickError } from "../../../lib/near-intents/oneclick";
 import type { PlanRequest } from "../../../lib/near-intents/plan";
 
 /**
@@ -29,6 +30,30 @@ export async function readPlanRequest(req: Request): Promise<PlanRequest | Respo
   };
 }
 
-export function failure(err: unknown, status = 422): Response {
-  return Response.json({ error: err instanceof Error ? err.message : String(err) }, { status });
+function isTimeout(err: unknown): boolean {
+  if (err instanceof Error) {
+    if (err.name === "TimeoutError") return true;
+    if (/timeout/i.test(err.message)) return true;
+  }
+  if (typeof DOMException !== "undefined" && err instanceof DOMException) {
+    if (err.name === "TimeoutError") return true;
+  }
+  return false;
+}
+
+export function failure(err: unknown, _status?: number): Response {
+  if (err instanceof OneClickError) {
+    const status = err.status >= 500 ? 502 : 422;
+    return Response.json({ error: err.message }, { status });
+  }
+
+  if (isTimeout(err)) {
+    return Response.json(
+      { error: err instanceof Error ? err.message : "The operation was aborted due to timeout" },
+      { status: 504 },
+    );
+  }
+
+  console.error("near intents failed", err);
+  return Response.json({ error: "An unexpected error occurred." }, { status: 500 });
 }

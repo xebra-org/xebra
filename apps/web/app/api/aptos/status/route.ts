@@ -35,11 +35,13 @@ export async function GET(request: Request): Promise<Response> {
       const mint = await mintState(att, burn.recipient);
       return Response.json({
         state: "complete",
+        mint,
         delivered: mint === "delivered",
         recipient: burn.recipient,
         amount: formatUsdcAmount(burn.amount),
       });
     } catch (err) {
+      console.error("aptos status mint check failed", err);
       // Attested, but not a transfer the Stellar side would complete (another destination).
       return Response.json({
         state: "complete",
@@ -47,7 +49,8 @@ export async function GET(request: Request): Promise<Response> {
         refusal: err instanceof Error ? err.message : "invalid message",
       });
     }
-  } catch {
+  } catch (err) {
+    console.error("aptos status check failed", err);
     return Response.json({ state: "unknown", reason: "Circle did not answer" }, { status: 502 });
   }
 }

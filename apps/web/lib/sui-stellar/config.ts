@@ -4,7 +4,8 @@
  *
  *  - `SUI_STELLAR_ENABLED=true`  the page and its routes answer; anything else and they 404.
  *  - `SUI_STELLAR_MAX_USDC`      optional per-transfer cap enforced when the burn is built.
- *                                 Unset (the default) means no cap.
+ *                                 Unset (the default) means no cap. A value that cannot be read
+ *                                 refuses every transfer; it does not lift the limit.
  *  - `SUI_STELLAR_RELAYER_SECRET` the funded Stellar account that pays the fee to complete a burn.
  *                                 Without it the page still builds burns, but nothing completes them.
  *  - `SUI_RPC_URL`               Sui fullnode (gRPC-web). Defaults to Mysten's public mainnet node.
@@ -20,6 +21,7 @@
  * the whole Sui page.
  */
 import { EVM_CHAINS, type EvmChain, isEvmChainId } from "@xebra/sdk/core";
+import { parseCap } from "../server/parse-cap";
 
 /** Sui's CCTP domain. Here rather than in `cctp.ts` so that reading it does not load the Stellar SDK. */
 export const SUI_CCTP_DOMAIN = 8;
@@ -31,26 +33,90 @@ export function suiStellarEnabled(): boolean {
   return process.env.SUI_STELLAR_ENABLED === "true";
 }
 
-/** The per-transfer cap in USDC base units, or null for no cap (the default). */
+/**
+ * The per-transfer cap in USDC base units, or null for no cap (the default). A value that is set
+ * and cannot be read is a cap of zero: see `parseCap`.
+ */
 export function maxUsdcBase(): bigint | null {
-  const raw = process.env.SUI_STELLAR_MAX_USDC?.trim();
-  if (!raw) return null;
-  const usdc = Number(raw);
-  if (!Number.isFinite(usdc) || usdc <= 0) return null;
-  return BigInt(Math.round(usdc * 1_000_000));
+  return parseCap("SUI_STELLAR_MAX_USDC", process.env.SUI_STELLAR_MAX_USDC);
 }
 
+/**
+ * The relayer's secret seed, or null when completion is off: unset, or set to something that is not
+ * a Stellar secret seed. A typo used to be passed through, so the config routes said `relayer: true`
+ * and every completion then failed in `Keypair.fromSecret` with "It is safe to try again".
+ */
 export function relayerSecret(): string | null {
   const v = process.env.SUI_STELLAR_RELAYER_SECRET?.trim();
-  return v ? v : null;
+  if (!v) return null;
+  if (isSecretSeed(v)) return v;
+  warnUnusableRelayerSecret(v);
+  return null;
+}
+
+const BASE32 = "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567";
+/** The version byte of a secret seed, which is what makes its StrKey start with `S`. */
+const SECRET_SEED_VERSION = 18 << 3;
+
+/**
+ * What `StrKey.isValidEd25519SecretSeed` answers, written out so that reading a switch here still
+ * does not load the Stellar SDK. A seed is 56 base32 characters, which is exactly 35 bytes: the
+ * version byte, the 32-byte seed, and a CRC16-XModem of those 33, low byte first.
+ */
+function isSecretSeed(value: string): boolean {
+  if (!/^S[A-Z2-7]{55}$/.test(value)) return false;
+  const bytes: number[] = [];
+  let pending = 0;
+  let bits = 0;
+  for (const ch of value) {
+    pending = (pending << 5) | BASE32.indexOf(ch);
+    bits += 5;
+    if (bits >= 8) {
+      bits -= 8;
+      bytes.push(pending >> bits);
+      pending &= (1 << bits) - 1;
+    }
+  }
+  let crc = 0;
+  for (const byte of bytes.slice(0, 33)) {
+    crc ^= byte << 8;
+    for (let i = 0; i < 8; i++) crc = (crc & 0x8000 ? (crc << 1) ^ 0x1021 : crc << 1) & 0xffff;
+  }
+  const [low, high] = bytes.slice(33);
+  return bytes[0] === SECRET_SEED_VERSION && low === (crc & 0xff) && high === crc >> 8;
+}
+
+let warnedRelayerSecret = false;
+
+/**
+ * Says once per server instance that the secret cannot be used. Never the value: a seed with one
+ * wrong character is most of a real one.
+ */
+function warnUnusableRelayerSecret(value: string): void {
+  if (warnedRelayerSecret) return;
+  warnedRelayerSecret = true;
+  const hint = /^G[A-Z2-7]{55}$/.test(value)
+    ? " It looks like a public key (G...); the relayer needs the account's secret seed (S...)."
+    : "";
+  console.error(
+    `SUI_STELLAR_RELAYER_SECRET is set but is not a Stellar secret seed, so completion is off.${hint} The value is not logged.`,
+  );
 }
 
 export function suiRpcUrl(): string {
   return process.env.SUI_RPC_URL?.trim() || "https://fullnode.mainnet.sui.io:443";
 }
 
+/**
+ * What a route answers while its switch is off. Still a 404, so a client that only checks the status
+ * carries on as before, but the body says this is a switch and not a mistyped URL, and `no-store`
+ * keeps a CDN or a browser from serving the refusal after the switch is turned on.
+ */
 export function notFound(): Response {
-  return Response.json({ error: "not available" }, { status: 404 });
+  return Response.json(
+    { error: "This route is switched off on this deployment.", code: "feature_disabled" },
+    { status: 404, headers: { "cache-control": "no-store" } },
+  );
 }
 
 /**

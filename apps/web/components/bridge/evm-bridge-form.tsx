@@ -28,6 +28,7 @@ import { env } from "../../lib/env";
 import {
   ARC_GAS_RESERVE_UNITS,
   EVM_STEP_LABEL,
+  EvmBurnUncertainError,
   getUsdcBalance6,
   spendableUsdc,
   submitEvmBridge,
@@ -43,6 +44,7 @@ import {
   routeDestination,
 } from "../../lib/route-destination";
 import { type RecipientResolution, resolveRecipient } from "../../lib/solana-recipient";
+import { type ClassifiedError, classifyWalletError } from "../../lib/wallet-error";
 import { Button } from "../ui/button";
 import { Field, Input } from "../ui/field";
 import { ArrowRight } from "../ui/icons";
@@ -90,6 +92,15 @@ import { useBeneficiaries } from "./use-beneficiaries";
  * yet", and sending someone to pay gas for a mint Circle is about to do would be the wrong advice.
  */
 const CLAIM_GRACE_MS = 10 * 60_000;
+
+/** Stop polling after ~30 minutes without progress. */
+const POLL_CAP_MS = 30 * 60_000;
+
+/** How many consecutive status poll failures before alerting the user. */
+const CONSECUTIVE_POLL_FAILURES_THRESHOLD = 5;
+
+/** Backoff interval when consecutive poll failures occur. */
+const POLL_BACKOFF_MS = 30_000;
 
 /** The speed a route actually has: Fast only where the chain offers it and Circle is quoting it. */
 function tierFor(health: CircleHealth | null, source: EvmChain, speed: Speed): FeeTier | null {
@@ -167,12 +178,14 @@ export function EvmBridgeForm({
   const [submitting, setSubmitting] = useState(false);
   const [switching, setSwitching] = useState(false);
   const [step, setStep] = useState<string | null>(null);
-  const [submitError, setSubmitError] = useState<string | null>(null);
+  const [submitError, setSubmitError] = useState<ClassifiedError | null>(null);
   const [txHash, setTxHash] = useState<string | null>(null);
   // What the receipt describes, fixed at signing so nothing chosen afterwards can rewrite it.
   const [sent, setSent] = useState<Sent | null>(null);
   const [reverted, setReverted] = useState(false);
   const [delivery, setDelivery] = useState<DeliveryView | null>(null);
+  const [pollError, setPollError] = useState<string | null>(null);
+  const [stalled, setStalled] = useState(false);
 
   const busy = submitting || Boolean(txHash);
   useEffect(() => {
@@ -363,22 +376,51 @@ export function EvmBridgeForm({
   useEffect(() => {
     if (!txHash || !sent || reverted) {
       setDelivery(null);
+      setPollError(null);
+      setStalled(false);
       return;
     }
     let cancelled = false;
     let timer: ReturnType<typeof setTimeout>;
+    let consecutiveFailures = 0;
 
     const poll = async () => {
       const result = await getDelivery(txHash, source.cctpDomainId);
       if (cancelled) return;
-      setDelivery(result);
+
+      if (result.status === "known") {
+        consecutiveFailures = 0;
+        setPollError(null);
+        setDelivery(result);
+      } else {
+        consecutiveFailures += 1;
+        if (consecutiveFailures >= CONSECUTIVE_POLL_FAILURES_THRESHOLD) {
+          setPollError("can't reach the status service");
+        }
+        setDelivery(result);
+      }
+
       const waited = Date.now() - sent.at;
       const settled =
         result.status === "known" &&
         (result.state === "delivered" ||
           result.state === "failed" ||
           (result.state === "claimable" && waited >= CLAIM_GRACE_MS));
-      if (!settled) timer = setTimeout(poll, waited < 120_000 ? 5_000 : 15_000);
+
+      if (settled) return;
+
+      if (waited >= POLL_CAP_MS) {
+        setStalled(true);
+        return;
+      }
+
+      const delay =
+        consecutiveFailures >= CONSECUTIVE_POLL_FAILURES_THRESHOLD
+          ? POLL_BACKOFF_MS
+          : waited < 120_000
+            ? 5_000
+            : 15_000;
+      timer = setTimeout(poll, delay);
     };
     void poll();
 
@@ -417,7 +459,9 @@ export function EvmBridgeForm({
     try {
       await ensureChain(provider, source);
     } catch (err) {
-      setSubmitError(reportError("network switch failed", err));
+      const classified = classifyWalletError(err);
+      reportError("network switch failed", classified.raw);
+      setSubmitError(classified);
     } finally {
       // Asked whatever happened: a wallet that switched without announcing it is still on the
       // right chain, and one that announced without switching is not.
@@ -488,7 +532,7 @@ export function EvmBridgeForm({
       // committed, because this is the last moment declining costs nothing.
       const priced = await priceNow();
       if (typeof priced === "string") {
-        setSubmitError(`${priced} Nothing was sent.`);
+        setSubmitError(classifyWalletError(`${priced} Nothing was sent.`));
         return;
       }
       // Circle's fee drifts by a few percent over minutes. If the total went up, stop and show it
@@ -496,7 +540,9 @@ export function EvmBridgeForm({
       // often absorbed by Xebra's own fee, and then the total, which is what the user saw, holds.
       if (priced.fee > plan.fee) {
         setSubmitError(
-          `The fee moved while you were reviewing: it is now ${formatUsdc6(priced.fee)} USDC, was ${formatUsdc6(plan.fee)}. Nothing was sent. Check the new total and confirm again.`,
+          classifyWalletError(
+            `The fee moved while you were reviewing: it is now ${formatUsdc6(priced.fee)} USDC, was ${formatUsdc6(plan.fee)}. Nothing was sent. Check the new total and confirm again.`,
+          ),
         );
         return;
       }
@@ -542,7 +588,17 @@ export function EvmBridgeForm({
         })
         .catch(() => undefined);
     } catch (err) {
-      setSubmitError(reportError("transfer failed", err));
+      const classified: ClassifiedError =
+        err instanceof EvmBurnUncertainError
+          ? {
+              kind: "network",
+              message: err.message,
+              maybeSent: true,
+              raw: formatError(err.cause ?? err),
+            }
+          : classifyWalletError(err);
+      reportError("transfer failed", classified.raw);
+      setSubmitError(classified);
     } finally {
       setSubmitting(false);
       setStep(null);
@@ -555,6 +611,8 @@ export function EvmBridgeForm({
     setSent(null);
     setReverted(false);
     setSubmitError(null);
+    setPollError(null);
+    setStalled(false);
   }
 
   const receiptRoute: ReceiptRoute | undefined =
@@ -644,7 +702,10 @@ export function EvmBridgeForm({
               inputMode="decimal"
               autoComplete="off"
               value={amountInput}
-              onChange={(e) => setAmountInput(e.target.value)}
+              onChange={(e) => {
+                setAmountInput(e.target.value);
+                setSubmitError(null);
+              }}
               invalid={Boolean(amountProblem)}
               aria-invalid={amountProblem ? "true" : undefined}
               aria-describedby={
@@ -697,7 +758,10 @@ export function EvmBridgeForm({
             spellCheck={false}
             autoComplete="off"
             value={recipientInput}
-            onChange={(e) => setRecipientInput(e.target.value)}
+            onChange={(e) => {
+              setRecipientInput(e.target.value);
+              setSubmitError(null);
+            }}
             placeholder={dest.evm ? "0x…" : "Recipient wallet"}
             invalid={Boolean(recipientCheck.error)}
             aria-invalid={recipientCheck.error ? "true" : undefined}
@@ -758,18 +822,29 @@ export function EvmBridgeForm({
           </Notice>
         )}
 
-        {submitError && (
-          <Notice tone="alarm" title="The transfer did not go through" className="mt-5">
-            <pre className="max-h-48 overflow-auto whitespace-pre-wrap break-words font-mono text-[0.75rem] leading-relaxed text-bone/60">
-              {submitError}
-            </pre>
-            <p className="mt-2 text-bone/35">
-              Nothing is burned unless a transaction hash is shown below. An approval, if you made
-              one, stays in place and moves no money. Full detail is in the browser console under{" "}
-              <code className="font-mono">[xebra]</code>.
-            </p>
-          </Notice>
-        )}
+        {submitError &&
+          (submitError.kind === "declined" || submitError.kind === "popup" ? (
+            <Notice tone="info" title="Wallet request cancelled" className="mt-5">
+              You cancelled in your wallet. Nothing was sent.
+            </Notice>
+          ) : submitError.maybeSent ? (
+            <Notice tone="alarm" title="Could not confirm transfer" className="mt-5">
+              <p>{submitError.message}</p>
+              <p className="mt-2 text-bone/35">
+                Check your wallet&apos;s activity before retrying. Full detail is in the browser
+                console under <code className="font-mono">[xebra]</code>.
+              </p>
+            </Notice>
+          ) : (
+            <Notice tone="alarm" title="The transfer did not go through" className="mt-5">
+              <p>{submitError.message}</p>
+              <p className="mt-2 text-bone/35">
+                Nothing is burned unless a transaction hash is shown below. An approval, if you made
+                one, stays in place and moves no money. Full detail is in the browser console under{" "}
+                <code className="font-mono">[xebra]</code>.
+              </p>
+            </Notice>
+          ))}
 
         {!txHash && health?.status === "down" && (
           <Notice
@@ -804,12 +879,43 @@ export function EvmBridgeForm({
             </Button>
           </div>
         ) : txHash && sent ? (
-          <SubmittedNotice
-            txHash={txHash}
-            delivery={shownDelivery}
-            destination={sent.destination}
-            {...(receiptRoute ? { route: receiptRoute } : {})}
-          />
+          <>
+            <SubmittedNotice
+              txHash={txHash}
+              delivery={shownDelivery}
+              destination={sent.destination}
+              {...(receiptRoute ? { route: receiptRoute } : {})}
+            />
+            {pollError && !stalled && (
+              <Notice tone="alarm" title={pollError} className="mt-3">
+                We can&rsquo;t reach the status service right now. Your transfer is not affected;
+                check {sent.destination.name} for the USDC, or try again shortly.
+              </Notice>
+            )}
+            {stalled && (
+              <Notice tone="info" title="Still waiting for delivery" className="mt-3">
+                <p>
+                  {shownDelivery?.status === "known" && shownDelivery.state === "forwarding"
+                    ? `Circle is delivering to ${sent.destination.name}.`
+                    : "Waiting for Circle to attest the transfer."}
+                </p>
+                <p className="mt-1.5">
+                  You can track or complete the transfer on the{" "}
+                  <a
+                    href={
+                      receiptRoute?.claimHref ??
+                      `/claim?tx=${encodeURIComponent(txHash)}&src=${source.cctpDomainId}`
+                    }
+                    className="underline underline-offset-2 hover:text-bone"
+                  >
+                    claim page
+                  </a>
+                  . If you sped up or cancelled this in your wallet, look up the new transaction
+                  hash on the claim page.
+                </p>
+              </Notice>
+            )}
+          </>
         ) : (
           <>
             <Button

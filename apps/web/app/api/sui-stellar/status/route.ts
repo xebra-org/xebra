@@ -1,5 +1,6 @@
 import { formatUsdcAmount, verifyMessage } from "@xebra/sdk/core";
 import { env } from "../../../../lib/env";
+import { logFailure } from "../../../../lib/server/log";
 import { SUI_DIGEST, readAttestation } from "../../../../lib/sui-stellar/attestation";
 import { notFound, suiStellarEnabled } from "../../../../lib/sui-stellar/config";
 import { mintState } from "../../../../lib/sui-stellar/stellar-side";
@@ -27,8 +28,17 @@ export async function GET(request: Request): Promise<Response> {
         tokenMessenger: env.cctpTokenMessengerId,
       });
       const mint = await mintState(att, burn.recipient);
+      if (mint === "unknown") {
+        logFailure(
+          "/api/sui-stellar/status",
+          new Error("Unable to determine Stellar mint state"),
+          { digest },
+          request,
+        );
+      }
       return Response.json({
         state: "complete",
+        mint,
         delivered: mint === "delivered",
         recipient: burn.recipient,
         amount: formatUsdcAmount(burn.amount),
@@ -41,7 +51,8 @@ export async function GET(request: Request): Promise<Response> {
         refusal: err instanceof Error ? err.message : "invalid message",
       });
     }
-  } catch {
+  } catch (err) {
+    logFailure("/api/sui-stellar/status", err, { digest }, request);
     return Response.json({ state: "unknown", reason: "Circle did not answer" }, { status: 502 });
   }
 }

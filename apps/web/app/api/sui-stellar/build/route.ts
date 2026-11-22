@@ -18,6 +18,7 @@ import { recipientStatus } from "../../../../lib/sui-stellar/stellar-side";
  * an amount over the cap, or a Sui balance that cannot cover it.
  */
 export const dynamic = "force-dynamic";
+export const maxDuration = 30;
 
 export async function POST(request: Request): Promise<Response> {
   if (!suiStellarEnabled()) return notFound();

@@ -5,6 +5,8 @@ import {
   BURN_COMPUTE_UNITS,
   DEPOSIT_FOR_BURN_WITH_HOOK_DISCRIMINATOR,
   type DepositForBurnWithHookParams,
+  InsufficientSolanaUsdcError,
+  SolanaBurnRefused,
   buildDepositForBurnWithHookInstruction,
   buildSolanaBurnTransaction,
   depositForBurnAccounts,
@@ -245,12 +247,26 @@ describe("buildSolanaBurnTransaction", () => {
   });
 
   it("refuses a wallet without enough USDC before building anything", async () => {
-    await expect(
-      buildSolanaBurnTransaction(connection(9_999_999n), { owner, params, simulate: false }),
-    ).rejects.toMatchObject({ have: 9_999_999n, need: 10_000_000n });
+    const err = await buildSolanaBurnTransaction(connection(9_999_999n), {
+      owner,
+      params,
+      simulate: false,
+    }).catch((e) => e);
+    expect(err).toBeInstanceOf(InsufficientSolanaUsdcError);
+    expect(err.name).toBe("InsufficientSolanaUsdcError");
+    expect(err).toMatchObject({ have: 9_999_999n, need: 10_000_000n });
+
     await expect(
       buildSolanaBurnTransaction(connection(null), { owner, params, simulate: false }),
     ).rejects.toMatchObject({ have: 0n });
+  });
+
+  it("sets name and cause on SolanaBurnRefused", () => {
+    const cause = { InstructionError: [0, "Custom"] };
+    const err = new SolanaBurnRefused("Burn refused", ["log1"], { cause });
+    expect(err.name).toBe("SolanaBurnRefused");
+    expect(err.cause).toBe(cause);
+    expect(err.logs).toEqual(["log1"]);
   });
 });
 

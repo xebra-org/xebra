@@ -1,5 +1,6 @@
 import { IrisUnavailable } from "@xebra/cctp-client";
 import { irisBaseUrl, irisFetch } from "../../../lib/server/iris";
+import { logFailure } from "../../../lib/server/log";
 import { createTtlCache } from "../../../lib/server/ttl-cache";
 
 /**
@@ -52,17 +53,40 @@ export async function POST(request: Request): Promise<Response> {
         signal: AbortSignal.timeout(8_000),
       });
       if (res.ok) return true as const;
-      const detail = (await res.json().catch(() => null)) as { message?: unknown } | null;
-      throw new Refused(
-        typeof detail?.message === "string" ? detail.message : `Circle returned ${res.status}`,
-        res.status === 404 ? 404 : 502,
+      const rawBody = await res.text().catch(() => "");
+      logFailure(
+        "/api/reattest",
+        new Error(`Circle /v2/reattest returned ${res.status}`),
+        { status: res.status, nonce, body: rawBody },
+        request,
       );
+      let circleMessage = "";
+      try {
+        const detail = JSON.parse(rawBody) as { message?: unknown } | null;
+        if (typeof detail?.message === "string") circleMessage = detail.message;
+      } catch {
+        // Non-JSON upstream error body; logged raw above.
+      }
+      if (res.status === 404) {
+        throw new Refused("Circle has no attestation for that nonce.", 404);
+      }
+      if (res.status >= 400 && res.status < 500) {
+        if (/already/i.test(circleMessage)) {
+          throw new Refused("It was already renewed; look it up again.", 409);
+        }
+        if (/not\s+(?:yet\s+)?expired|unexpired/i.test(circleMessage)) {
+          throw new Refused("This attestation has not expired, so it does not need renewing.", 422);
+        }
+        throw new Refused("Circle could not renew this attestation.", 422);
+      }
+      throw new Refused(`Circle returned ${res.status}`, 502);
     });
     return Response.json({ status: "requested" });
   } catch (err) {
     if (err instanceof Refused) {
       return Response.json({ status: "failed", reason: err.message }, { status: err.http });
     }
+    logFailure("/api/reattest", err, { nonce }, request);
     if (err instanceof IrisUnavailable) {
       return Response.json(
         { status: "failed", reason: "Circle lookups are paused for a moment; try again shortly" },

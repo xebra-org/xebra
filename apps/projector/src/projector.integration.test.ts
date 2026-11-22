@@ -168,4 +168,62 @@ describeIfDb("projectEvent (integration)", () => {
     expect(resolvedRow?.challengeStatus).toBe("resolved_invalid");
     expect(resolvedRow?.resolvedAt).not.toBeNull();
   });
+
+  describe("out-of-order delivery (issue #1)", () => {
+    const event = (hash: string, n: number, eventType: ChainEvent["eventType"]): ChainEvent => ({
+      ...OPENED_EVENT,
+      id: `2:ooo-${hash.slice(2, 6)}-${n}:0`,
+      txRef: `ooo-${n}`,
+      intentHash: hash,
+      eventType,
+    });
+    const statusOf = async (hash: string) =>
+      (await db.select().from(intents).where(eq(intents.intentHash, hash)))[0]?.status;
+
+    it("keeps a finalized status when IntentFinalized arrives before IntentOpened", async () => {
+      const hash = `0x${"d1".repeat(32)}`;
+      await projectEvent(db, event(hash, 1, "IntentFinalized"), logger);
+      expect(await statusOf(hash)).toBeUndefined();
+
+      await projectEvent(db, event(hash, 0, "IntentOpened"), logger);
+      expect(await statusOf(hash)).toBe("finalized");
+
+      const logged = await db.select().from(escrowEvents).where(eq(escrowEvents.intentHash, hash));
+      expect(logged.map((e) => e.eventType).sort()).toEqual(["IntentFinalized", "IntentOpened"]);
+    });
+
+    it("keeps a refunded status when IntentRefunded arrives before IntentOpened", async () => {
+      const hash = `0x${"d2".repeat(32)}`;
+      await projectEvent(db, event(hash, 1, "IntentRefunded"), logger);
+      await projectEvent(db, event(hash, 0, "IntentOpened"), logger);
+      expect(await statusOf(hash)).toBe("refunded");
+    });
+
+    it("takes the furthest status when several lifecycle events precede IntentOpened", async () => {
+      const hash = `0x${"d3".repeat(32)}`;
+      await projectEvent(db, event(hash, 3, "IntentFinalized"), logger);
+      await projectEvent(db, event(hash, 1, "IntentClaimed"), logger);
+      await projectEvent(db, event(hash, 0, "IntentOpened"), logger);
+      expect(await statusOf(hash)).toBe("finalized");
+    });
+
+    it("never moves a status backwards when an earlier event arrives late", async () => {
+      const hash = `0x${"d4".repeat(32)}`;
+      await projectEvent(db, event(hash, 0, "IntentOpened"), logger);
+      await projectEvent(db, event(hash, 2, "IntentChallenged"), logger);
+      expect(await statusOf(hash)).toBe("challenged");
+
+      await projectEvent(db, event(hash, 1, "IntentClaimed"), logger);
+      expect(await statusOf(hash)).toBe("challenged");
+
+      await projectEvent(db, event(hash, 3, "IntentRefunded"), logger);
+      expect(await statusOf(hash)).toBe("refunded");
+    });
+
+    it("leaves an intent with no lifecycle events open", async () => {
+      const hash = `0x${"d5".repeat(32)}`;
+      await projectEvent(db, event(hash, 0, "IntentOpened"), logger);
+      expect(await statusOf(hash)).toBe("open");
+    });
+  });
 });

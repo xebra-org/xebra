@@ -29,6 +29,7 @@ import {
   isEvmChainId,
   minimumEvmAmount,
   minimumForwardedAmount,
+  minimumWrapperAmount,
   planEvmFee,
   planWrapperFee,
   solanaAddressToBytes32,
@@ -486,9 +487,10 @@ export function createService(deps: Deps, now: () => number = Date.now) {
           sourceName: SOURCE_NAME(from),
         })
       : planEvmFee({ amount: units, tier, destination });
-    const floor = suggestedEvmMinimum(minimumEvmAmount(tier));
-    const minimum =
-      wrapper && wrapper.terms.minTransfer > floor ? wrapper.terms.minTransfer : floor;
+    // The figure the page names under the amount field, so a refusal here reads the same there.
+    const minimum = suggestedEvmMinimum(
+      wrapper ? minimumWrapperAmount(tier, wrapper.terms) : minimumEvmAmount(tier),
+    );
     if (!plan.ok) {
       const code =
         plan.kind === "minimum"
@@ -1573,25 +1575,38 @@ export function createService(deps: Deps, now: () => number = Date.now) {
           needs: "recipientOwner",
         });
       }
-      const steps: TransferStep[] = [];
+      // When the recipient has no USDC account yet, return only `open_account`. Returning the
+      // mint in the same response gives both the same recent blockhash (~60-90s TTL), which can
+      // go stale while the user confirms the first transaction; the client calls createClaim
+      // again once the account exists to receive a fresh `claim` step.
       if (prep.setup) {
-        steps.push({
-          id: "open_account",
-          chain: "solana",
-          description:
-            "Open the recipient's USDC account on Solana (about 0.002 SOL that cannot be reclaimed). Confirm it before the next step.",
-          tx: { kind: "solana", transaction: prep.setup },
-          expiresAt: null,
-        });
+        return {
+          steps: [
+            {
+              id: "open_account",
+              chain: "solana",
+              description:
+                "Open the recipient's USDC account on Solana (about 0.002 SOL that cannot be reclaimed). Confirm it, then call createClaim again for the claim step.",
+              tx: { kind: "solana", transaction: prep.setup },
+              expiresAt: null,
+            },
+          ],
+        };
       }
-      steps.push({
-        id: "claim",
-        chain: "solana",
-        description: "Mint the USDC on Solana into the recipient's USDC account.",
-        tx: { kind: "solana", transaction: prep.mint },
-        expiresAt: null,
-      });
-      return { steps };
+      if (!prep.mint) {
+        throw new ApiError("internal_error", "Solana claim could not be built right now.");
+      }
+      return {
+        steps: [
+          {
+            id: "claim",
+            chain: "solana",
+            description: "Mint the USDC on Solana into the recipient's USDC account.",
+            tx: { kind: "solana", transaction: prep.mint },
+            expiresAt: null,
+          },
+        ],
+      };
     }
 
     if (r.chain === "sui" && destinationDomain === STELLAR_CCTP_DOMAIN) {

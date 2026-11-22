@@ -168,4 +168,20 @@ describe("the Sui burn's Move call", () => {
     expect(hook[0]).toBe(65);
     expect(hex(hook.subarray(1))).toBe(forwardHookWithAccount(OWNER_HEX));
   });
+
+  it("carries Monad's domain and the left-padded EVM recipient for a Sui to Monad burn (#9)", () => {
+    const tx = burnMoveCalls({
+      sender: SENDER,
+      amount: 5_000_000n,
+      destinationDomain: 15,
+      maxFee: 54_785n,
+      ...forwardBurnArgs(EVM, 15),
+    });
+    // u32 little-endian.
+    expect(Array.from(pureArg(tx, 1))).toEqual([15, 0, 0, 0]);
+    expect(hex(pureArg(tx, 2))).toBe(`0x${"00".repeat(12)}${EVM.slice(2)}`);
+    expect(hex(pureArg(tx, 3))).toBe(ZERO_BYTES32);
+    const hook = pureArg(tx, 6);
+    expect(hex(hook.subarray(1))).toBe(FORWARD_HOOK);
+  });
 });

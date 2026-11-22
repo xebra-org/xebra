@@ -107,18 +107,30 @@ describe("buildClaim: Solana", () => {
     }),
   };
 
-  it("opens the recipient's account first when it is missing", async () => {
-    const { steps } = await svc({
+  it("returns only open_account when the recipient account is missing, then claim after it exists", async () => {
+    const first = await svc({
       ...toSolana,
-      solanaClaim: async () => ({ state: "ready", setup: "c2V0dXA=", mint: "bWludA==" }),
+      solanaClaim: async () => ({ state: "ready", setup: "c2V0dXA=", mint: null }),
     }).buildClaim({
       chain: "stellar",
       tx: STELLAR_TX,
       payer: SOLANA_WALLET,
       recipientOwner: SOLANA_WALLET,
     });
-    expect(steps.map((s) => [s.id, s.tx])).toEqual([
+    expect(first.steps.map((s) => [s.id, s.tx])).toEqual([
       ["open_account", { kind: "solana", transaction: "c2V0dXA=" }],
+    ]);
+
+    const second = await svc({
+      ...toSolana,
+      solanaClaim: async () => ({ state: "ready", setup: null, mint: "bWludA==" }),
+    }).buildClaim({
+      chain: "stellar",
+      tx: STELLAR_TX,
+      payer: SOLANA_WALLET,
+      recipientOwner: SOLANA_WALLET,
+    });
+    expect(second.steps.map((s) => [s.id, s.tx])).toEqual([
       ["claim", { kind: "solana", transaction: "bWludA==" }],
     ]);
   });
@@ -177,6 +189,32 @@ describe("buildClaim: Sui to Stellar", () => {
       }),
     );
     expect(early.code).toBe("not_ready");
+  });
+
+  it("maps a simulation refusal to transaction_rejected (422) and an RPC outage to upstream_unavailable (503)", async () => {
+    const refused = await refusal(
+      svc({
+        suiClaim: async () => ({
+          ok: false,
+          reason: "Stellar would not accept this mint (contract error #7001).",
+        }),
+      }).buildClaim({ chain: "sui", tx: DIGEST, payer: SENDER }),
+    );
+    expect(refused).toMatchObject({
+      code: "transaction_rejected",
+      status: 422,
+      detail: "Stellar would not accept this mint (contract error #7001).",
+    });
+
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    const outage = await refusal(
+      svc({
+        suiClaim: async () => {
+          throw new Error("connect ETIMEDOUT");
+        },
+      }).buildClaim({ chain: "sui", tx: DIGEST, payer: SENDER }),
+    );
+    expect(outage).toMatchObject({ code: "upstream_unavailable", status: 503 });
   });
 });
 

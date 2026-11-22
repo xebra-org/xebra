@@ -1,4 +1,5 @@
 import { recipientAndHook } from "@xebra/cctp-evm";
+import { XebraError } from "../errors.js";
 import type { BurnRecipient } from "./evm.js";
 import type { TransferStep } from "./types.js";
 
@@ -30,6 +31,21 @@ import type { TransferStep } from "./types.js";
  */
 
 type Hex = `0x${string}`;
+
+/**
+ * An error the Aptos builder or validator rejects, carrying an API `code` and the invalid `field`.
+ * A `XebraError`, so callers can match every SDK error the same way.
+ */
+export class AptosBuildError extends XebraError {
+  constructor(
+    code: string,
+    readonly field: string,
+    message: string,
+  ) {
+    super(code, message);
+    this.name = "AptosBuildError";
+  }
+}
 
 /** Aptos's CCTP domain. */
 export const APTOS_DOMAIN = 9;
@@ -131,25 +147,46 @@ export function aptosBurnArgs(p: {
   recipient: BurnRecipient;
   maxFee: bigint;
 }): AptosBurnArgs {
-  if (p.amount <= 0n || p.amount > U64_MAX) throw new Error("amount must be a positive u64");
-  if (p.destinationDomain === APTOS_DOMAIN) throw new Error("a burn cannot stay on Aptos");
+  if (p.amount <= 0n || p.amount > U64_MAX) {
+    throw new AptosBuildError("invalid_amount", "amount", "amount must be a positive u64");
+  }
+  if (p.destinationDomain === APTOS_DOMAIN) {
+    throw new AptosBuildError(
+      "invalid_request",
+      "destinationDomain",
+      "a burn cannot stay on Aptos",
+    );
+  }
   // Circle's `deposit_for_burn` asserts `max_fee < amount`; refusing here spends no gas.
   if (p.maxFee < 0n || p.maxFee >= p.amount) {
-    throw new Error("maxFee must be at least zero and below the amount");
+    throw new AptosBuildError(
+      "invalid_request",
+      "maxFee",
+      "maxFee must be at least zero and below the amount",
+    );
   }
   const toStellar = p.destinationDomain === STELLAR_DOMAIN;
   if (toStellar && p.maxFee !== 0n) {
-    throw new Error("a burn to Stellar pays Circle nothing: maxFee must be zero");
+    throw new AptosBuildError(
+      "invalid_request",
+      "maxFee",
+      "a burn to Stellar pays Circle nothing: maxFee must be zero",
+    );
   }
   if (!toStellar && p.maxFee === 0n) {
-    throw new Error("a forwarded burn must pay Circle's delivery fee: maxFee must be above zero");
+    throw new AptosBuildError(
+      "invalid_request",
+      "maxFee",
+      "a forwarded burn must pay Circle's delivery fee: maxFee must be above zero",
+    );
   }
   const { mintRecipient, hookData, destinationCaller } = recipientAndHook(
     p.recipient,
     p.destinationDomain,
   );
   // Circle's script refuses an empty hook; every recipient kind above carries one.
-  if (hookData.length <= 2) throw new Error("the burn needs a hook");
+  if (hookData.length <= 2)
+    throw new AptosBuildError("invalid_request", "hookData", "the burn needs a hook");
   return {
     amount: p.amount,
     destinationDomain: p.destinationDomain,
@@ -168,26 +205,76 @@ export function aptosBurnArgsToJson(a: AptosBurnArgs): AptosBurnArgsJson {
 
 const HEX32 = /^0x[0-9a-f]{64}$/;
 
+function hexByteLength(s: string): number {
+  const clean = s.startsWith("0x") ? s.slice(2) : s;
+  return Math.floor(clean.length / 2);
+}
+
 /**
  * Reads arguments back from JSON, checking each one's shape, and refuses a burn token other than
  * native USDC. The browser runs this on what the server built before a wallet sees it.
  */
 export function aptosBurnArgsFromJson(j: AptosBurnArgsJson): AptosBurnArgs {
-  if (!/^\d{1,20}$/.test(j.amount) || !/^\d{1,20}$/.test(j.maxFee)) {
-    throw new Error("amounts must be integers");
+  if (!/^\d{1,20}$/.test(j.amount)) {
+    throw new AptosBuildError(
+      "invalid_request",
+      "amount",
+      `amount must be an integer, got "${j.amount}"`,
+    );
   }
-  for (const v of [j.mintRecipient, j.destinationCaller, j.burnToken]) {
-    if (!HEX32.test(v)) throw new Error("addresses must be 32 bytes of lower-case hex");
+  if (!/^\d{1,20}$/.test(j.maxFee)) {
+    throw new AptosBuildError(
+      "invalid_request",
+      "maxFee",
+      `maxFee must be an integer, got "${j.maxFee}"`,
+    );
   }
-  if (j.burnToken !== APTOS_CCTP.usdc) throw new Error("the burn token must be native USDC");
-  if (!/^0x([0-9a-f]{2})+$/.test(j.hookData)) throw new Error("the hook must be hex bytes");
-  const ints = [j.destinationDomain, j.minFinalityThreshold];
-  if (!ints.every((n) => Number.isInteger(n) && n >= 0 && n <= 0xffffffff)) {
-    throw new Error("domains and finality must be u32");
+  const addressFields: Array<[string, string]> = [
+    ["mintRecipient", j.mintRecipient],
+    ["destinationCaller", j.destinationCaller],
+    ["burnToken", j.burnToken],
+  ];
+  for (const [field, v] of addressFields) {
+    if (!HEX32.test(v)) {
+      const got = hexByteLength(v);
+      throw new AptosBuildError(
+        "invalid_request",
+        field,
+        `${field} must be 32 bytes of lower-case hex, got ${got}`,
+      );
+    }
+  }
+  if (j.burnToken !== APTOS_CCTP.usdc) {
+    throw new AptosBuildError("invalid_request", "burnToken", "the burn token must be native USDC");
+  }
+  if (!/^0x([0-9a-f]{2})+$/.test(j.hookData)) {
+    throw new AptosBuildError("invalid_request", "hookData", "the hook must be hex bytes");
+  }
+  const ints: Array<[string, number]> = [
+    ["destinationDomain", j.destinationDomain],
+    ["minFinalityThreshold", j.minFinalityThreshold],
+  ];
+  for (const [field, n] of ints) {
+    if (!Number.isInteger(n) || n < 0 || n > 0xffffffff) {
+      throw new AptosBuildError("invalid_request", field, `${field} must be u32`);
+    }
   }
   const amount = BigInt(j.amount);
   const maxFee = BigInt(j.maxFee);
-  if (amount <= 0n || amount > U64_MAX || maxFee >= amount) throw new Error("bad amount or fee");
+  if (amount <= 0n || amount > U64_MAX) {
+    throw new AptosBuildError(
+      "invalid_amount",
+      "amount",
+      `amount must be a positive u64, got ${amount}`,
+    );
+  }
+  if (maxFee >= amount) {
+    throw new AptosBuildError(
+      "invalid_request",
+      "maxFee",
+      `maxFee must be below amount, got ${maxFee}`,
+    );
+  }
   return { ...j, amount, maxFee };
 }
 
@@ -347,12 +434,28 @@ class MoveU8 extends Bcs {
   }
 }
 
-class MoveAddress extends Bcs {
+export class MoveAddress extends Bcs {
   readonly data: Uint8Array;
-  constructor(hex: Hex) {
+  constructor(hex: Hex, field = "address") {
     super();
-    const bytes = aptosHexToBytes(hex);
-    if (bytes.length !== 32) throw new Error("an address is 32 bytes");
+    let bytes: Uint8Array;
+    try {
+      bytes = aptosHexToBytes(hex);
+    } catch {
+      const clean = hex.startsWith("0x") ? hex.slice(2) : hex;
+      throw new AptosBuildError(
+        "invalid_request",
+        field,
+        `${field} must be 32 bytes of lower-case hex, got ${Math.floor(clean.length / 2)}`,
+      );
+    }
+    if (bytes.length !== 32) {
+      throw new AptosBuildError(
+        "invalid_request",
+        field,
+        `${field} must be 32 bytes of lower-case hex, got ${bytes.length}`,
+      );
+    }
     this.data = bytes;
   }
   serialize(s: BcsWriter) {
@@ -393,9 +496,9 @@ export function aptosScriptArguments(a: AptosBurnArgs): ScriptArg[] {
   return [
     new MoveU64(a.amount),
     new MoveU32(a.destinationDomain),
-    new MoveAddress(a.mintRecipient),
-    new MoveAddress(a.destinationCaller),
-    new MoveAddress(a.burnToken),
+    new MoveAddress(a.mintRecipient, "mintRecipient"),
+    new MoveAddress(a.destinationCaller, "destinationCaller"),
+    new MoveAddress(a.burnToken, "burnToken"),
     new MoveU64(a.maxFee),
     new MoveU32(a.minFinalityThreshold),
     new MoveBytes(aptosHexToBytes(a.hookData)),
@@ -483,8 +586,10 @@ class RawTransaction extends Bcs {
   constructor(a: AptosBurnArgs, e: AptosTxEnvelope) {
     super();
     const sender = normaliseAptosAddress(e.sender);
-    if (!sender) throw new Error("not an Aptos address");
-    this.sender = new MoveAddress(sender);
+    if (!sender) {
+      throw new AptosBuildError("invalid_request", "sender", "sender is not an Aptos address");
+    }
+    this.sender = new MoveAddress(sender, "sender");
     this.sequence_number = e.sequenceNumber;
     this.payload = new ScriptPayload(a);
     this.max_gas_amount = e.maxGasAmount;

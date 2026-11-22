@@ -6,15 +6,19 @@ import {
   scValToNative,
   type xdr,
 } from "@stellar/stellar-sdk";
-import { FINALITY, encodeDepositForBurnWithHook } from "@xebra/cctp-evm";
+import { FINALITY, encodeDepositForBurnWithHook, xebraWrapperAbi } from "@xebra/cctp-evm";
 import { InsufficientUsdcError, type TransferStep } from "@xebra/sdk/build";
 import {
   EVM_CHAINS,
   bytesToHex,
+  planWrapperFee,
   solanaAddressToBytes32,
   stellarDestination,
 } from "@xebra/sdk/core";
+import { decodeFunctionData, erc20Abi } from "viem";
 import { describe, expect, it, vi } from "vitest";
+import { type WrapperSettings, termsFor } from "../evm-wrapper";
+import { feeDestination, routeDestination } from "../route-destination";
 import type { BuildDeps, Deps } from "./deps";
 import { ApiError } from "./errors";
 import {
@@ -314,6 +318,124 @@ describe("buildTransfer: what gets signed", () => {
     expect(burn.to.toLowerCase()).toBe(ARC_WRAPPER.toLowerCase());
   });
 
+  it("quotes a wrapper send exactly as the page prices it, at every amount and speed", async () => {
+    const ARC_WRAPPER = "0x11b30470DAE40B2Fc27b7AA90dc58e6B4fE9f4c3";
+    const tiers = health().tiers;
+    const base = routeDestination("base");
+    // The fake's floor, and a percentage that outgrows it, so both arms of the split are pinned.
+    const variants: WrapperSettings[] = [WRAPPER_SETTINGS, { ...WRAPPER_SETTINGS, feeBps: 30 }];
+    for (const settings of variants) {
+      const s = svc(
+        { evmWrapperOn: true },
+        {
+          evmWrapperAddress: (chain) => (chain.id === "arc" ? ARC_WRAPPER : null),
+          evmWrapperSettings: async () => settings,
+        },
+      );
+      const speeds = EVM_CHAINS.arc.fast
+        ? (["standard", "fast"] as const)
+        : (["standard"] as const);
+      for (const speed of speeds) {
+        const tier = tiers[speed];
+        if (!tier) throw new Error(`the fake has no ${speed} tier`);
+        for (const amount of [
+          500_000n,
+          1_000_000n,
+          2_000_000n,
+          25_000_000n,
+          99_999_999n,
+          100_000_000n,
+          100_000_001n,
+        ]) {
+          // What `evm-bridge-form.tsx` computes for the same amount, speed and wrapper settings.
+          const page = planWrapperFee({
+            amount,
+            tier,
+            destination: feeDestination(base, false),
+            terms: termsFor(settings, base.cctpDomainId),
+            opensAccount: false,
+            sourceName: EVM_CHAINS.arc.name,
+          });
+          const asked = s.quote({ from: "arc", to: "base", amount, speed });
+          if (page.ok) {
+            const { quote } = await asked;
+            expect([quote.fees.xebra, quote.fees.circle, quote.fees.delivery]).toEqual([
+              page.xebraFee,
+              page.speedFee,
+              page.deliveryFee,
+            ]);
+            expect(quote.fees.total).toBe(page.fee);
+            expect(quote.recipientGets).toBe(page.received);
+            expect(quote.maximum).toBe(settings.maxTransfer);
+          } else {
+            const err = await refusal(asked);
+            expect(err.code).toBe(
+              page.kind === "minimum" ? "amount_below_minimum" : "amount_above_maximum",
+            );
+            expect(err.message).toBe(page.reason);
+            if (page.kind === "minimum") {
+              // The minimum the API names is the one the page writes under the amount field.
+              const named = page.reason.match(/least ([\d.]+) USDC/)?.[1];
+              expect(err.extra.minimum).toBe(BigInt(Math.round(Number(named) * 1e6)));
+            }
+          }
+        }
+      }
+    }
+  });
+
+  it("builds the approval of the wrapper first, then a wrapper bridge call carrying the quote", async () => {
+    const ARC_WRAPPER = "0x11b30470DAE40B2Fc27b7AA90dc58e6B4fE9f4c3";
+    const s = svc(
+      { evmWrapperOn: true },
+      {
+        evmWrapperAddress: (chain) => (chain.id === "arc" ? ARC_WRAPPER : null),
+        evmWrapperSettings: async () => WRAPPER_SETTINGS,
+      },
+    );
+    const before = Math.floor(Date.now() / 1000);
+    const { quote, steps } = await s.buildTransfer({
+      from: "arc",
+      to: "base",
+      amount: 25_000_000n,
+      sender: EVM_SENDER,
+      recipient: RECIPIENT,
+    });
+    const [approve, burn] = steps;
+    if (approve?.tx.kind !== "evm" || burn?.tx.kind !== "evm") throw new Error("not EVM steps");
+    expect([approve.id, burn.id]).toEqual(["approve", "burn"]);
+
+    expect(approve.tx.to.toLowerCase()).toBe(EVM_CHAINS.arc.usdcAddress.toLowerCase());
+    const allowance = decodeFunctionData({ abi: erc20Abi, data: approve.tx.data as `0x${string}` });
+    expect(allowance.functionName).toBe("approve");
+    expect(String(allowance.args[0]).toLowerCase()).toBe(ARC_WRAPPER.toLowerCase());
+    expect(allowance.args[1]).toBe(25_000_000n);
+
+    expect(burn.tx.to.toLowerCase()).toBe(ARC_WRAPPER.toLowerCase());
+    const call = decodeFunctionData({ abi: xebraWrapperAbi, data: burn.tx.data as `0x${string}` });
+    expect(call.functionName).toBe("bridge");
+    const req = (
+      call.args as readonly [
+        {
+          amount: bigint;
+          destinationDomain: number;
+          maxFee: bigint;
+          minFinalityThreshold: number;
+          maxWrapperFee: bigint;
+          deadline: bigint;
+        },
+      ]
+    )[0];
+    expect(req.amount).toBe(25_000_000n);
+    expect(req.destinationDomain).toBe(routeDestination("base").cctpDomainId);
+    expect(req.maxFee).toBe(quote.fees.circle + quote.fees.delivery);
+    expect(req.maxWrapperFee).toBe(quote.fees.total);
+    expect(req.minFinalityThreshold).toBe(FINALITY.standard);
+    // Inside the hour the contract allows, with room for the approval to confirm first.
+    expect(req.deadline).toBeGreaterThan(BigInt(before));
+    expect(req.deadline).toBeLessThanOrEqual(BigInt(before + 3_600));
+  });
+
   it("refuses to price a wrapper send when the wrapper cannot be read", async () => {
     const s = svc(
       { evmWrapperOn: true },
@@ -525,6 +647,54 @@ describe("buildTransfer: Sui to an EVM chain or Solana", () => {
       { id: "base", name: "Base", speeds: ["standard"] },
       { id: "solana", name: "Solana", speeds: ["standard"] },
     ]);
+  });
+
+  it("lists Sui to Monad by default, as the page offers it (#9)", async () => {
+    const { routes } = await svc({}, sui(["monad"])).routes();
+    expect(routes.find((g) => g.from === "sui")?.to).toEqual([
+      { id: "stellar", name: "Stellar", speeds: ["standard"] },
+      { id: "monad", name: "Monad", speeds: ["standard"] },
+    ]);
+  });
+
+  it("does not list Sui to Monad when the page's switch leaves it off (#9)", async () => {
+    const { routes } = await svc({}, sui([])).routes();
+    expect(routes.find((g) => g.from === "sui")?.to).toEqual([
+      { id: "stellar", name: "Stellar", speeds: ["standard"] },
+    ]);
+    const err = await refusal(
+      svc({}, sui([])).quote({ from: "sui", to: "monad", amount: 5_000_000n }),
+    );
+    expect(err.code).toBe("route_unavailable");
+  });
+
+  it("builds Sui to Monad as a forwarded burn to domain 15, to the recipient (#9)", async () => {
+    const circle = vi.fn(async () => health({}, 54_785));
+    const suiForwardBurn = vi.fn(async () => SUI_STEP);
+    const { quote, steps } = await svc(
+      { suiForwardBurn },
+      { ...sui(["monad"]), circle },
+    ).buildTransfer({
+      from: "sui",
+      to: "monad",
+      amount: 5_000_000n,
+      sender: SUI_SENDER,
+      recipient: RECIPIENT,
+    });
+    // Circle's quote for Sui (domain 8) to Monad (domain 15).
+    expect(circle).toHaveBeenCalledWith(8, 15);
+    expect(quote.from).toBe("sui");
+    expect(quote.to).toBe("monad");
+    expect(quote.recipientGets).toBe(5_000_000n - 54_785n);
+    expect(suiForwardBurn).toHaveBeenCalledWith({
+      sender: SUI_SENDER,
+      amount: 5_000_000n,
+      recipient: RECIPIENT,
+      destinationDomain: 15,
+      maxFee: 54_785n,
+      destinationName: "Monad",
+    });
+    expect(steps[0]?.expiresAt).toBe(quote.expiresAt);
   });
 
   it("refuses a destination the switches do not name", async () => {

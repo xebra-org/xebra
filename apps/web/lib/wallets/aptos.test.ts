@@ -9,6 +9,7 @@ import {
   connectAptos,
   isAptosWallet,
   readAptosAddress,
+  readAptosSequenceNumber,
   signAndSubmitAptos,
   takesPayload,
 } from "./aptos";
@@ -176,5 +177,97 @@ describe("signAndSubmitAptos", () => {
       },
     });
     await expect(signAndSubmitAptos(silent, ARGS, ENVELOPE)).rejects.toThrow(/hash/);
+  });
+});
+
+describe("readAptosSequenceNumber", () => {
+  it("reads a sequence number string from a 200 response", async () => {
+    const fakeFetch = vi.fn(async () => ({
+      ok: true,
+      json: async () => ({ sequence_number: "331" }),
+    })) as unknown as typeof fetch;
+
+    const res = await readAptosSequenceNumber(ADDR, { fetch: fakeFetch });
+    expect(res).toBe(331n);
+    expect(fakeFetch).toHaveBeenCalledWith(
+      `https://api.mainnet.aptoslabs.com/v1/accounts/${ADDR}`,
+      { cache: "no-store" },
+    );
+  });
+
+  it("reads a numeric sequence number from a 200 response", async () => {
+    const fakeFetch = vi.fn(async () => ({
+      ok: true,
+      json: async () => ({ sequence_number: 0 }),
+    })) as unknown as typeof fetch;
+
+    const res = await readAptosSequenceNumber(ADDR, { fetch: fakeFetch });
+    expect(res).toBe(0n);
+  });
+
+  it("respects custom nodeUrl without trailing slashes", async () => {
+    const fakeFetch = vi.fn(async () => ({
+      ok: true,
+      json: async () => ({ sequence_number: "42" }),
+    })) as unknown as typeof fetch;
+
+    const res = await readAptosSequenceNumber(ADDR, {
+      nodeUrl: "https://custom-node.aptos.org/v1/",
+      fetch: fakeFetch,
+    });
+    expect(res).toBe(42n);
+    expect(fakeFetch).toHaveBeenCalledWith(`https://custom-node.aptos.org/v1/accounts/${ADDR}`, {
+      cache: "no-store",
+    });
+  });
+
+  it("returns null on 404 response", async () => {
+    const fakeFetch = vi.fn(async () => ({
+      ok: false,
+      status: 404,
+      json: async () => ({ message: "account not found" }),
+    })) as unknown as typeof fetch;
+
+    const res = await readAptosSequenceNumber(ADDR, { fetch: fakeFetch });
+    expect(res).toBeNull();
+  });
+
+  it("returns null on 500 response", async () => {
+    const fakeFetch = vi.fn(async () => ({
+      ok: false,
+      status: 500,
+      json: async () => ({ message: "internal error" }),
+    })) as unknown as typeof fetch;
+
+    const res = await readAptosSequenceNumber(ADDR, { fetch: fakeFetch });
+    expect(res).toBeNull();
+  });
+
+  it("returns null when fetch throws network error", async () => {
+    const fakeFetch = vi.fn(async () => {
+      throw new Error("Failed to fetch");
+    }) as unknown as typeof fetch;
+
+    const res = await readAptosSequenceNumber(ADDR, { fetch: fakeFetch });
+    expect(res).toBeNull();
+  });
+
+  it("returns null when response body is not an object or sequence_number is invalid", async () => {
+    for (const bad of [
+      null,
+      {},
+      { sequence_number: null },
+      { sequence_number: "abc" },
+      { sequence_number: "-1" },
+      { sequence_number: 3.14 },
+    ]) {
+      const fakeFetch = vi.fn(async () => ({
+        ok: true,
+        json: async () => bad,
+      })) as unknown as typeof fetch;
+
+      const res = await readAptosSequenceNumber(ADDR, { fetch: fakeFetch });
+      expect(res).toBeNull();
+    }
   });
 });

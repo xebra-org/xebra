@@ -67,6 +67,8 @@ describe("the SDK client against the /v1 handlers", () => {
       code: "amount_above_maximum",
       extra: { maximum: "100" },
     });
+    // The problem's `instance` comes through as well, for the caller to quote in a report.
+    expect(String(err.extra.instance)).toMatch(/^urn:xebra:request:[0-9a-f-]{36}$/);
   });
 
   it("waits for delivery through the real status handler", async () => {

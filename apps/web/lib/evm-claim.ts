@@ -1,6 +1,13 @@
 import { decodeUint256, encodeReceiveMessage, messageTransmitterAbi } from "@xebra/cctp-evm";
 import { encodeFunctionData } from "viem";
-import { type ChainTarget, ensureChain, ethCall, sendTransaction, waitForReceipt } from "./evm-rpc";
+import {
+  type ChainTarget,
+  ensureChain,
+  ethCall,
+  sendTransaction,
+  waitForReceipt,
+  walletErrorCode,
+} from "./evm-rpc";
 import { formatError } from "./format-error";
 import type { Eip1193Provider } from "./wallets/types";
 
@@ -83,12 +90,26 @@ export type ClaimCheck =
   | { ok: false; expired: true }
   | { ok: false; expired: false; reason: string };
 
+/** Circle's `MessageTransmitterV2` revert for a Fast attestation past its `expirationBlock`. */
+const CIRCLE_EXPIRED = "Message expired and must be re-signed";
+
+/**
+ * Whether the chain refused the call, as opposed to the wallet or its node failing to ask. Code 3
+ * is the JSON-RPC answer for a revert; not every node uses it, but every one says "revert".
+ */
+function isRevert(err: unknown, reason: string): boolean {
+  return walletErrorCode(err) === 3 || /\brevert/i.test(reason);
+}
+
 /**
  * Runs the mint as the paying wallet without sending it, to learn whether it would succeed.
  *
  * This is how an expired attestation is recognised: by the chain saying so. Reading the message's
  * `expirationBlock` and comparing block numbers would be less work and wrong on a rollup, where
  * the block number a contract sees is not the one the RPC reports.
+ *
+ * Only a revert is an answer. When the call itself fails (no network, a node error) this throws
+ * "Could not check", because nothing was learned about the mint.
  */
 export async function checkClaim(
   provider: Eip1193Provider,
@@ -107,10 +128,15 @@ export async function checkClaim(
     return { ok: true };
   } catch (err) {
     const reason = formatError(err);
-    // Circle's contract: "Message expired and must be re-signed".
-    return /expired/i.test(reason)
-      ? { ok: false, expired: true }
-      : { ok: false, expired: false, reason };
+    if (reason.includes(CIRCLE_EXPIRED)) return { ok: false, expired: true };
+    if (isRevert(err, reason)) return { ok: false, expired: false, reason };
+    // A dropped connection or a node error says nothing about the mint, so it is not "would fail".
+    throw new Error(
+      `Could not check the mint: ${reason.replace(/\.$/, "")}. Nothing was sent; try again.`,
+      {
+        cause: err,
+      },
+    );
   }
 }
 

@@ -1,3 +1,7 @@
+// A type only, erased before anything is bundled: the middleware loads this file, and it must not
+// pull the SDK in with it.
+import type { ApiErrorCode } from "@xebra/sdk";
+
 /**
  * What `api.xebra.exchange` serves: the versioned API and nothing else. The same Vercel project
  * answers both hosts, so without this the API host would also serve the site, `/admin` included.
@@ -58,13 +62,38 @@ const PROBLEM_HEADERS = {
   "Cache-Control": "no-store",
 };
 
-function problemBody(code: string, title: string, status: number, detail: string) {
-  return { type: `${ERROR_TYPE_BASE}${code}`, title, status, detail, code };
+/**
+ * The title of every problem, by code: the words in the docs' error table
+ * (`apps/docs/content/docs/errors/index.mdx`). They are kept here, where nothing is imported at run
+ * time, so the middleware's problems and `http.ts`'s say the same thing. Being a full record of the
+ * SDK's codes, a code added there without a title here does not compile.
+ */
+export const TITLES: Record<ApiErrorCode, string> = {
+  invalid_request: "Invalid request",
+  unauthorized: "Unauthorized",
+  not_found: "Not found",
+  not_ready: "Not ready",
+  already_delivered: "Already delivered",
+  invalid_amount: "Invalid amount",
+  invalid_recipient: "Invalid recipient",
+  route_unavailable: "Route unavailable",
+  amount_below_minimum: "Amount below the minimum",
+  amount_above_maximum: "Amount above the maximum",
+  insufficient_balance: "Insufficient balance",
+  fee_above_limit: "Fee above your limit",
+  transaction_rejected: "Transaction would be rejected",
+  rate_limited: "Rate limited",
+  internal_error: "Internal error",
+  upstream_unavailable: "Upstream unavailable",
+};
+
+function problemBody(code: ApiErrorCode, status: number, detail: string) {
+  return { type: `${ERROR_TYPE_BASE}${code}`, title: TITLES[code], status, detail, code };
 }
 
 /** A path the API does not have. `not_found` is one of the SDK's codes, so clients know it. */
 export function notFound(detail: string): Response {
-  return Response.json(problemBody("not_found", "Not found", 404, detail), {
+  return Response.json(problemBody("not_found", 404, detail), {
     status: 404,
     headers: PROBLEM_HEADERS,
   });
@@ -76,12 +105,7 @@ export function notFound(detail: string): Response {
  */
 export function methodNotAllowed(method: string, allow: readonly string[]): Response {
   return Response.json(
-    problemBody(
-      "invalid_request",
-      "Invalid request",
-      405,
-      `This endpoint does not accept ${method}.`,
-    ),
+    problemBody("invalid_request", 405, `This endpoint does not accept ${method}.`),
     { status: 405, headers: { ...PROBLEM_HEADERS, Allow: allow.join(", ") } },
   );
 }

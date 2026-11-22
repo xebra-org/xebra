@@ -179,4 +179,33 @@ describe("checkClaim", () => {
       reason: "execution reverted: Invalid attestation length",
     });
   });
+
+  it("does not call a revert that merely mentions expiry an expired attestation", async () => {
+    const w = wallet(() => {
+      throw { code: 3, message: "execution reverted: Permit expired" };
+    });
+    expect(await checkClaim(w, TARGET, FROM, MESSAGE, "0xcafe")).toEqual({
+      ok: false,
+      expired: false,
+      reason: "execution reverted: Permit expired",
+    });
+  });
+
+  it("says it could not check, not expired, when the wallet's session expired", async () => {
+    const w = wallet(() => {
+      throw { code: -32603, message: "session expired" };
+    });
+    await expect(checkClaim(w, TARGET, FROM, MESSAGE, "0xcafe")).rejects.toThrow(
+      "Could not check the mint: session expired. Nothing was sent; try again.",
+    );
+  });
+
+  it("says it could not check, not would fail, when the network is down", async () => {
+    const w = wallet(() => {
+      throw new TypeError("Failed to fetch");
+    });
+    await expect(checkClaim(w, TARGET, FROM, MESSAGE, "0xcafe")).rejects.toThrow(
+      "Could not check the mint: Failed to fetch.",
+    );
+  });
 });

@@ -42,6 +42,7 @@ export async function GET(request: Request): Promise<Response> {
     // cannot get us blocked.
     const res = await irisFetch(`${irisBaseUrl()}/v2/messages/${domain}?transactionHash=${tx}`, {
       cache: "no-store",
+      signal: AbortSignal.timeout(6_000),
     });
 
     // Iris answers 404 for a transaction it has not indexed. That is "not yet", not an error:
@@ -125,14 +126,18 @@ export async function GET(request: Request): Promise<Response> {
     });
   } catch (err) {
     if (err instanceof IrisUnavailable) {
+      const retryAfterSeconds = Math.max(1, Math.ceil(err.retryAfterMs / 1000));
       return Response.json(
         { status: "unknown", reason: "Circle lookups are paused for a moment; try again shortly" },
-        { status: 503 },
+        {
+          status: 503,
+          headers: {
+            "Retry-After": String(retryAfterSeconds),
+          },
+        },
       );
     }
-    return Response.json(
-      { status: "unknown", reason: err instanceof Error ? err.message : "request failed" },
-      { status: 502 },
-    );
+    console.error("attestation lookup failed", err);
+    return Response.json({ status: "unknown", reason: "could not reach Circle" }, { status: 502 });
   }
 }
