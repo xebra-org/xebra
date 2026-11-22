@@ -120,6 +120,43 @@ function isAbortSignal(value: XebraCallOptions | AbortSignal | undefined): value
   return typeof (value as AbortSignal | undefined)?.addEventListener === "function";
 }
 
+/** Fields whose problems are about the amount, which the API answers as `invalid_amount`. */
+const AMOUNT_FIELDS = new Set(["amount", "maxTotalFee"]);
+
+/**
+ * Checks a request against the schema the API checks it with, and throws what the API would have
+ * answered (`invalid_amount` or `invalid_request`) with status 0, so bad input costs no round trip.
+ * The issues are on `extra.issues`, as `{ path, message }`.
+ */
+function checkInput(
+  schema: {
+    safeParse(
+      v: unknown,
+    ):
+      | { success: true }
+      | { success: false; error: { issues: Array<{ path: PropertyKey[]; message: string }> } };
+  },
+  input: unknown,
+): void {
+  const parsed = schema.safeParse(input);
+  if (parsed.success) return;
+  const issues = parsed.error.issues.map((i) => ({
+    path: i.path.map(String),
+    message: i.message,
+  }));
+  const amount = issues.find((i) => AMOUNT_FIELDS.has(i.path[0] ?? ""));
+  if (amount) {
+    throw new XebraApiError(0, "invalid_amount", `${amount.path[0]}: ${amount.message}.`, {
+      issues,
+    });
+  }
+  const detail = issues
+    .slice(0, 5)
+    .map((i) => (i.path.length > 0 ? `${i.path.join(".")}: ${i.message}` : i.message))
+    .join("; ");
+  throw new XebraApiError(0, "invalid_request", `${detail}.`, { issues });
+}
+
 /**
  * A client for the Xebra API. It prices transfers and builds unsigned transactions; your user's
  * wallet signs them. It never needs or accepts a private key.
@@ -325,43 +362,6 @@ export function createXebraClient(opts: XebraClientOptions = {}) {
 }
 
 export type XebraClient = ReturnType<typeof createXebraClient>;
-
-/** Fields whose problems are about the amount, which the API answers as `invalid_amount`. */
-const AMOUNT_FIELDS = new Set(["amount", "maxTotalFee"]);
-
-/**
- * Checks a request against the schema the API checks it with, and throws what the API would have
- * answered (`invalid_amount` or `invalid_request`) with status 0, so bad input costs no round trip.
- * The issues are on `extra.issues`, as `{ path, message }`.
- */
-function checkInput(
-  schema: {
-    safeParse(
-      v: unknown,
-    ):
-      | { success: true }
-      | { success: false; error: { issues: Array<{ path: PropertyKey[]; message: string }> } };
-  },
-  input: unknown,
-): void {
-  const parsed = schema.safeParse(input);
-  if (parsed.success) return;
-  const issues = parsed.error.issues.map((i) => ({
-    path: i.path.map(String),
-    message: i.message,
-  }));
-  const amount = issues.find((i) => AMOUNT_FIELDS.has(i.path[0] ?? ""));
-  if (amount) {
-    throw new XebraApiError(0, "invalid_amount", `${amount.path[0]}: ${amount.message}.`, {
-      issues,
-    });
-  }
-  const detail = issues
-    .slice(0, 5)
-    .map((i) => (i.path.length > 0 ? `${i.path.join(".")}: ${i.message}` : i.message))
-    .join("; ");
-  throw new XebraApiError(0, "invalid_request", `${detail}.`, { issues });
-}
 
 function sleep(ms: number, signal?: AbortSignal): Promise<void> {
   return new Promise((resolve, reject) => {
