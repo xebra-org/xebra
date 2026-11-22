@@ -353,6 +353,10 @@ Three codes come from the client itself, rather than coming from an API problem 
 
 The list of every code, with its HTTP status, is exported as `ERROR_STATUS` and `ERROR_CODES`.
 
+`quote` and `createTransfer` check their input against the schema the API checks it with before
+sending anything. Input the API would refuse is thrown as `invalid_amount` or `invalid_request` with
+`status` 0, without a request, and each problem is on `err.extra.issues` as `{ path, message }`.
+
 ## Cancelling
 
 Every method takes an options object as its last argument, so any call can be stopped, for example

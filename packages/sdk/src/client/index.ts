@@ -8,12 +8,14 @@ import {
   ProblemSchema,
   type Quote,
   type QuoteRequest,
+  QuoteRequestSchema,
   QuoteSchema,
   type Routes,
   RoutesSchema,
   type TransferBuild,
   TransferBuildSchema,
   type TransferRequest,
+  TransferRequestSchema,
   type TransferStatus,
   TransferStatusSchema,
 } from "../api/schemas.js";
@@ -245,17 +247,27 @@ export function createXebraClient(opts: XebraClientOptions = {}) {
     /** Every route Xebra sends on right now. */
     routes: (o?: XebraCallOptions): Promise<Routes> => call("/v1/routes", RoutesSchema, passed(o)),
 
-    /** What a transfer costs and what the recipient gets. Read-only. */
-    quote: (q: QuoteRequest, o?: XebraCallOptions): Promise<Quote> =>
-      call(
+    /**
+     * What a transfer costs and what the recipient gets. Read-only. Input the API would refuse is
+     * refused here first, with status 0, without a request.
+     */
+    quote: async (q: QuoteRequest, o?: XebraCallOptions): Promise<Quote> => {
+      checkInput(QuoteRequestSchema, q);
+      return call(
         `/v1/quote?${query({ from: q.from, to: q.to, amount: q.amount, speed: q.speed, recipient: q.recipient })}`,
         QuoteSchema,
         passed(o),
-      ),
+      );
+    },
 
-    /** The unsigned transactions for a transfer, in signing order, and its price. */
-    createTransfer: (r: TransferRequest, o?: XebraCallOptions): Promise<TransferBuild> =>
-      call("/v1/transfers", TransferBuildSchema, { method: "POST", body: r, ...passed(o) }),
+    /**
+     * The unsigned transactions for a transfer, in signing order, and its price. Input the API
+     * would refuse is refused here first, with status 0, without a request.
+     */
+    createTransfer: async (r: TransferRequest, o?: XebraCallOptions): Promise<TransferBuild> => {
+      checkInput(TransferRequestSchema, r);
+      return call("/v1/transfers", TransferBuildSchema, { method: "POST", body: r, ...passed(o) });
+    },
 
     /** Where a transfer is, by the burn's transaction hash (or Sui digest). */
     getTransfer,
@@ -313,6 +325,43 @@ export function createXebraClient(opts: XebraClientOptions = {}) {
 }
 
 export type XebraClient = ReturnType<typeof createXebraClient>;
+
+/** Fields whose problems are about the amount, which the API answers as `invalid_amount`. */
+const AMOUNT_FIELDS = new Set(["amount", "maxTotalFee"]);
+
+/**
+ * Checks a request against the schema the API checks it with, and throws what the API would have
+ * answered (`invalid_amount` or `invalid_request`) with status 0, so bad input costs no round trip.
+ * The issues are on `extra.issues`, as `{ path, message }`.
+ */
+function checkInput(
+  schema: {
+    safeParse(
+      v: unknown,
+    ):
+      | { success: true }
+      | { success: false; error: { issues: Array<{ path: PropertyKey[]; message: string }> } };
+  },
+  input: unknown,
+): void {
+  const parsed = schema.safeParse(input);
+  if (parsed.success) return;
+  const issues = parsed.error.issues.map((i) => ({
+    path: i.path.map(String),
+    message: i.message,
+  }));
+  const amount = issues.find((i) => AMOUNT_FIELDS.has(i.path[0] ?? ""));
+  if (amount) {
+    throw new XebraApiError(0, "invalid_amount", `${amount.path[0]}: ${amount.message}.`, {
+      issues,
+    });
+  }
+  const detail = issues
+    .slice(0, 5)
+    .map((i) => (i.path.length > 0 ? `${i.path.join(".")}: ${i.message}` : i.message))
+    .join("; ");
+  throw new XebraApiError(0, "invalid_request", `${detail}.`, { issues });
+}
 
 function sleep(ms: number, signal?: AbortSignal): Promise<void> {
   return new Promise((resolve, reject) => {

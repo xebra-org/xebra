@@ -218,6 +218,80 @@ describe("options on a single call", () => {
   });
 });
 
+describe("input the API would refuse", () => {
+  const QUOTE = { from: "stellar", to: "base", amount: "10" } as const;
+  const TRANSFER = { ...QUOTE, sender: "GSENDER", recipient: "0xrecipient" };
+  const neverCalled = () => vi.fn(async () => json(200, {}));
+
+  it("refuses an amount with seven places as invalid_amount, without a request", async () => {
+    const fetch = neverCalled();
+    const client = createXebraClient({ fetch });
+    const err = await client.quote({ ...QUOTE, amount: "12.1234567" }).catch((e) => e);
+    expect(err).toBeInstanceOf(XebraApiError);
+    expect(err).toMatchObject({
+      status: 0,
+      code: "invalid_amount",
+      retryable: false,
+      extra: {
+        issues: expect.arrayContaining([{ path: ["amount"], message: expect.any(String) }]),
+      },
+    });
+    expect(err.detail).toMatch(/^amount: /);
+    expect(fetch).not.toHaveBeenCalled();
+  });
+
+  it("refuses a zero amount and an unknown chain on a quote", async () => {
+    const fetch = neverCalled();
+    const client = createXebraClient({ fetch });
+    await expect(client.quote({ ...QUOTE, amount: "0" })).rejects.toMatchObject({
+      status: 0,
+      code: "invalid_amount",
+    });
+    const unknownChain = { ...QUOTE, to: "mars" } as unknown as Parameters<XebraClient["quote"]>[0];
+    const err = await client.quote(unknownChain).catch((e) => e);
+    expect(err).toMatchObject({
+      status: 0,
+      code: "invalid_request",
+      extra: { issues: [{ path: ["to"] }] },
+    });
+    expect(err.detail).toMatch(/^to: /);
+    expect(fetch).not.toHaveBeenCalled();
+  });
+
+  it("refuses a transfer with a missing sender, an extra field or a bad maxTotalFee", async () => {
+    const fetch = neverCalled();
+    const client = createXebraClient({ fetch });
+    type Transfer = Parameters<XebraClient["createTransfer"]>[0];
+    const { sender: _sender, ...noSender } = TRANSFER;
+    await expect(client.createTransfer(noSender as Transfer)).rejects.toMatchObject({
+      status: 0,
+      code: "invalid_request",
+      extra: { issues: [{ path: ["sender"] }] },
+    });
+    await expect(
+      client.createTransfer({ ...TRANSFER, memo: "x" } as unknown as Transfer),
+    ).rejects.toMatchObject({ status: 0, code: "invalid_request" });
+    await expect(client.createTransfer({ ...TRANSFER, maxTotalFee: "-1" })).rejects.toMatchObject({
+      status: 0,
+      code: "invalid_amount",
+      extra: { issues: [{ path: ["maxTotalFee"] }] },
+    });
+    expect(fetch).not.toHaveBeenCalled();
+  });
+
+  it("still sends what passes", async () => {
+    const fetch = vi.fn(async () => problem(422, "route_unavailable"));
+    const client = createXebraClient({ fetch });
+    await expect(client.quote({ ...QUOTE, speed: "fast" })).rejects.toMatchObject({
+      code: "route_unavailable",
+    });
+    await expect(client.createTransfer({ ...TRANSFER, maxTotalFee: "0.5" })).rejects.toMatchObject({
+      code: "route_unavailable",
+    });
+    expect(fetch).toHaveBeenCalledTimes(2);
+  });
+});
+
 describe("waitForDelivery", () => {
   it("polls until a settled state, waiting out a 503", async () => {
     const answers = [
