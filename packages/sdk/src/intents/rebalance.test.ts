@@ -148,6 +148,52 @@ describe("units", () => {
   });
 });
 
+describe("1Click answers that are not what Xebra reads", () => {
+  /** fake1Click, except that `path` answers 200 with `body` (a string is sent as is). */
+  function answering(path: string, body: unknown) {
+    const one = fake1Click();
+    const fetch = (async (url: string | URL | Request, init?: RequestInit) => {
+      if (new URL(String(url)).pathname !== path) return one.fetch(url, init);
+      return new Response(typeof body === "string" ? body : JSON.stringify(body), { status: 200 });
+    }) as typeof globalThis.fetch;
+    return createRebalancer({ xebra: fakeXebra(), fetch, now: () => NOW });
+  }
+
+  it("refuses an empty or non-JSON quote body as invalid_response, with the body kept", async () => {
+    for (const body of ["", "<html>busy</html>", null]) {
+      const err = await answering("/v0/quote", body)
+        .estimate(REQ)
+        .catch((e: unknown) => e);
+      expect(err).toBeInstanceOf(OneClickError);
+      expect(err).toMatchObject({ code: "invalid_response", status: 200, retryable: false });
+      expect((err as OneClickError).body).toBe(body === null ? "null" : body);
+    }
+  });
+
+  it("refuses a quote without minAmountOut instead of failing on BigInt", async () => {
+    const quote = { amountIn: "1", amountOut: "1", timeEstimate: 10 };
+    const err = await answering("/v0/quote", { quote })
+      .estimate(REQ)
+      .catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(OneClickError);
+    expect(err).toMatchObject({ code: "invalid_response", body: { quote } });
+  });
+
+  it("stops waitFor at once when a status answer has no status", async () => {
+    const rb = answering("/v0/status", { correlationId: "c" });
+    await expect(rb.waitFor("0xdep", { intervalMs: 1, timeoutMs: 60_000 })).rejects.toMatchObject({
+      code: "invalid_response",
+      body: { correlationId: "c" },
+    });
+  });
+
+  it("refuses a token list that is not a list", async () => {
+    await expect(answering("/v0/tokens", { tokens: [] }).estimate(REQ)).rejects.toMatchObject({
+      code: "invalid_response",
+    });
+  });
+});
+
 describe("estimate", () => {
   it("prices withdraw + CCTP + deposit and reports a missing direct swap", async () => {
     const one = fake1Click();

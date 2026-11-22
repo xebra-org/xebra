@@ -144,13 +144,38 @@ export type OneClickStatus =
   | "REFUNDED"
   | "FAILED";
 
-export class OneClickError extends Error {
+/** How a 1Click call failed. */
+export type OneClickErrorCode =
+  | "missing_api_key"
+  | "no_deposit_address"
+  | "http_error"
+  | "network_error"
+  | "timeout"
+  | "invalid_response";
+
+/**
+ * A 1Click call failed. `code` says how; `status` is 1Click's HTTP status, or 0 when it sent none.
+ * `body` is what 1Click sent (parsed JSON, else the raw text), when it sent anything. `retryable`
+ * is true for network errors, timeouts, 429 and 5xx.
+ */
+export class OneClickError extends XebraError {
+  declare readonly code: OneClickErrorCode;
+  readonly status: number;
+  readonly body?: unknown;
+
   constructor(
     message: string,
-    readonly status: number,
+    status: number,
+    opts: { code?: OneClickErrorCode; body?: unknown; cause?: unknown } = {},
   ) {
-    super(message);
+    const code = opts.code ?? "http_error";
+    super(code, message, {
+      retryable: code === "network_error" || code === "timeout" || status === 429 || status >= 500,
+      cause: opts.cause,
+    });
     this.name = "OneClickError";
+    this.status = status;
+    if (opts.body !== undefined) this.body = opts.body;
   }
 }
 
@@ -200,6 +225,25 @@ function floorTo(amount: string, places: number): string {
   return t ? `${i}.${t}` : (i as string);
 }
 
+const isRecord = (v: unknown): v is Record<string, unknown> =>
+  typeof v === "object" && v !== null && !Array.isArray(v);
+const isUnits = (v: unknown): boolean => typeof v === "string" && /^\d+$/.test(v);
+
+/** Shape checks for the 1Click answers this module reads. A body that fails is `invalid_response`. */
+const SHAPES = {
+  tokens: (v: unknown) => Array.isArray(v),
+  quote: (v: unknown) =>
+    isRecord(v) &&
+    isRecord(v.quote) &&
+    isUnits(v.quote.amountOut) &&
+    isUnits(v.quote.minAmountOut) &&
+    typeof v.quote.timeEstimate === "number" &&
+    (v.quote.depositAddress === undefined || typeof v.quote.depositAddress === "string"),
+  intent: (v: unknown) => isRecord(v) && isRecord(v.intent),
+  submitted: (v: unknown) => isRecord(v) && typeof v.intentHash === "string",
+  status: (v: unknown) => isRecord(v) && typeof v.status === "string",
+};
+
 export function createRebalancer(opts: RebalancerOptions) {
   const doFetch = opts.fetch ?? globalThis.fetch;
   const now = opts.now ?? Date.now;
@@ -219,7 +263,12 @@ export function createRebalancer(opts: RebalancerOptions) {
     }
   }
 
-  async function call<T>(path: string, body?: unknown, needsKey = false): Promise<T> {
+  async function call<T>(
+    path: string,
+    body: unknown,
+    needsKey: boolean,
+    valid: (json: unknown) => boolean,
+  ): Promise<T> {
     if (needsKey) requireKey();
     const res = await doFetch(`${base}${path}`, {
       method: body === undefined ? "GET" : "POST",
@@ -245,12 +294,19 @@ export function createRebalancer(opts: RebalancerOptions) {
           : `1Click answered ${res.status}`;
       throw new OneClickError(said, res.status);
     }
+    if (!valid(json)) {
+      throw new OneClickError(
+        `1Click answered ${res.status} to ${path.split("?")[0]}, but not with the fields Xebra reads.`,
+        res.status,
+        { code: "invalid_response", body: json ?? text },
+      );
+    }
     return json as T;
   }
 
   async function tokens(): Promise<IntentsToken[]> {
     if (tokenCache && now() - tokenCache.at < 300_000) return tokenCache.list;
-    const list = await call<IntentsToken[]>("/v0/tokens");
+    const list = await call<IntentsToken[]>("/v0/tokens", undefined, false, SHAPES.tokens);
     tokenCache = { at: now(), list };
     return list;
   }
@@ -279,11 +335,7 @@ export function createRebalancer(opts: RebalancerOptions) {
   }
 
   function quote(q: Record<string, unknown>): Promise<{ quote: OneClickQuote }> {
-    return call("/v0/quote", {
-      slippageTolerance: 10,
-      referral,
-      ...q,
-    });
+    return call("/v0/quote", { slippageTolerance: 10, referral, ...q }, false, SHAPES.quote);
   }
 
   function withdrawQuote(
@@ -413,6 +465,7 @@ export function createRebalancer(opts: RebalancerOptions) {
         depositAddress: q.depositAddress,
       },
       true,
+      SHAPES.intent,
     );
     return {
       depositAddress: q.depositAddress,
@@ -431,6 +484,7 @@ export function createRebalancer(opts: RebalancerOptions) {
       "/v0/submit-intent",
       { type: "swap_transfer", signedData: { ...w.intent, ...signed } },
       true,
+      SHAPES.submitted,
     );
   }
 
@@ -470,6 +524,9 @@ export function createRebalancer(opts: RebalancerOptions) {
   async function status(depositAddress: string): Promise<OneClickStatus> {
     const s = await call<{ status: OneClickStatus }>(
       `/v0/status?${new URLSearchParams({ depositAddress })}`,
+      undefined,
+      false,
+      SHAPES.status,
     );
     return s.status;
   }
