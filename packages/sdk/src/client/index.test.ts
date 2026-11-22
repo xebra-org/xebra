@@ -5,6 +5,7 @@ import {
   type XebraCallOptions,
   type XebraClient,
   createXebraClient,
+  isXebraApiError,
 } from "./index.js";
 
 const json = (status: number, body: unknown, type = "application/json") =>
@@ -329,6 +330,52 @@ async function failure(call: Promise<unknown>): Promise<XebraApiError> {
   }
   throw new Error("expected the call to reject, and it did not");
 }
+
+describe("isXebraApiError", () => {
+  const brand = Symbol.for("xebra.error");
+
+  it("is true for this copy's errors", async () => {
+    const client = createXebraClient({ fetch: async () => problem(503, "upstream_unavailable") });
+    const err = await client.routes().catch((e) => e);
+    expect(isXebraApiError(err)).toBe(true);
+    expect(isXebraApiError(new XebraApiError(0, "timeout", "No answer."))).toBe(true);
+  });
+
+  it("is true for an error from another copy of the SDK, which carries the brand and the name", () => {
+    // What another install's XebraApiError looks like from here: not an instance of this class.
+    const other = Object.assign(new Error("a reason"), {
+      name: "XebraApiError",
+      status: 422,
+      code: "amount_below_minimum",
+      detail: "a reason",
+      extra: { minimum: "2" },
+      [brand]: true,
+    });
+    expect(other).not.toBeInstanceOf(XebraApiError);
+    expect(isXebraApiError(other)).toBe(true);
+    expect(isXebraApiError({ name: "XebraApiError", [brand]: true })).toBe(true);
+  });
+
+  it("is false without the brand, without the name, or for anything else", () => {
+    expect(isXebraApiError({ name: "XebraApiError", code: "timeout" })).toBe(false);
+    expect(isXebraApiError({ name: "Error", [brand]: true })).toBe(false);
+    expect(isXebraApiError({ name: "XebraApiError", [brand]: "yes" })).toBe(false);
+    expect(isXebraApiError(new XebraError("invalid_amount", "Not an amount."))).toBe(false);
+    expect(isXebraApiError(new Error("plain"))).toBe(false);
+    for (const value of [null, undefined, "XebraApiError", 0]) {
+      expect(isXebraApiError(value)).toBe(false);
+    }
+  });
+
+  it("keeps the brand out of what an error shows", () => {
+    const err = new XebraApiError(422, "invalid_amount", "Bad amount.");
+    expect(Object.keys(err)).not.toContain(brand);
+    expect(Object.getOwnPropertyDescriptor(err, brand)).toMatchObject({
+      value: true,
+      enumerable: false,
+    });
+  });
+});
 
 describe("a body that stops arriving", () => {
   const TX = "a".repeat(64);

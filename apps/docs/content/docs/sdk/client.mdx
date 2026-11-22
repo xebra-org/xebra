@@ -323,6 +323,10 @@ try {
 }
 ```
 
+Where two copies of the SDK may be installed, as in a monorepo or a framework that bundles its
+server and client builds apart, `instanceof` can miss an error thrown by the other copy. Use
+`isXebraApiError(err)` instead: it narrows the same way and works across copies.
+
 <TypeTable
   type={{
     status: {

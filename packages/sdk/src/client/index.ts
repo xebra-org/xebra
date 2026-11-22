@@ -55,7 +55,26 @@ export class XebraApiError extends XebraError {
       ...(opts?.cause !== undefined ? { cause: opts.cause } : {}),
     });
     this.name = "XebraApiError";
+    Object.defineProperty(this, XEBRA_ERROR_BRAND, { value: true });
   }
+}
+
+/** Shared by every copy of the SDK in one process, where the class itself is not. */
+const XEBRA_ERROR_BRAND = Symbol.for("xebra.error");
+
+/**
+ * Whether `e` is an `XebraApiError`, from this copy of the SDK or any other. `instanceof` is not
+ * enough where two copies are installed, as in a monorepo or a framework that bundles its server
+ * and client builds apart: an error from one copy is not an instance of the other's class.
+ */
+export function isXebraApiError(e: unknown): e is XebraApiError {
+  if (e instanceof XebraApiError) return true;
+  return (
+    typeof e === "object" &&
+    e !== null &&
+    (e as { [XEBRA_ERROR_BRAND]?: unknown })[XEBRA_ERROR_BRAND] === true &&
+    (e as { name?: unknown }).name === "XebraApiError"
+  );
 }
 
 export interface XebraClientOptions {
