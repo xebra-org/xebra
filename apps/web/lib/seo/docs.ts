@@ -142,11 +142,14 @@ The bridge always shows exactly what the recipient will get before you sign, rea
 
 Xebra's fee is **${xebraFeeRule}**. Circle's delivery fee is paid **out of** Xebra's fee, not added on top: if Circle's fee is ever the larger of the two, you pay Circle's fee and Xebra keeps nothing.
 
-| You send | Fee | Recipient gets |
+So below about 500 USDC you pay Circle's delivery fee and nothing more; above that, ${FEES.bps / 100}% of the amount. Circle's fee depends on the destination and moves a little over the day; the bridge shows the exact figure.
+
+| You send | Fee to Arc (Circle about 0.02) | Fee to Base (Circle about 0.05) |
 |---|---|---|
-| 10 USDC | 0.10 USDC | 9.90 USDC |
-| 50 USDC | 0.10 USDC | 49.90 USDC |
-| 100 USDC | 0.10 USDC | 99.90 USDC |
+| 10 USDC | about 0.02 USDC | about 0.05 USDC |
+| 100 USDC | about 0.02 USDC | about 0.05 USDC |
+| 1,000 USDC | 0.10 USDC | 0.10 USDC |
+| 10,000 USDC | 1.00 USDC | 1.00 USDC |
 
 The only other cost is the Stellar network fee, a fraction of a cent in XLM. Each transfer is ${FEES.minTransferUsdc} to ${FEES.stellarMaxTransferUsdc} USDC (as of ${FEES.asOf}).
 

@@ -176,7 +176,7 @@ today, so the bounds a wrapper would enforce are applied in the page before sign
 (`packages/sdk/src/core/fees/evm.ts`), and every constant is pinned in
 `packages/network-config/src/evm-chains.ts` and re-read from the chains by `pnpm check:evm`.
 
-`contracts/arc-evm/src/XebraCctpWrapper.sol` changes that: Stellar's fee (0.05%, 0.10 USDC floor,
+`contracts/arc-evm/src/XebraCctpWrapper.sol` changes that: Stellar's fee (0.01%, 0.01 USDC floor,
 Circle's delivery fee paid out of it), the same caps and the same 48-hour governance, enforced on
 chain. It is deployed on Arc mainnet and pinned in `XEBRA_WRAPPERS`; with
 `NEXT_PUBLIC_ARC_USE_WRAPPER=1` the page approves and calls it instead of Circle.
