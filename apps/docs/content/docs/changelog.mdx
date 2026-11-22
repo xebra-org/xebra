@@ -11,6 +11,7 @@ description: What changed in the Xebra API and SDK, newest first.
   `retryable`, and `cause`. `XebraApiError` now extends `XebraError` (keeping `instanceof
   XebraApiError` compatibility), preserves `cause` when wrapping errors, and marks `network_error`,
   `timeout`, `rate_limited`, `upstream_unavailable`, and `internal_error` as `retryable`.
+
 - `quote` and `createTransfer` check their input with `QuoteRequestSchema` and
   `TransferRequestSchema` before calling the API. Input it would refuse throws `XebraApiError` with
   `status` 0 and code `invalid_amount` or `invalid_request`, and the problems on `extra.issues`,
