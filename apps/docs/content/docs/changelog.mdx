@@ -5,8 +5,17 @@ description: What changed in the Xebra API and SDK, newest first.
 
 ## Unreleased
 
+**API**:
+
+- `invalid_request` and `invalid_amount` from checking the input carry `issues`, each field that
+  failed as `{ path, message }`, beside the `detail` sentence. `openapi.json` lists it, and in
+  `@xebra/sdk` `ProblemSchema` has it as optional and `XebraApiError` carries it on `extra.issues`.
+
 **SDK**, `@xebra/sdk`:
 
+- `isXebraApiError(e)` (additive): a type guard for `XebraApiError` that also works when two copies
+  of the SDK are installed, where `instanceof` does not. It checks a brand,
+  `Symbol.for("xebra.error")`, and the error's `name`.
 - `XebraError` (additive): shared base error class exported from `@xebra/sdk` with `code`,
   `retryable`, and `cause`. `XebraApiError` now extends `XebraError` (keeping `instanceof
   XebraApiError` compatibility), preserves `cause` when wrapping errors, and marks `network_error`,
@@ -15,6 +24,15 @@ description: What changed in the Xebra API and SDK, newest first.
   `code` is `missing_api_key`, `no_deposit_address`, `http_error`, `network_error`, `timeout` or
   `invalid_response` (an answer without the fields the rebalancer reads); `retryable` is true for
   network errors, timeouts, 429 and 5xx; `body` keeps what 1Click sent. `status` is unchanged.
+- `CLIENT_ERROR_CODES`, `ClientErrorCode` and `XebraErrorCode` (additive): the codes the client
+  throws on its own, and every code an `XebraApiError` can carry. `XebraApiErrorCode` is kept as
+  the same type. `err.extra` types `minimum`, `maximum`, `have`, `need`, `total`, `limit` and
+  `needs` as strings.
+
+- `quote` and `createTransfer` check their input with `QuoteRequestSchema` and
+  `TransferRequestSchema` before calling the API. Input it would refuse throws `XebraApiError` with
+  `status` 0 and code `invalid_amount` or `invalid_request`, and the problems on `extra.issues`,
+  without a request.
 
 ## 0.4.0 (2026-11-15)
 

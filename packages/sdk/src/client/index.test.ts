@@ -1,10 +1,18 @@
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, expectTypeOf, it, vi } from "vitest";
+import {
+  type ApiErrorCode,
+  CLIENT_ERROR_CODES,
+  type ClientErrorCode,
+  ERROR_CODES,
+  type XebraErrorCode,
+} from "../api/errors.js";
 import { XebraError } from "../errors.js";
 import {
   XebraApiError,
   type XebraCallOptions,
   type XebraClient,
   createXebraClient,
+  isXebraApiError,
 } from "./index.js";
 
 const json = (status: number, body: unknown, type = "application/json") =>
@@ -65,6 +73,15 @@ describe("createXebraClient", () => {
     });
   });
 
+  it("puts a problem's field issues on extra.issues", async () => {
+    const issues = [{ path: ["amount"], message: "must be more than zero" }];
+    const client = createXebraClient({
+      fetch: async () => problem(422, "invalid_amount", { issues }),
+    });
+    const err = await client.routes().catch((e) => e);
+    expect(err).toMatchObject({ status: 422, code: "invalid_amount", extra: { issues } });
+  });
+
   it("refuses an answer that does not match the schema rather than passing it on", async () => {
     const client = createXebraClient({ fetch: async () => json(200, { routes: "nope" }) });
     await expect(client.routes()).rejects.toMatchObject({ code: "invalid_response" });
@@ -75,6 +92,63 @@ describe("createXebraClient", () => {
       fetch: async () => new Response("<html>", { status: 502 }),
     });
     await expect(client.routes()).rejects.toMatchObject({ code: "invalid_response", status: 502 });
+  });
+
+  it("keeps a code newer than this SDK, its detail, and the body, rather than invalid_response", async () => {
+    const body = {
+      type: "https://docs.xebra.exchange/errors/brand_new_code",
+      title: "Brand new",
+      status: 422,
+      detail: "A reason this SDK has never seen.",
+      code: "brand_new_code",
+      floor: "3",
+    };
+    const client = createXebraClient({
+      fetch: async () => json(422, body, "application/problem+json"),
+    });
+    const err = await client.quote({ from: "stellar", to: "base", amount: "1" }).catch((e) => e);
+    expect(err).toBeInstanceOf(XebraApiError);
+    expect(err).toMatchObject({
+      status: 422,
+      code: "brand_new_code",
+      detail: "A reason this SDK has never seen.",
+      message: "A reason this SDK has never seen.",
+      retryable: false,
+      extra: { body },
+    });
+    expect(err.cause).toMatchObject({ issues: expect.any(Array) });
+  });
+
+  it("reports a gateway's own JSON as invalid_response with its status and body", async () => {
+    const body = { error: { code: "FUNCTION_INVOCATION_FAILED", message: "Bad gateway" } };
+    const client = createXebraClient({ fetch: async () => json(502, body) });
+    const err = await client.routes().catch((e) => e);
+    expect(err).toMatchObject({
+      status: 502,
+      code: "invalid_response",
+      detail: "The API answered 502.",
+      extra: { body },
+    });
+  });
+
+  it("keeps a gateway's detail, but not a code that is not shaped like the API's", async () => {
+    const body = { code: "INTERNAL_SERVER_ERROR", detail: "Upstream died." };
+    const client = createXebraClient({ fetch: async () => json(500, body) });
+    await expect(client.routes()).rejects.toMatchObject({
+      status: 500,
+      code: "invalid_response",
+      detail: "Upstream died.",
+      extra: { body },
+    });
+  });
+
+  it("reports a JSON error body that is not an object as invalid_response", async () => {
+    const client = createXebraClient({ fetch: async () => json(503, "Service Unavailable") });
+    await expect(client.routes()).rejects.toMatchObject({
+      status: 503,
+      code: "invalid_response",
+      extra: { body: "Service Unavailable" },
+    });
   });
 
   it("gives up after its timeout", async () => {
@@ -218,6 +292,80 @@ describe("options on a single call", () => {
   });
 });
 
+describe("input the API would refuse", () => {
+  const QUOTE = { from: "stellar", to: "base", amount: "10" } as const;
+  const TRANSFER = { ...QUOTE, sender: "GSENDER", recipient: "0xrecipient" };
+  const neverCalled = () => vi.fn(async () => json(200, {}));
+
+  it("refuses an amount with seven places as invalid_amount, without a request", async () => {
+    const fetch = neverCalled();
+    const client = createXebraClient({ fetch });
+    const err = await client.quote({ ...QUOTE, amount: "12.1234567" }).catch((e) => e);
+    expect(err).toBeInstanceOf(XebraApiError);
+    expect(err).toMatchObject({
+      status: 0,
+      code: "invalid_amount",
+      retryable: false,
+      extra: {
+        issues: expect.arrayContaining([{ path: ["amount"], message: expect.any(String) }]),
+      },
+    });
+    expect(err.detail).toMatch(/^amount: /);
+    expect(fetch).not.toHaveBeenCalled();
+  });
+
+  it("refuses a zero amount and an unknown chain on a quote", async () => {
+    const fetch = neverCalled();
+    const client = createXebraClient({ fetch });
+    await expect(client.quote({ ...QUOTE, amount: "0" })).rejects.toMatchObject({
+      status: 0,
+      code: "invalid_amount",
+    });
+    const unknownChain = { ...QUOTE, to: "mars" } as unknown as Parameters<XebraClient["quote"]>[0];
+    const err = await client.quote(unknownChain).catch((e) => e);
+    expect(err).toMatchObject({
+      status: 0,
+      code: "invalid_request",
+      extra: { issues: [{ path: ["to"] }] },
+    });
+    expect(err.detail).toMatch(/^to: /);
+    expect(fetch).not.toHaveBeenCalled();
+  });
+
+  it("refuses a transfer with a missing sender, an extra field or a bad maxTotalFee", async () => {
+    const fetch = neverCalled();
+    const client = createXebraClient({ fetch });
+    type Transfer = Parameters<XebraClient["createTransfer"]>[0];
+    const { sender: _sender, ...noSender } = TRANSFER;
+    await expect(client.createTransfer(noSender as Transfer)).rejects.toMatchObject({
+      status: 0,
+      code: "invalid_request",
+      extra: { issues: [{ path: ["sender"] }] },
+    });
+    await expect(
+      client.createTransfer({ ...TRANSFER, memo: "x" } as unknown as Transfer),
+    ).rejects.toMatchObject({ status: 0, code: "invalid_request" });
+    await expect(client.createTransfer({ ...TRANSFER, maxTotalFee: "-1" })).rejects.toMatchObject({
+      status: 0,
+      code: "invalid_amount",
+      extra: { issues: [{ path: ["maxTotalFee"] }] },
+    });
+    expect(fetch).not.toHaveBeenCalled();
+  });
+
+  it("still sends what passes", async () => {
+    const fetch = vi.fn(async () => problem(422, "route_unavailable"));
+    const client = createXebraClient({ fetch });
+    await expect(client.quote({ ...QUOTE, speed: "fast" })).rejects.toMatchObject({
+      code: "route_unavailable",
+    });
+    await expect(client.createTransfer({ ...TRANSFER, maxTotalFee: "0.5" })).rejects.toMatchObject({
+      code: "route_unavailable",
+    });
+    expect(fetch).toHaveBeenCalledTimes(2);
+  });
+});
+
 describe("waitForDelivery", () => {
   it("polls until a settled state, waiting out a 503", async () => {
     const answers = [
@@ -330,6 +478,52 @@ async function failure(call: Promise<unknown>): Promise<XebraApiError> {
   throw new Error("expected the call to reject, and it did not");
 }
 
+describe("isXebraApiError", () => {
+  const brand = Symbol.for("xebra.error");
+
+  it("is true for this copy's errors", async () => {
+    const client = createXebraClient({ fetch: async () => problem(503, "upstream_unavailable") });
+    const err = await client.routes().catch((e) => e);
+    expect(isXebraApiError(err)).toBe(true);
+    expect(isXebraApiError(new XebraApiError(0, "timeout", "No answer."))).toBe(true);
+  });
+
+  it("is true for an error from another copy of the SDK, which carries the brand and the name", () => {
+    // What another install's XebraApiError looks like from here: not an instance of this class.
+    const other = Object.assign(new Error("a reason"), {
+      name: "XebraApiError",
+      status: 422,
+      code: "amount_below_minimum",
+      detail: "a reason",
+      extra: { minimum: "2" },
+      [brand]: true,
+    });
+    expect(other).not.toBeInstanceOf(XebraApiError);
+    expect(isXebraApiError(other)).toBe(true);
+    expect(isXebraApiError({ name: "XebraApiError", [brand]: true })).toBe(true);
+  });
+
+  it("is false without the brand, without the name, or for anything else", () => {
+    expect(isXebraApiError({ name: "XebraApiError", code: "timeout" })).toBe(false);
+    expect(isXebraApiError({ name: "Error", [brand]: true })).toBe(false);
+    expect(isXebraApiError({ name: "XebraApiError", [brand]: "yes" })).toBe(false);
+    expect(isXebraApiError(new XebraError("invalid_amount", "Not an amount."))).toBe(false);
+    expect(isXebraApiError(new Error("plain"))).toBe(false);
+    for (const value of [null, undefined, "XebraApiError", 0]) {
+      expect(isXebraApiError(value)).toBe(false);
+    }
+  });
+
+  it("keeps the brand out of what an error shows", () => {
+    const err = new XebraApiError(422, "invalid_amount", "Bad amount.");
+    expect(Object.keys(err)).not.toContain(brand);
+    expect(Object.getOwnPropertyDescriptor(err, brand)).toMatchObject({
+      value: true,
+      enumerable: false,
+    });
+  });
+});
+
 describe("a body that stops arriving", () => {
   const TX = "a".repeat(64);
   /** A 200 whose headers arrive and whose body then stalls, until the request is aborted. */
@@ -392,6 +586,35 @@ describe("a body that stops arriving", () => {
     caller.abort(reason);
     fail(new Error("socket closed"));
     await expect(pending).rejects.toBe(reason);
+  });
+});
+
+describe("error codes and extra fields, as types", () => {
+  it("names the client's own codes, apart from the API's", () => {
+    expect([...CLIENT_ERROR_CODES]).toEqual([
+      "network_error",
+      "timeout",
+      "invalid_response",
+      "wait_timeout",
+    ]);
+    for (const code of CLIENT_ERROR_CODES) expect(ERROR_CODES).not.toContain(code);
+    expectTypeOf<ClientErrorCode>().toEqualTypeOf<
+      "network_error" | "timeout" | "invalid_response" | "wait_timeout"
+    >();
+    expectTypeOf<XebraErrorCode>().toEqualTypeOf<ApiErrorCode | ClientErrorCode>();
+    expectTypeOf<XebraApiError["code"]>().toEqualTypeOf<XebraErrorCode>();
+  });
+
+  it("types the problem's figures on extra, and leaves the rest unknown", () => {
+    type Extra = XebraApiError["extra"];
+    for (const key of ["minimum", "maximum", "have", "need", "total", "limit", "needs"] as const) {
+      expectTypeOf<Extra[typeof key]>().toEqualTypeOf<string | undefined>();
+    }
+    expectTypeOf<Extra["minimum"]>().toEqualTypeOf<string | undefined>();
+    expectTypeOf<Extra["lastStatus"]>().toBeUnknown();
+    const err = new XebraApiError(422, "amount_below_minimum", "Too little.", { minimum: "2.4" });
+    const minimum: string | undefined = err.extra.minimum;
+    expect(minimum).toBe("2.4");
   });
 });
 

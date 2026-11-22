@@ -106,3 +106,43 @@ describe("a problem's instance", () => {
     expect(published.required).not.toContain("instance");
   });
 });
+
+describe("a problem's issues", () => {
+  const problem = {
+    type: "https://docs.xebra.exchange/errors/invalid_request",
+    title: "Invalid request",
+    status: 400,
+    detail: "to: Invalid option.",
+    code: "invalid_request",
+  };
+
+  it("are kept, so a form can mark the field, and are not required", () => {
+    const issues = [
+      { path: ["to"], message: "Invalid option" },
+      { path: [], message: 'Unrecognized key: "memo"' },
+    ];
+    expect(ProblemSchema.parse({ ...problem, issues }).issues).toEqual(issues);
+    expect(ProblemSchema.safeParse(problem).success).toBe(true);
+  });
+
+  it("must each be a path of strings and a message", () => {
+    for (const issues of [
+      [{ path: [0], message: "x" }],
+      [{ path: ["to"] }],
+      [{ path: "to", message: "x" }],
+      "to: Invalid option",
+    ]) {
+      expect(ProblemSchema.safeParse({ ...problem, issues }).success).toBe(false);
+    }
+  });
+
+  it("are in the published document, and optional", () => {
+    const published = buildOpenApiDocument().components?.schemas?.Problem as {
+      properties: Record<string, { type?: string; items?: { required?: string[] } }>;
+      required: string[];
+    };
+    expect(published.properties.issues?.type).toBe("array");
+    expect(published.properties.issues?.items?.required).toEqual(["path", "message"]);
+    expect(published.required).not.toContain("issues");
+  });
+});
