@@ -1,4 +1,11 @@
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, expectTypeOf, it, vi } from "vitest";
+import {
+  type ApiErrorCode,
+  CLIENT_ERROR_CODES,
+  type ClientErrorCode,
+  ERROR_CODES,
+  type XebraErrorCode,
+} from "../api/errors.js";
 import { XebraError } from "../errors.js";
 import {
   XebraApiError,
@@ -392,6 +399,35 @@ describe("a body that stops arriving", () => {
     caller.abort(reason);
     fail(new Error("socket closed"));
     await expect(pending).rejects.toBe(reason);
+  });
+});
+
+describe("error codes and extra fields, as types", () => {
+  it("names the client's own codes, apart from the API's", () => {
+    expect([...CLIENT_ERROR_CODES]).toEqual([
+      "network_error",
+      "timeout",
+      "invalid_response",
+      "wait_timeout",
+    ]);
+    for (const code of CLIENT_ERROR_CODES) expect(ERROR_CODES).not.toContain(code);
+    expectTypeOf<ClientErrorCode>().toEqualTypeOf<
+      "network_error" | "timeout" | "invalid_response" | "wait_timeout"
+    >();
+    expectTypeOf<XebraErrorCode>().toEqualTypeOf<ApiErrorCode | ClientErrorCode>();
+    expectTypeOf<XebraApiError["code"]>().toEqualTypeOf<XebraErrorCode>();
+  });
+
+  it("types the problem's figures on extra, and leaves the rest unknown", () => {
+    type Extra = XebraApiError["extra"];
+    for (const key of ["minimum", "maximum", "have", "need", "total", "limit", "needs"] as const) {
+      expectTypeOf<Extra[typeof key]>().toEqualTypeOf<string | undefined>();
+    }
+    expectTypeOf<Extra["minimum"]>().toEqualTypeOf<string | undefined>();
+    expectTypeOf<Extra["lastStatus"]>().toBeUnknown();
+    const err = new XebraApiError(422, "amount_below_minimum", "Too little.", { minimum: "2.4" });
+    const minimum: string | undefined = err.extra.minimum;
+    expect(minimum).toBe("2.4");
   });
 });
 

@@ -1,10 +1,11 @@
-import type { ApiErrorCode } from "../api/errors.js";
+import type { ApiErrorCode, XebraErrorCode } from "../api/errors.js";
 import {
   type ClaimBuild,
   ClaimBuildSchema,
   type ClaimRequest,
   type Health,
   HealthSchema,
+  type Problem,
   ProblemSchema,
   type Quote,
   type QuoteRequest,
@@ -31,12 +32,8 @@ const RETRYABLE_API_CODES = new Set<string>([
   "internal_error",
 ]);
 
-export type XebraApiErrorCode =
-  | ApiErrorCode
-  | "network_error"
-  | "timeout"
-  | "invalid_response"
-  | "wait_timeout";
+/** The same as `XebraErrorCode`, by the name it had first. */
+export type XebraApiErrorCode = XebraErrorCode;
 
 /** A problem the API answered with: `code` is stable, `detail` is written for a person. */
 export class XebraApiError extends XebraError {
@@ -47,7 +44,10 @@ export class XebraApiError extends XebraError {
     code: XebraApiErrorCode,
     readonly detail: string,
     /** The problem's other fields, such as `minimum`, `maximum`, `have` and `need`. */
-    readonly extra: Record<string, unknown> = {},
+    readonly extra: Partial<
+      Pick<Problem, "minimum" | "maximum" | "have" | "need" | "total" | "limit" | "needs">
+    > &
+      Record<string, unknown> = {},
     opts?: { cause?: unknown },
   ) {
     super(code, detail, {

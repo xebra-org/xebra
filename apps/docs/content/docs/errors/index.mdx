@@ -37,12 +37,13 @@ try {
   await xebra.quote({ from: "stellar", to: "base", amount: "0.5" });
 } catch (err) {
   if (err instanceof XebraApiError && err.code === "amount_below_minimum") {
-    console.log(`Send at least ${String(err.extra.minimum)} USDC.`);
+    console.log(`Send at least ${err.extra.minimum} USDC.`);
   }
 }
 ```
 
-The SDK adds three codes of its own, rather than coming from an API problem response:
+The SDK adds codes of its own, rather than coming from an API problem response. They are
+`CLIENT_ERROR_CODES`, and `XebraErrorCode` is the type of every code `err.code` can be:
 
 - `network_error` (`status` 0): the request did not reach the API.
 - `timeout` (`status` 0): no answer within `timeoutMs`, or `waitForDelivery` ran out of time.
@@ -72,3 +73,4 @@ The SDK adds three codes of its own, rather than coming from an API problem resp
 | `network_error` | 0 | Network error | yes, with backoff | client | unknown, check the transfer |
 | `timeout` | 0 | Timeout | yes, with backoff | client | unknown, check the transfer |
 | `invalid_response` | 502 | Invalid response | yes, with backoff | client | no |
+| `wait_timeout` | 0 | Wait timed out | later, with `getTransfer` | `waitForDelivery` | the burn did, check the transfer |
