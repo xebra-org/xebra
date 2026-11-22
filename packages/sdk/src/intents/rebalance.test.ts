@@ -161,7 +161,11 @@ describe("estimate", () => {
     expect(e.fees.cctp).toBe("0.0625");
     expect(e.fees.total).toBe("0.0649");
     expect(e.arrives).toBe("99999.9351");
-    expect(e.direct).toEqual({ arrives: null, reason: "No liquidity available" });
+    expect(e.direct).toEqual({
+      arrives: null,
+      reason: "No liquidity available",
+      code: "http_error",
+    });
     expect(e.better).toBe("rebalance");
     // Every quote was dry: nothing issued, nothing to sign.
     for (const c of one.calls.filter((c) => c.path === "/v0/quote")) expect(c.body?.dry).toBe(true);
@@ -173,6 +177,49 @@ describe("estimate", () => {
     const e = await rb.estimate(REQ);
     expect(e.direct).toEqual({ arrives: "99999.99" });
     expect(e.better).toBe("direct");
+  });
+
+  /** fake1Click, except that the direct-swap quote (different assets) gets `answer` instead. */
+  function directFails(answer: () => Promise<Response>) {
+    const one = fake1Click({ directSwap: "99999990000" });
+    return (async (url: string | URL | Request, init?: RequestInit) => {
+      const body = init?.body ? (JSON.parse(String(init.body)) as Body) : undefined;
+      if (body && body.originAsset !== body.destinationAsset) return answer();
+      return one.fetch(url, init);
+    }) as typeof globalThis.fetch;
+  }
+
+  it("says unknown, not rebalance, when the direct quote hits a network error", async () => {
+    const fetch = directFails(async () => {
+      throw new TypeError("fetch failed");
+    });
+    const e = await createRebalancer({ xebra: fakeXebra(), fetch, now: () => NOW }).estimate(REQ);
+    expect(e.direct).toMatchObject({ arrives: null, code: "network_error" });
+    expect(e.better).toBe("unknown");
+    expect(e.arrives).toBe("99999.9351");
+  });
+
+  it("says unknown when 1Click is down or rate-limits the direct quote", async () => {
+    for (const status of [503, 429]) {
+      const fetch = directFails(async () => new Response("{}", { status }));
+      const e = await createRebalancer({ xebra: fakeXebra(), fetch, now: () => NOW }).estimate(REQ);
+      expect(e.direct).toMatchObject({ arrives: null, code: "http_error" });
+      expect(e.better).toBe("unknown");
+    }
+  });
+
+  it("throws a bug in the comparison instead of hiding it in direct.reason", async () => {
+    const broken = {
+      status: 200,
+      text: async () => "{}",
+      get ok(): boolean {
+        throw new TypeError("not a Response");
+      },
+    };
+    const fetch = directFails(async () => broken as unknown as Response);
+    await expect(
+      createRebalancer({ xebra: fakeXebra(), fetch, now: () => NOW }).estimate(REQ),
+    ).rejects.toThrow("not a Response");
   });
 
   it("refuses a route Xebra does not run", async () => {

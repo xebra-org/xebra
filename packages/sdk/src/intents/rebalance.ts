@@ -109,11 +109,15 @@ export interface RebalanceEstimate {
   seconds: number;
   /**
    * The same move as one swap inside NEAR Intents, for comparison: what would arrive, or null with
-   * the reason when no market maker quotes it (often the case for large amounts).
+   * the reason and the OneClickError `code` when there is no quote. `http_error` is 1Click saying
+   * no (often no market maker for a large amount); anything else means it could not be asked.
    */
-  direct: { arrives: string } | { arrives: null; reason: string };
-  /** Which way leaves more USDC on the `to` balance. */
-  better: "rebalance" | "direct";
+  direct: { arrives: string } | { arrives: null; reason: string; code: OneClickErrorCode };
+  /**
+   * Which way leaves more USDC on the `to` balance. "unknown" when the direct swap could not be
+   * priced (1Click unreachable, timed out, 429 or 5xx): ask again before choosing.
+   */
+  better: "rebalance" | "direct" | "unknown";
 }
 
 export interface Withdrawal {
@@ -144,13 +148,38 @@ export type OneClickStatus =
   | "REFUNDED"
   | "FAILED";
 
-export class OneClickError extends Error {
+/** How a 1Click call failed. */
+export type OneClickErrorCode =
+  | "missing_api_key"
+  | "no_deposit_address"
+  | "http_error"
+  | "network_error"
+  | "timeout"
+  | "invalid_response";
+
+/**
+ * A 1Click call failed. `code` says how. `status` is 1Click's HTTP status for `http_error` and
+ * `invalid_response`, else 0. `body` is what 1Click sent (parsed JSON, else the raw text), when it
+ * sent anything. `retryable` is true for network errors, timeouts, 429 and 5xx.
+ */
+export class OneClickError extends XebraError {
+  declare readonly code: OneClickErrorCode;
+  readonly status: number;
+  readonly body?: unknown;
+
   constructor(
     message: string,
-    readonly status: number,
+    status: number,
+    opts: { code?: OneClickErrorCode; body?: unknown; cause?: unknown } = {},
   ) {
-    super(message);
+    const code = opts.code ?? "http_error";
+    super(code, message, {
+      retryable: code === "network_error" || code === "timeout" || status === 429 || status >= 500,
+      cause: opts.cause,
+    });
     this.name = "OneClickError";
+    this.status = status;
+    if (opts.body !== undefined) this.body = opts.body;
   }
 }
 
@@ -221,17 +250,31 @@ export function createRebalancer(opts: RebalancerOptions) {
 
   async function call<T>(path: string, body?: unknown, needsKey = false): Promise<T> {
     if (needsKey) requireKey();
-    const res = await doFetch(`${base}${path}`, {
-      method: body === undefined ? "GET" : "POST",
-      headers: {
-        Accept: "application/json",
-        ...(body !== undefined ? { "Content-Type": "application/json" } : {}),
-        ...(apiKey ? { "X-API-Key": apiKey } : {}),
-      },
-      ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
-      signal: AbortSignal.timeout(timeoutMs),
-    });
-    const text = await res.text();
+    let res: Response;
+    let text: string;
+    try {
+      res = await doFetch(`${base}${path}`, {
+        method: body === undefined ? "GET" : "POST",
+        headers: {
+          Accept: "application/json",
+          ...(body !== undefined ? { "Content-Type": "application/json" } : {}),
+          ...(apiKey ? { "X-API-Key": apiKey } : {}),
+        },
+        ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
+        signal: AbortSignal.timeout(timeoutMs),
+      });
+      text = await res.text();
+    } catch (err) {
+      const name = err instanceof Error ? err.name : "";
+      const timedOut = name === "TimeoutError" || name === "AbortError";
+      throw new OneClickError(
+        timedOut
+          ? `1Click did not answer ${path.split("?")[0]} within ${timeoutMs} ms.`
+          : `Could not reach 1Click (${path.split("?")[0]}).`,
+        0,
+        { code: timedOut ? "timeout" : "network_error", cause: err },
+      );
+    }
     let json: unknown = null;
     try {
       json = text ? JSON.parse(text) : null;
@@ -350,6 +393,7 @@ export function createRebalancer(opts: RebalancerOptions) {
     const { quote: w } = await withdrawQuote(r, fromToken, true);
     const receives = fromUnits(w.minAmountOut, fromToken.decimals);
     const x = await xebraQuote(from, to, receives, r.speed);
+    let priced = true;
     const [{ quote: d }, direct] = await Promise.all([
       depositQuote(r, toToken, x.recipientGets, true, 60),
       quote({
@@ -367,17 +411,26 @@ export function createRebalancer(opts: RebalancerOptions) {
       }).then(
         // Expected output; its floor (minAmountOut) is lower by the 0.1% slippage allowed.
         ({ quote: q }) => ({ arrives: fromUnits(q.amountOut, toToken.decimals) }),
-        (err: unknown) => ({
-          arrives: null,
-          reason: err instanceof Error ? err.message : String(err),
-        }),
+        (err: unknown) => {
+          // Only 1Click's own failures mean "no direct quote"; anything else is a bug: throw it.
+          if (!(err instanceof OneClickError)) throw err;
+          // A refusal (no market maker) settles the comparison; an outage or a bad answer does not.
+          priced = err.code === "http_error" && !err.retryable;
+          return { arrives: null, reason: err.message, code: err.code };
+        },
       ),
     ]);
     const arrives = fromUnits(d.minAmountOut, toToken.decimals);
     const withdrawFee = sub(r.amount, receives);
     const cctpFee = sub(receives, x.recipientGets);
     const better =
-      direct.arrives !== null && cmp(direct.arrives, arrives) > 0 ? "direct" : "rebalance";
+      direct.arrives !== null
+        ? cmp(direct.arrives, arrives) > 0
+          ? "direct"
+          : "rebalance"
+        : priced
+          ? "rebalance"
+          : "unknown";
     return {
       from,
       to,
