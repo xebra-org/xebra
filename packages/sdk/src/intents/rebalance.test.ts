@@ -298,4 +298,87 @@ describe("waitFor", () => {
     const rb = createRebalancer({ xebra: fakeXebra(), fetch: one.fetch, now: () => NOW });
     await expect(rb.waitFor("0xdep", { intervalMs: 1 })).resolves.toBe("SUCCESS");
   });
+
+  /** fake1Click, except that /v0/status answers with each of `first` in turn before its own. */
+  function statusFirst(...first: (() => Promise<Response>)[]) {
+    const one = fake1Click();
+    let n = 0;
+    const fetch = vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
+      if (new URL(String(url)).pathname !== "/v0/status") return one.fetch(url, init);
+      const next = first[n++];
+      return next ? next() : one.fetch(url, init);
+    });
+    return { fetch: fetch as unknown as typeof globalThis.fetch, polls: () => n };
+  }
+  const answer = (status: number) => async () => new Response("{}", { status });
+
+  it("rides out a dropped connection, a timeout, a 429 and a 503", async () => {
+    const dropped = async () => {
+      throw new TypeError("fetch failed");
+    };
+    const timedOut = async () => {
+      throw new DOMException("The operation timed out.", "TimeoutError");
+    };
+    const f = statusFirst(dropped, timedOut, answer(429), answer(503));
+    const rb = createRebalancer({ xebra: fakeXebra(), fetch: f.fetch, now: () => NOW });
+    await expect(rb.waitFor("0xdep", { intervalMs: 1 })).resolves.toBe("SUCCESS");
+    expect(f.polls()).toBe(5);
+  });
+
+  it("wraps fetch failures as OneClickError network_error or timeout, with the cause", async () => {
+    const cause = new TypeError("fetch failed");
+    const rb = createRebalancer({
+      xebra: fakeXebra(),
+      fetch: (async () => {
+        throw cause;
+      }) as typeof globalThis.fetch,
+      now: () => NOW,
+    });
+    const err = await rb.status("0xdep").catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(OneClickError);
+    expect(err).toMatchObject({ code: "network_error", status: 0, retryable: true, cause });
+
+    const slow = createRebalancer({
+      xebra: fakeXebra(),
+      fetch: (async () => {
+        throw new DOMException("The operation timed out.", "TimeoutError");
+      }) as typeof globalThis.fetch,
+      now: () => NOW,
+    });
+    await expect(slow.status("0xdep")).rejects.toMatchObject({ code: "timeout", retryable: true });
+  });
+
+  it("still throws at once on an answer that will not change, like a 400", async () => {
+    const f = statusFirst(answer(400));
+    const rb = createRebalancer({ xebra: fakeXebra(), fetch: f.fetch, now: () => NOW });
+    await expect(rb.waitFor("0xdep", { intervalMs: 1 })).rejects.toMatchObject({ status: 400 });
+    expect(f.polls()).toBe(1);
+  });
+
+  it("honours its deadline while 1Click is down, and says why", async () => {
+    let t = NOW;
+    const tick = () => {
+      t += 1_000;
+      return t;
+    };
+    const f = statusFirst(...Array.from({ length: 50 }, () => answer(503)));
+    const rb = createRebalancer({ xebra: fakeXebra(), fetch: f.fetch, now: tick });
+    const err = await rb
+      .waitFor("0xdep", { intervalMs: 1, timeoutMs: 5_000 })
+      .catch((e: unknown) => e);
+    expect((err as Error).message).toMatch(/did not settle in time.*check status/);
+    expect((err as Error).cause).toMatchObject({ status: 503 });
+  });
+
+  it("stops at once when aborted during the wait between polls", async () => {
+    const f = statusFirst(async () => new Response(JSON.stringify({ status: "PROCESSING" })));
+    const rb = createRebalancer({ xebra: fakeXebra(), fetch: f.fetch, now: () => NOW });
+    const ctl = new AbortController();
+    const started = Date.now();
+    const waiting = rb.waitFor("0xdep", { intervalMs: 60_000, signal: ctl.signal });
+    setTimeout(() => ctl.abort(new Error("stop")), 20);
+    await expect(waiting).rejects.toThrow("stop");
+    expect(Date.now() - started).toBeLessThan(5_000);
+    expect(f.polls()).toBe(1);
+  });
 });

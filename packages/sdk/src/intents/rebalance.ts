@@ -144,13 +144,38 @@ export type OneClickStatus =
   | "REFUNDED"
   | "FAILED";
 
-export class OneClickError extends Error {
+/** How a 1Click call failed. */
+export type OneClickErrorCode =
+  | "missing_api_key"
+  | "no_deposit_address"
+  | "http_error"
+  | "network_error"
+  | "timeout"
+  | "invalid_response";
+
+/**
+ * A 1Click call failed. `code` says how. `status` is 1Click's HTTP status for `http_error` and
+ * `invalid_response`, else 0. `body` is what 1Click sent (parsed JSON, else the raw text), when it
+ * sent anything. `retryable` is true for network errors, timeouts, 429 and 5xx.
+ */
+export class OneClickError extends XebraError {
+  declare readonly code: OneClickErrorCode;
+  readonly status: number;
+  readonly body?: unknown;
+
   constructor(
     message: string,
-    readonly status: number,
+    status: number,
+    opts: { code?: OneClickErrorCode; body?: unknown; cause?: unknown } = {},
   ) {
-    super(message);
+    const code = opts.code ?? "http_error";
+    super(code, message, {
+      retryable: code === "network_error" || code === "timeout" || status === 429 || status >= 500,
+      cause: opts.cause,
+    });
     this.name = "OneClickError";
+    this.status = status;
+    if (opts.body !== undefined) this.body = opts.body;
   }
 }
 
@@ -221,17 +246,31 @@ export function createRebalancer(opts: RebalancerOptions) {
 
   async function call<T>(path: string, body?: unknown, needsKey = false): Promise<T> {
     if (needsKey) requireKey();
-    const res = await doFetch(`${base}${path}`, {
-      method: body === undefined ? "GET" : "POST",
-      headers: {
-        Accept: "application/json",
-        ...(body !== undefined ? { "Content-Type": "application/json" } : {}),
-        ...(apiKey ? { "X-API-Key": apiKey } : {}),
-      },
-      ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
-      signal: AbortSignal.timeout(timeoutMs),
-    });
-    const text = await res.text();
+    let res: Response;
+    let text: string;
+    try {
+      res = await doFetch(`${base}${path}`, {
+        method: body === undefined ? "GET" : "POST",
+        headers: {
+          Accept: "application/json",
+          ...(body !== undefined ? { "Content-Type": "application/json" } : {}),
+          ...(apiKey ? { "X-API-Key": apiKey } : {}),
+        },
+        ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
+        signal: AbortSignal.timeout(timeoutMs),
+      });
+      text = await res.text();
+    } catch (err) {
+      const name = err instanceof Error ? err.name : "";
+      const timedOut = name === "TimeoutError" || name === "AbortError";
+      throw new OneClickError(
+        timedOut
+          ? `1Click did not answer ${path.split("?")[0]} within ${timeoutMs} ms.`
+          : `Could not reach 1Click (${path.split("?")[0]}).`,
+        0,
+        { code: timedOut ? "timeout" : "network_error", cause: err },
+      );
+    }
     let json: unknown = null;
     try {
       json = text ? JSON.parse(text) : null;
@@ -474,23 +513,54 @@ export function createRebalancer(opts: RebalancerOptions) {
     return s.status;
   }
 
-  /** Polls `status` until SUCCESS, REFUNDED or FAILED. Default every 5 s for up to 2 h. */
+  /** Waits `ms`, or rejects with the signal's reason as soon as it aborts. */
+  function sleep(ms: number, signal?: AbortSignal): Promise<void> {
+    return new Promise((ok, fail) => {
+      if (signal?.aborted) return fail(signal.reason);
+      const onAbort = () => {
+        clearTimeout(t);
+        fail(signal?.reason);
+      };
+      const t = setTimeout(() => {
+        signal?.removeEventListener("abort", onAbort);
+        ok();
+      }, ms);
+      signal?.addEventListener("abort", onAbort, { once: true });
+    });
+  }
+
+  /**
+   * Polls `status` until SUCCESS, REFUNDED or FAILED. Default every 5 s for up to 2 h. Network
+   * errors, timeouts, 429 and 5xx from 1Click do not end the wait: it backs off (doubling, up to
+   * a minute) and keeps polling until the deadline. An abort through `signal` ends it at once.
+   */
   async function waitFor(
     depositAddress: string,
     o: { intervalMs?: number; timeoutMs?: number; signal?: AbortSignal } = {},
   ): Promise<OneClickStatus> {
     const interval = o.intervalMs ?? 5_000;
     const end = now() + (o.timeoutMs ?? 2 * 60 * 60_000);
+    let wait = interval;
+    let lastError: unknown;
     for (;;) {
       o.signal?.throwIfAborted();
       try {
         const s = await status(depositAddress);
         if (s === "SUCCESS" || s === "REFUNDED" || s === "FAILED") return s;
+        wait = interval;
+        lastError = undefined;
       } catch (err) {
-        if (!(err instanceof OneClickError) || err.status < 500) throw err;
+        if (!(err instanceof OneClickError) || !err.retryable) throw err;
+        lastError = err;
+        wait = Math.max(interval, Math.min(wait * 2, 60_000));
       }
-      if (now() + interval > end) throw new Error(`${depositAddress} did not settle in time.`);
-      await new Promise((ok) => setTimeout(ok, interval));
+      if (now() + wait > end) {
+        throw new Error(
+          `${depositAddress} did not settle in time. It may still: check status() before acting again.`,
+          { cause: lastError },
+        );
+      }
+      await sleep(wait, o.signal);
     }
   }
 
