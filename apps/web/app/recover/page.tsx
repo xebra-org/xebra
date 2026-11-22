@@ -3,8 +3,8 @@
 import { useCallback, useEffect, useState } from "react";
 import { Notice } from "../../components/ui/notice";
 import { browserConnection } from "../../lib/claim";
-import { formatError, reportError } from "../../lib/format-error";
 import { waitForSignature } from "../../lib/solana-confirm";
+import { type ClassifiedError, classifyWalletError } from "../../lib/wallet-error";
 
 /**
  * Countersigns a recovery transaction for a CCTP transfer that was burned to a wallet address
@@ -49,8 +49,8 @@ export default function RecoverPage() {
   const [provider, setProvider] = useState<PhantomProvider | null>(null);
   const [wallet, setWallet] = useState<string | null>(null);
   const [payload, setPayload] = useState("");
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [step, setStep] = useState<"idle" | "signing" | "confirming">("idle");
+  const [error, setError] = useState<ClassifiedError | null>(null);
   const [signature, setSignature] = useState<string | null>(null);
 
   useEffect(() => {
@@ -64,13 +64,13 @@ export default function RecoverPage() {
       const { publicKey } = await provider.connect();
       setWallet(publicKey.toBase58());
     } catch (err) {
-      setError(reportError("wallet connect failed", err));
+      setError(classifyWalletError(err));
     }
   }, [provider]);
 
   async function signAndSubmit() {
     if (!provider || !payload.trim()) return;
-    setBusy(true);
+    setStep("signing");
     setError(null);
     setSignature(null);
     try {
@@ -82,6 +82,7 @@ export default function RecoverPage() {
       // touches an address the user is about to convert into a token account; signing that
       // blind is exactly the kind of thing a wallet prompt does not make legible.
       const signed = await provider.signTransaction(tx);
+      setStep("confirming");
 
       // Through the same-origin proxy: the public RPC refuses a request that carries an Origin.
       const connection = browserConnection();
@@ -89,9 +90,9 @@ export default function RecoverPage() {
       await waitForSignature(connection, sig);
       setSignature(sig);
     } catch (err) {
-      setError(reportError("recovery signing failed", err));
+      setError(classifyWalletError(err));
     } finally {
-      setBusy(false);
+      setStep("idle");
     }
   }
 
@@ -150,13 +151,21 @@ export default function RecoverPage() {
         />
       </div>
 
-      {error && (
-        <Notice tone="alarm" title="That did not go through">
-          <pre className="max-h-48 overflow-auto whitespace-pre-wrap break-words font-mono text-[0.75rem] leading-relaxed text-bone/60">
-            {error}
-          </pre>
-        </Notice>
-      )}
+      {error &&
+        (error.kind === "declined" || error.kind === "popup" ? (
+          <Notice tone="info" title="Wallet request cancelled">
+            {error.message}
+          </Notice>
+        ) : (
+          <Notice tone="alarm" title="That did not go through">
+            <p className="text-[0.8125rem] text-bone/80">{error.message}</p>
+            {error.raw && error.raw !== error.message && (
+              <pre className="mt-2 max-h-48 overflow-auto whitespace-pre-wrap break-words font-mono text-[0.75rem] leading-relaxed text-bone/50">
+                {error.raw}
+              </pre>
+            )}
+          </Notice>
+        ))}
 
       {signature ? (
         <Notice tone="signal" title="Submitted">
@@ -173,11 +182,15 @@ export default function RecoverPage() {
       ) : (
         <button
           type="button"
-          disabled={!wallet || !payload.trim() || busy}
+          disabled={!wallet || !payload.trim() || step !== "idle"}
           onClick={signAndSubmit}
           className="w-full rounded-tray bg-bone px-4 py-3 font-semibold text-obsidian transition-all duration-200 hover:bg-bone/90 active:scale-[0.99] disabled:cursor-not-allowed disabled:bg-bone/10 disabled:text-bone/30"
         >
-          {busy ? "Confirm in your wallet…" : "Sign and submit"}
+          {step === "signing"
+            ? "Confirm in your wallet…"
+            : step === "confirming"
+              ? "Waiting for the network…"
+              : "Sign and submit"}
         </button>
       )}
 

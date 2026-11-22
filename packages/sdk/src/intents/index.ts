@@ -27,6 +27,7 @@ import type { TransferBuild } from "../api/schemas.js";
 import type { XebraClient } from "../client/index.js";
 import { EVM_CHAINS, type EvmChainId, isEvmChainId } from "../core/chains/evm.js";
 import { type ChainId, isChainId } from "../core/chains/ids.js";
+import { XebraError } from "../errors.js";
 
 /**
  * NEAR Intents' chain names (the `blockchain` field of the 1Click token list) for the chains Xebra
@@ -75,7 +76,7 @@ export function toIntentsChain(chain: ChainId): IntentsChain | null {
  */
 export function intentsAccountFor(stellarAddress: string): string {
   if (!StrKey.isValidEd25519PublicKey(stellarAddress)) {
-    throw new Error(`Not a Stellar account address: ${stellarAddress}`);
+    throw new XebraError("invalid_recipient", `Not a Stellar account address: ${stellarAddress}`);
   }
   // No Buffer: this runs in browsers too.
   return Array.from(StrKey.decodeEd25519PublicKey(stellarAddress), (b) =>
@@ -232,9 +233,13 @@ export function createIntentsRouter(opts: IntentsRouterOptions) {
   async function buildDeposit(r: DepositRequest): Promise<TransferBuild> {
     const from = toXebraChain(r.from);
     const to = toXebraChain(r.depositChain);
-    if (!from || !to) throw new Error(`Unknown chain: ${!from ? r.from : r.depositChain}`);
+    if (!from || !to)
+      throw new XebraError("unknown_chain", `Unknown chain: ${!from ? r.from : r.depositChain}`);
     if (!(await isRouteAvailable(from, to))) {
-      throw new Error(`Xebra does not move USDC from ${from} to ${to} right now.`);
+      throw new XebraError(
+        "route_unavailable",
+        `Xebra does not move USDC from ${from} to ${to} right now.`,
+      );
     }
     return opts.client.createTransfer({
       from,

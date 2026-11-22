@@ -14,7 +14,8 @@ export const FEES = {
   /** The least Xebra's fee can be, in USDC. Circle's delivery fee is paid out of it. */
   minFeeUsdc: "0.01",
   minTransferUsdc: "1",
-  maxTransferUsdc: "100",
+  stellarMaxTransferUsdc: "10,000,000",
+  arcMaxTransferUsdc: "100",
   asOf: "2026-11-22",
 } as const;
 

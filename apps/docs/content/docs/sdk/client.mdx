@@ -52,13 +52,16 @@ const xebra = createXebraClient({
 
 | Method | Request | Returns |
 |---|---|---|
-| `routes()` | `GET /v1/routes` | `Routes` |
-| `quote(q)` | `GET /v1/quote` | `Quote` |
-| `createTransfer(r)` | `POST /v1/transfers` | `TransferBuild` |
-| `getTransfer(chain, tx, signal?)` | `GET /v1/transfers/{chain}/{tx}` | `TransferStatus` |
+| `routes(opts?)` | `GET /v1/routes` | `Routes` |
+| `quote(q, opts?)` | `GET /v1/quote` | `Quote` |
+| `createTransfer(r, opts?)` | `POST /v1/transfers` | `TransferBuild` |
+| `getTransfer(chain, tx, opts?)` | `GET /v1/transfers/{chain}/{tx}` | `TransferStatus` |
 | `waitForDelivery(chain, tx, opts?)` | polls `getTransfer` | `TransferStatus` |
-| `createClaim(r)` | `POST /v1/claims` | `ClaimBuild` |
-| `health()` | `GET /v1/health` | `Health` |
+| `createClaim(r, opts?)` | `POST /v1/claims` | `ClaimBuild` |
+| `health(opts?)` | `GET /v1/health` | `Health` |
+
+Every method but `waitForDelivery` takes the same `opts`, a signal and a timeout for that one call:
+see [Cancelling](#cancelling). `waitForDelivery` has options of its own, described below.
 
 ### routes()
 
@@ -196,7 +199,7 @@ Ask the wallet for each step in order, and wait for each to confirm before the n
 must be included on chain before the `burn` that spends it.
 
 ```ts twoslash
-import type { TransferStep } from "@xebra/sdk/build";
+import type { TransferStep } from "@xebra/sdk";
 declare const steps: TransferStep[];
 declare function signAndSend(step: TransferStep): Promise<string>;
 // ---cut---
@@ -300,7 +303,7 @@ For a claim on Solana where the recipient's USDC account must be opened, also pa
 
 ## Errors
 
-Every failure is thrown as `XebraApiError`. Its `code` is stable and safe to branch on; its
+Every failure is thrown as `XebraApiError` (aborting a signal rejects with the signal's reason instead). Its `code` is stable and safe to branch on; its
 `detail` is a sentence written for a person.
 
 ```ts twoslash
@@ -329,7 +332,7 @@ try {
     },
     code: {
       type: 'ApiErrorCode | "network_error" | "timeout" | "invalid_response"',
-      description: 'Stable. The API codes are listed in [the API overview](/docs/api).',
+      description: 'Stable. The API codes are listed on [Errors](/docs/errors).',
       required: true,
     },
     detail: { type: 'string', description: 'A sentence for a person.', required: true },
@@ -341,16 +344,51 @@ try {
   }}
 />
 
-Three codes come from the client itself, not the API:
+Three codes come from the client itself, rather than coming from an API problem response:
 
-- `network_error`: the request did not reach the API.
-- `timeout`: no answer within `timeoutMs`, or `waitForDelivery` ran out of time.
-- `invalid_response`: the API answered with something that is not JSON or does not match the
-  SDK's schema.
+- `network_error` (`status` 0): the request did not reach the API.
+- `timeout` (`status` 0): no answer within `timeoutMs`, or `waitForDelivery` ran out of time.
+- `invalid_response` (carries the real HTTP status, such as 502): the API answered with something
+  that is not JSON or does not match the SDK's schema.
 
 The list of every code, with its HTTP status, is exported as `ERROR_STATUS` and `ERROR_CODES`.
 
 ## Cancelling
 
-`getTransfer` and `waitForDelivery` take an `AbortSignal`. The client's own timeout still applies to
-each request.
+Every method takes an options object as its last argument, so any call can be stopped, for example
+when the component that started it unmounts.
+
+```ts twoslash
+import { createXebraClient } from "@xebra/sdk";
+const xebra = createXebraClient();
+// ---cut---
+const controller = new AbortController();
+
+const quote = await xebra.quote(
+  { from: "stellar", to: "base", amount: "10" },
+  { signal: controller.signal, timeoutMs: 5_000 },
+);
+```
+
+<TypeTable
+  type={{
+    signal: {
+      type: 'AbortSignal',
+      description:
+        "Stops the call. It rejects with the signal's reason, not with an `XebraApiError`.",
+    },
+    timeoutMs: {
+      type: 'number',
+      description:
+        "How long this one call may take before it fails with code `timeout`, in place of the client's `timeoutMs`.",
+      default: "the client's timeoutMs",
+    },
+  }}
+/>
+
+A call given only a signal is still bound by the client's timeout: whichever comes first ends the
+request. `timeoutMs` applies to that call alone, and can be shorter or longer than the client's.
+
+`getTransfer` also still takes a bare `AbortSignal` as its third argument, as it did before it took
+options. `waitForDelivery` takes a `signal` among its own options; its `timeoutMs` is the deadline
+for the whole wait, and each poll it makes is bound by the client's timeout.

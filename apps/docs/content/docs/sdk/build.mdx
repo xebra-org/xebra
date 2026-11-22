@@ -144,10 +144,45 @@ The burn names Circle's `CctpForwarder` on Stellar as recipient and destination 
 that carries the Stellar recipient. See [Sui to Stellar](/docs/guides/sui-to-stellar) for how
 delivery and claims work on this route.
 
+## Errors
+
+The builders do not share a base error class. These named errors are exported from `/build`:
+
+- `StellarSimulationError` is thrown when Stellar simulation reports that the contract refused the
+  call. Its `message` contains the RPC's message. Other failures, such as an unreachable RPC, are
+  passed through unchanged.
+- `InsufficientUsdcError` is thrown by the Sui burn builders when the sender's USDC balance is
+  below the requested amount. It has `code: "insufficient_balance"`, and `have` and `need` as
+  `bigint`s in 6-decimal base units; `message` describes the shortfall.
+- `SuiBuildError` is thrown before a Sui burn is built when the sender is not a Sui address
+  (`code: "invalid_request"`) or the amount is not positive (`code: "invalid_amount"`). It has
+  `code` and the inherited `message`.
+
+[`parseUsdc`](/docs/sdk/core#amounts) throws an ordinary `Error` for malformed input or more than
+7 decimal places; its `message` explains the problem. Other builder validation failures are also
+ordinary `Error`s, while failures from underlying RPC clients can propagate unchanged.
+
+```ts twoslash
+import { buildStellarBridge, StellarSimulationError } from "@xebra/sdk/build";
+declare const server: Parameters<typeof buildStellarBridge>[0];
+declare const cfg: Parameters<typeof buildStellarBridge>[1];
+declare const request: Parameters<typeof buildStellarBridge>[2];
+// ---cut---
+try {
+  await buildStellarBridge(server, cfg, request);
+} catch (error) {
+  if (error instanceof StellarSimulationError) {
+    console.error("The contract refused the call:", error.message);
+  } else {
+    throw error; // For example, an RPC failure is not wrapped.
+  }
+}
+```
+
 ## Types
 
 `TransferStep` and `UnsignedTx` are exported from `/build` as well as from the package root:
 
 ```ts twoslash
-import type { TransferStep, UnsignedTx } from "@xebra/sdk/build";
+import type { TransferStep, UnsignedTx } from "@xebra/sdk";
 ```

@@ -1,0 +1,387 @@
+---
+title: Rebalancer
+description: createRebalancer moves a market maker's own USDC inside NEAR Intents from one chain's asset to another's over CCTP, and what each error means and where the money is.
+---
+
+`@xebra/sdk/intents` exports `createRebalancer`, for a market maker that holds USDC inside NEAR
+Intents on several chains. NEAR Intents keeps one balance per chain: Base USDC, Avalanche USDC,
+Solana USDC and so on, each behind its own bridge. When your Base USDC is full and your Avalanche
+USDC is empty you cannot fill an Avalanche quote, and swapping one for the other inside Intents
+needs another market maker on the far side, which large amounts often do not find.
+
+`createRebalancer` moves the money itself, over Circle's CCTP:
+
+```ts twoslash
+import { createXebraClient } from "@xebra/sdk";
+import { createRebalancer } from "@xebra/sdk/intents";
+
+const rb = createRebalancer({
+  xebra: createXebraClient(),
+  oneClick: { apiKey: "your 1Click partner key" },
+});
+```
+
+Every step is the market maker's own money, signed by its own keys. Xebra builds the burn and never
+holds anything. See [NEAR Intents](/docs/guides/near-intents) for deposits into 1Click that are not
+rebalances.
+
+## The three steps
+
+| Step | What happens | Who signs | Where the money is afterwards |
+|---|---|---|---|
+| 1. Withdraw | 1Click quotes a withdrawal of `from` USDC to `fromWallet`, and returns an unsigned intent | The key registered for `intentsAccount` in NEAR Intents | `fromWallet`, on `from` |
+| 2. Burn | 1Click issues a deposit address on `to`; Xebra builds the CCTP burn of that USDC from `fromWallet` into it | `fromWallet` | In flight: burned on `from`, being minted on `to` |
+| 3. Deposit | Circle mints native USDC into the deposit address, and 1Click credits `intentsAccount` | Nobody | The NEAR Intents `to` balance |
+
+The withdrawal is the only step that needs a 1Click partner API key: `generate-intent` and
+`submit-intent` are partner endpoints. Market makers onboarded through
+[partners.near-intents.org](https://partners.near-intents.org) have one. It is passed in
+`oneClick.apiKey` and only ever sent to 1Click. Quotes, estimates and the deposit step work
+without it.
+
+## The request
+
+`estimate`, `startWithdrawal` and `prepareDeposit` all take the same `RebalanceRequest`.
+
+<TypeTable
+  type={{
+    intentsAccount: {
+      type: 'string',
+      description: 'Your account inside NEAR Intents, the intent `signer_id`, e.g. `"mm.near"`. Also where the deposit is credited and a failed withdrawal is refunded.',
+      required: true,
+    },
+    from: {
+      type: 'string',
+      description: 'The chain whose USDC balance is too full, in Xebra\'s or NEAR Intents\' naming: `"base"`, `"avax"`.',
+      required: true,
+    },
+    to: {
+      type: 'string',
+      description: 'The chain whose USDC balance needs topping up.',
+      required: true,
+    },
+    amount: {
+      type: 'string',
+      description: 'Decimal USDC to move, e.g. `"100000"`. Refused if it has more decimal places than the token has.',
+      required: true,
+    },
+    fromWallet: {
+      type: 'string',
+      description: 'Your own wallet on `from`: receives the withdrawal and signs the burn.',
+      required: true,
+    },
+    toWallet: {
+      type: 'string',
+      description: 'Your own wallet on `to`: where 1Click refunds a deposit that arrives too late.',
+      required: true,
+    },
+    maxTotalFee: {
+      type: 'string',
+      description: 'Refuse to build the burn if Xebra\'s and Circle\'s fees together exceed this decimal amount. See [the fee cap](#step-2-building-the-burn).',
+    },
+    speed: {
+      type: '"standard" | "fast"',
+      description: 'CCTP speed for the burn.',
+      default: '"standard"',
+    },
+  }}
+/>
+
+## Options
+
+| Option | Type | Meaning |
+|---|---|---|
+| `xebra` | `Pick<XebraClient, "routes" \| "quote" \| "createTransfer">` | A client from `createXebraClient()`. Its `routes()` decides whether the route is offered. |
+| `oneClick.apiKey` | `string` | Your 1Click partner key. Needed to withdraw, and only sent to 1Click. |
+| `oneClick.baseUrl` | `string` | Where 1Click answers. Default `https://1click.chaindefuser.com`. |
+| `oneClick.referral` | `string` | The distribution-channel tag in NEAR Intents' records. Default `"xebra"`. |
+| `fetch` | `typeof fetch` | A fetch to use instead of the global one, for tests or a custom agent. |
+| `now` | `() => number` | A clock in epoch milliseconds, for tests. |
+| `timeoutMs` | `number` | How long one 1Click request may take. Default `45000`. |
+
+## Estimate first
+
+`estimate` is read-only: dry quotes only, no deposit address, nothing to sign, and no API key
+needed. It prices the move and, for comparison, the same move as one swap inside NEAR Intents.
+
+```ts twoslash
+import { createXebraClient } from "@xebra/sdk";
+import { createRebalancer } from "@xebra/sdk/intents";
+
+const rb = createRebalancer({ xebra: createXebraClient() });
+const req = {
+  intentsAccount: "mm.near",
+  from: "base",
+  to: "avax",
+  amount: "100000",
+  fromWallet: "0xYourBaseWallet",
+  toWallet: "0xYourAvalancheWallet",
+};
+// ---cut---
+const e = await rb.estimate(req);
+
+console.log(`${e.amount} out of ${e.to}, ${e.arrives} back on ${e.to}`);
+console.log(`withdrawal ${e.fees.withdraw}, CCTP ${e.fees.cctp}, total ${e.fees.total}`);
+console.log(`about ${Math.round(e.seconds / 60)} minutes end to end, ${e.better} is cheaper`);
+
+if (e.direct.arrives === null) console.log(`no market maker quotes it: ${e.direct.reason}`);
+else console.log(`as one Intents swap it would leave ${e.direct.arrives}`);
+```
+
+`better` is `"rebalance"` unless the direct swap arrives with more, which is the case only when
+some market maker quotes the pair. `fees.total` is `amount` minus `arrives`. Treat the estimate as a
+forecast: fees and quotes move, and the real quote is taken again in each step.
+
+## Step 1: withdrawing
+
+`startWithdrawal` takes a real withdrawal quote and returns the unsigned intent that pays it.
+
+```ts twoslash
+import { createXebraClient } from "@xebra/sdk";
+import { createRebalancer } from "@xebra/sdk/intents";
+
+const rb = createRebalancer({
+  xebra: createXebraClient(),
+  oneClick: { apiKey: "your 1Click partner key" },
+});
+const req = {
+  intentsAccount: "mm.near",
+  from: "base",
+  to: "avax",
+  amount: "100000",
+  fromWallet: "0xYourBaseWallet",
+  toWallet: "0xYourAvalancheWallet",
+};
+declare function signWithNep413(payload: unknown): Promise<{
+  public_key: string;
+  signature: string;
+}>;
+// ---cut---
+const w = await rb.startWithdrawal(req); // "nep413" unless you pass another standard
+const signed = await signWithNep413(w.intent.payload);
+
+const { intentHash } = await rb.submitWithdrawal(w, signed);
+console.log(intentHash, w.depositAddress, w.receives);
+```
+
+Sign `w.intent.payload` exactly as 1Click returned it, with the key registered for `intentsAccount`
+in NEAR Intents. `startWithdrawal(req, "erc191" | "raw_ed25519" | "webauthn" | "ton_connect" |
+"sep53" | "tip191")` picks another signing standard. `w.receives` is the decimal USDC the wallet on
+`from` is promised at least, which is what you burn in step 2.
+
+`w.depositAddress` is 1Click's own address for this move, not a wallet on a chain. It is what you
+track and what you quote in support.
+
+## Step 2: burning
+
+Call `prepareDeposit` once the withdrawal has landed in `fromWallet`. It takes a deposit quote, gets
+a 1Click deposit address on `to`, and asks Xebra to build the CCTP burn from `fromWallet` into it.
+
+```ts twoslash
+import { createXebraClient } from "@xebra/sdk";
+import { createRebalancer } from "@xebra/sdk/intents";
+
+const rb = createRebalancer({
+  xebra: createXebraClient(),
+  oneClick: { apiKey: "your 1Click partner key" },
+});
+const req = {
+  intentsAccount: "mm.near",
+  from: "base",
+  to: "avax",
+  amount: "100000",
+  fromWallet: "0xYourBaseWallet",
+  toWallet: "0xYourAvalancheWallet",
+  maxTotalFee: "0.50",
+};
+declare const withdrew: string;
+declare function signAndSend(
+  from: string,
+  step: { id: string; tx: unknown },
+): Promise<string>;
+// ---cut---
+const d = await rb.prepareDeposit(req, { amount: withdrew, minutes: 180 });
+
+for (const step of d.build.steps) await signAndSend(req.fromWallet, step);
+console.log(`burned into ${d.depositAddress}; ${d.xebra.recipientGets} should arrive`);
+```
+
+`amount` defaults to the request's `amount`; pass what actually arrived, as `w.receives` above.
+The steps are unsigned transactions to sign in order, exactly as
+[`createTransfer`](/docs/sdk/client) returns them. Xebra builds them at the quote in `d.xebra`, and
+Circle mints into `d.depositAddress`, which 1Click watches for your `intentsAccount`.
+
+`minutes` is how long the deposit address waits for Circle's mint before refunding to `toWallet`.
+The default is 120. Standard CCTP waits for the source chain to finalise, which is minutes on most
+EVM chains, so leave it generous.
+
+`maxTotalFee` caps Xebra's and Circle's fees together. The burn is refused before anything is
+signed if they rose above it, and the limit is passed on to the CCTP build as well.
+
+## Step 3: waiting for the deposit
+
+`waitFor` polls `status` until the move reaches `SUCCESS`, `REFUNDED` or `FAILED`, and returns that
+status. The default is every 5 seconds for up to 2 hours.
+
+```ts twoslash
+import { createXebraClient } from "@xebra/sdk";
+import { createRebalancer } from "@xebra/sdk/intents";
+
+const rb = createRebalancer({ xebra: createXebraClient() });
+declare const depositAddress: string;
+// ---cut---
+const status = await rb.waitFor(depositAddress, {
+  intervalMs: 5_000, // default 5 s
+  timeoutMs: 2 * 60 * 60_000, // default 2 h
+});
+
+if (status === "SUCCESS") console.log("credited to intentsAccount");
+else console.log(status); // REFUNDED or FAILED: see Refunds below
+```
+
+`status(depositAddress)` is one look, without polling. 1Click's statuses, in order:
+
+| Status | Meaning |
+|---|---|
+| `KNOWN_DEPOSIT_TX` | The deposit transaction is known to 1Click, not yet seen on chain. |
+| `PENDING_DEPOSIT` | Seen, not enough confirmations. |
+| `INCOMPLETE_DEPOSIT` | Less arrived than quoted. 1Click is waiting for the rest or will refund. |
+| `PROCESSING` | 1Click is crediting the destination. |
+| `SUCCESS` | Credited. |
+| `REFUNDED` | Sent back to the refund address. |
+| `FAILED` | 1Click could not complete the move. |
+
+`waitFor` asks the same `depositAddress` for both steps: 1Click's withdrawal of `from` USDC in step
+1, and the deposit on `to` in step 2. The first resolves when the money reaches `fromWallet`; the
+second when the `to` balance is credited.
+
+## Errors
+
+The rebalancer throws three kinds of error, and which one you get tells you how much has moved.
+
+| Type | From | Fields |
+|---|---|---|
+| `OneClickError` | 1Click answered with an error, or refused to proceed | `message` (1Click's own words when it gave any), `status` (its HTTP status, or `0` when the request never went out) |
+| `XebraApiError` | The Xebra API, through `xebra.routes()`, `xebra.quote()` or the build | `status`, `code`, `detail`, `extra`; see [Client](/docs/sdk/client) |
+| `Error` | The rebalancer's own checks | `message` only |
+
+Nothing else is thrown. `OneClickError` is exported from `@xebra/sdk/intents` so you can catch it by
+type; the rebalancer's own `Error`s carry a fixed sentence, so match on the text if you need to
+branch.
+
+```ts twoslash
+import { createXebraClient } from "@xebra/sdk";
+import { XebraApiError } from "@xebra/sdk";
+import { OneClickError, createRebalancer } from "@xebra/sdk/intents";
+
+const rb = createRebalancer({ xebra: createXebraClient() });
+declare const req: Parameters<typeof rb.prepareDeposit>[0];
+// ---cut---
+try {
+  await rb.prepareDeposit(req, { amount: "99950" });
+} catch (err) {
+  if (err instanceof OneClickError) {
+    console.log(`1Click said ${err.status}: ${err.message}`);
+  } else if (err instanceof XebraApiError) {
+    console.log(err.code, err.detail); // e.g. insufficient_balance
+  } else if (err instanceof Error && /maxTotalFee/.test(err.message)) {
+    console.log("fees rose; nothing was signed");
+  } else throw err;
+}
+```
+
+### Nothing has moved
+
+These are thrown by `estimate`, `startWithdrawal` and `prepareDeposit` before any quote is signed
+and before anything is sent. Your USDC is still in the NEAR Intents `from` balance and no burn
+exists, so a fix costs nothing but another call.
+
+| Error | Cause | What to do |
+|---|---|---|
+| `Error: Unknown chain: <name>` | `from` or `to` is not a chain id Xebra knows | Use an id from [Chains](/docs/sdk/core#chains) |
+| ``Error: `from` and `to` are the same chain.`` | Nothing to move | Pick another `to` |
+| `Error: Xebra does not move USDC from <from> to <to> right now.` | The pair is not in `GET /v1/routes` | Check [Routes](/docs/concepts/routes); rebalance over a chain Xebra does bridge, or try later |
+| `XebraApiError: network_error` / `timeout` | `xebra.routes()` could not be read | Retry; the route list may also be incomplete, which is why it is asked again |
+| `Error: NEAR Intents lists no Circle USDC on <chain>.` | 1Click lists no asset for Circle's USDC there | That chain cannot be either end of a rebalance right now |
+| `Error: Not a decimal amount: <amount>` | `amount` is not a plain decimal (`"1e5"`, `"100,000"`) | Pass a decimal string of USDC |
+| `Error: <amount> has more than <decimals> decimal places.` | More places than the Intents token has | Round down to the token's decimals |
+
+`startWithdrawal` and `submitWithdrawal` also refuse to run without a key:
+
+`OneClickError: Withdrawing from NEAR Intents needs a 1Click partner API key (oneClick.apiKey).`,
+with `status` `0`. Nothing is signed; the withdrawal cannot go ahead without the partner key that
+`generate-intent` and `submit-intent` require. `estimate` and `prepareDeposit` do not need it.
+
+### Step 1: withdrawing
+
+`OneClickError` with `status` above `0` means 1Click answered and refused: its HTTP status is on
+the error and its `message` is 1Click's if it sent one, otherwise `1Click answered <status>`. Your
+USDC is still in the NEAR Intents `from` balance. Quote again, or fix whatever 1Click objected to
+(an amount under its minimum, a deadline, a token it will not quote) and retry.
+
+`OneClickError: 1Click issued no deposit address.` has `status` `0`: 1Click quoted the move but
+did not return an address to pay. Nothing can be signed or tracked, and no money has moved. Retry;
+if it repeats, the amount or pair is not one 1Click can serve.
+
+A withdrawal intent is spent only when `submitWithdrawal` returns. If the submission looks like it
+failed with a timeout or a `5xx` it may still have been accepted, so do not sign a second one until
+you have asked `status(w.depositAddress)`: a `KNOWN_DEPOSIT_TX` or `PENDING_DEPOSIT` means the first
+one is running, and the wallet will be paid.
+
+### Step 2: building the burn
+
+With the USDC in `fromWallet`, the errors split cleanly by whether the burn was sent.
+
+`Error: CCTP fees <total> exceed maxTotalFee <limit>.` is thrown before the deposit address is
+requested and before any transaction is built. Your USDC is in `fromWallet`, untouched. Fees move
+with Circle's quote: either raise `maxTotalFee` to the new total, or wait. The API's own cap,
+[`fee_above_limit`](/docs/errors/fee_above_limit), is the same refusal one layer down.
+
+`XebraApiError` from `xebra.quote()` and the build means the CCTP leg could not be priced or built:
+`route_unavailable`, `amount_below_minimum`, `amount_above_maximum`,
+[`insufficient_balance`](/docs/errors/insufficient_balance) when `fromWallet` holds less than the
+amount, or `network_error` and `timeout` when the API could not be reached. Your USDC is still in
+`fromWallet` and nothing has been signed. Fix the amount or the route, or retry.
+
+`OneClickError` from the deposit quote leaves the money in the same place: no deposit address, no
+burn. Retry with a longer `minutes` if 1Click refused the deadline.
+
+Once the burn has been sent the USDC has left `fromWallet`, and CCTP cannot be undone. A burn that
+Circle rejects is refused by the chain at signing, so you still hold the money; a burn that goes
+through is delivered by Circle. If it is delivered after the deposit address's `minutes` have
+passed, 1Click refunds to `toWallet`, so the money lands on your own `to` wallet rather than in
+Intents: send it in again with a longer `minutes`, or deposit it over
+[NEAR Intents](/docs/guides/near-intents).
+
+### Step 3: waiting for a deposit
+
+`Error: <depositAddress> did not settle in time.` is thrown by `waitFor` when its deadline passed
+before 1Click reached `SUCCESS`, `REFUNDED` or `FAILED`. It is a deadline, not a failure: the move
+may still settle. Your money is in flight, either in 1Click's withdrawal of `from` USDC or with
+Circle between `from` and `to`. Ask `status(depositAddress)` again later with the same address, or
+raise `timeoutMs`. Never send the same move twice because of this error; check the status first.
+
+`waitFor` treats 1Click being briefly down as expected: a `OneClickError` with `status` of `500` or
+more is waited out and retried at the next interval. Anything below `500` is thrown at once, because
+asking again will not change it: a `404` means 1Click does not know that deposit address, so it is
+the wrong one or belongs to another 1Click environment.
+
+Passing an `AbortSignal` stops the loop: it rejects with the signal's reason, not with an error from
+this package, and the move carries on without you. A 1Click request that exceeds `timeoutMs`
+(default 45 seconds) rejects with the fetch's abort error as well, usually a `DOMException` named
+`TimeoutError`, not a `OneClickError`.
+
+### Refunds
+
+A `REFUNDED` status is not an error and is not thrown: `waitFor` returns it, and `status` reports it.
+1Click sends the money back on the same chain it came from, which for both steps is a wallet you
+named:
+
+- a withdrawal refunds to `intentsAccount`, the NEAR Intents account the intent was signed for, so
+  your `from` balance is whole again;
+- a deposit refunds to `toWallet`, on `to`, because the deposit address expired before Circle's mint
+  arrived.
+
+Treat `REFUNDED` and `FAILED` as terminal for that `depositAddress`, and start a new move with a
+fresh quote rather than reusing the old one. A deposit that arrives short shows as
+`INCOMPLETE_DEPOSIT` before 1Click either credits what it has or refunds it.

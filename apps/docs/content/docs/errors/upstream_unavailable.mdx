@@ -20,9 +20,12 @@ Wait for the `Retry-After` header (10 seconds) and ask again. If `detail` says C
   "type": "https://docs.xebra.exchange/errors/upstream_unavailable",
   "title": "Upstream unavailable",
   "status": 503,
-  "detail": "…",
+  "detail": "Circle's delivery fee could not be read just now, so no price can be given. Try again shortly.",
   "code": "upstream_unavailable"
 }
 ```
+
+`detail` varies with what could not be read. A status check says `Circle's status could not be read just now. That does not mean the transfer failed. Try again shortly.`
+A route Circle reports as down says `Circle is not carrying transfers on this route right now (<Circle's reasons>). Do not start one.`
 
 Every error has this shape. See [Errors](/docs/errors) for how to handle them.

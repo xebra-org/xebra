@@ -39,6 +39,29 @@ link.
 Prices come from the same code as the [API](/docs/api) and the xebra.exchange page, so what an
 assistant says matches what the page shows.
 
+## Errors
+
+When a tool call fails, the tool returns `isError: true` with a text content block explaining what
+went wrong:
+
+```json
+{
+  "content": [
+    {
+      "type": "text",
+      "text": "The minimum transfer to Base is 1.00 USDC."
+    }
+  ],
+  "isError": true
+}
+```
+
+Tool error responses include the API's human-readable `detail` message, but structured error codes
+(like `amount_below_minimum` or `route_unavailable`) are not included today. An assistant should
+read the plain-text message directly to explain the issue to the person or adjust its tool arguments
+(for example, calling `list_routes` if a destination is unavailable, or correcting a malformed
+recipient address).
+
 ## Try it
 
 ```sh

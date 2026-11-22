@@ -11,20 +11,35 @@
  * would catch, so the names make the unit visible where the mistake would be made.
  */
 
+import { XebraError } from "../errors.js";
+
 export const UNITS_PER_USDC = 1_000_000n;
 
 /** USDC has 6 decimals on Sui, EVM chains and in the CCTP message. Stellar's SAC uses 7. */
 export const USDC_DECIMALS = 6;
 
-/** Parses USDC typed by a human ("12.5") into 6-decimal units, rejecting more than 6 decimals. */
+function invalidAmount(places: number, input: string): XebraError {
+  return new XebraError(
+    "invalid_amount",
+    `amount must be a decimal with at most ${places} places, got ${JSON.stringify(input)}`,
+  );
+}
+
+/**
+ * Parses USDC typed by a human ("12.5") into 6-decimal units.
+ *
+ * Throws `XebraError("invalid_amount")` for anything that is not a plain non-negative decimal
+ * with at most 6 places. Zero ("0", "0.0") is accepted and returns `0n`: callers that need a
+ * positive amount must check for it themselves.
+ */
 export function parseUsdc6(input: string): bigint {
   const trimmed = input.trim();
   if (!/^\d*\.?\d*$/.test(trimmed) || trimmed === "" || trimmed === ".") {
-    throw new Error("Enter an amount in USDC, for example 25.00");
+    throw invalidAmount(6, input);
   }
   const [whole = "0", fraction = ""] = trimmed.split(".");
   if (fraction.length > 6) {
-    throw new Error("USDC has at most 6 decimal places here");
+    throw invalidAmount(6, input);
   }
   return BigInt(whole || "0") * UNITS_PER_USDC + BigInt(`${fraction}000000`.slice(0, 6));
 }
@@ -39,7 +54,10 @@ export function formatUsdc6(units: bigint): string {
   return `${negative ? "-" : ""}${whole.toLocaleString("en-US")}.${padded}`;
 }
 
-/** Parses a canonical decimal USDC amount ("1", "1.5", "0.000001") into base units, or null. */
+/**
+ * Parses a canonical decimal USDC amount ("1", "1.5", "0.000001") into base units. Never throws:
+ * returns null for junk, more than 6 places, and zero (this parser requires a positive amount).
+ */
 export function parseUsdcAmount(input: string): bigint | null {
   const m = /^(\d{1,12})(?:\.(\d{1,6}))?$/.exec(input.trim());
   if (!m) return null;
@@ -59,15 +77,21 @@ export function formatUsdcAmount(base: bigint): string {
 /** Stellar token amounts are 7-decimal fixed point. */
 export const STROOPS_PER_USDC = 10_000_000n;
 
-/** Parses USDC typed by a human ("12.5") into stroops, rejecting more than 7 decimals. */
+/**
+ * Parses USDC typed by a human ("12.5") into stroops (7 decimals).
+ *
+ * Throws `XebraError("invalid_amount")` for anything that is not a plain non-negative decimal
+ * with at most 7 places. Zero ("0", "0.0") is accepted and returns `0n`: callers that need a
+ * positive amount must check for it themselves.
+ */
 export function parseUsdc(input: string): bigint {
   const trimmed = input.trim();
   if (!/^\d*\.?\d*$/.test(trimmed) || trimmed === "" || trimmed === ".") {
-    throw new Error("Enter an amount in USDC, for example 25.00");
+    throw invalidAmount(7, input);
   }
   const [whole = "0", fraction = ""] = trimmed.split(".");
   if (fraction.length > 7) {
-    throw new Error("USDC on Stellar has at most 7 decimal places");
+    throw invalidAmount(7, input);
   }
   return BigInt(whole || "0") * STROOPS_PER_USDC + BigInt(`${fraction}0000000`.slice(0, 7));
 }

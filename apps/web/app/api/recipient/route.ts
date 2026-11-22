@@ -63,6 +63,7 @@ export async function GET(request: Request): Promise<Response> {
         params: [tokenAccount.toBase58(), { encoding: "base64" }],
       }),
       cache: "no-store",
+      signal: AbortSignal.timeout(6_000),
     });
 
     if (!res.ok) {
@@ -79,10 +80,11 @@ export async function GET(request: Request): Promise<Response> {
     };
 
     if (body.error) {
+      console.error("Solana RPC lookup failed", body.error);
       return Response.json({
         tokenAccount: tokenAccount.toBase58(),
         status: "unknown",
-        reason: body.error.message ?? "RPC error",
+        reason: "Solana RPC returned an error",
       });
     }
 
@@ -100,10 +102,11 @@ export async function GET(request: Request): Promise<Response> {
 
     return Response.json({ tokenAccount: tokenAccount.toBase58(), status: "exists" });
   } catch (err) {
+    console.error("Solana RPC lookup failed", err);
     return Response.json({
       tokenAccount: tokenAccount.toBase58(),
       status: "unknown",
-      reason: err instanceof Error ? err.message : "request failed",
+      reason: "Solana RPC lookup failed",
     });
   }
 }

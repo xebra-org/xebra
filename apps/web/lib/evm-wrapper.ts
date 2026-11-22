@@ -37,13 +37,17 @@ export interface WrapperSettings {
   domains: Map<number, NonNullable<WrapperTerms["domain"]>>;
 }
 
+const WRAPPER_TIMEOUT_MS = 12_000;
+
 /**
  * The wrapper's settings on the chain with this CCTP domain. Null when they could not be read:
  * that is not "no fee", and the page must not offer a transfer it cannot price.
  */
 export async function getWrapperSettings(sourceDomain: number): Promise<WrapperSettings | null> {
   try {
-    const res = await fetch(`/api/evm-wrapper?src=${sourceDomain}`);
+    const res = await fetch(`/api/evm-wrapper?src=${sourceDomain}`, {
+      signal: AbortSignal.timeout(WRAPPER_TIMEOUT_MS),
+    });
     if (!res.ok) return null;
     return parseWrapperState((await res.json()) as WrapperState);
   } catch {

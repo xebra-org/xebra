@@ -110,12 +110,12 @@ describe("the EVM mesh", () => {
     expect(evmDestinationsFrom("arc", r)).toEqual(["base"]);
   });
 
-  it("is read from NEXT_PUBLIC_EVM_MESH, a list or all, and refuses Arc and Solana", () => {
+  it("parses a mesh list or all, and refuses Arc and Solana", () => {
     expect(parseEvmMesh(undefined)).toEqual([]);
     expect(parseEvmMesh("sonic, base")).toEqual(["base", "sonic"]);
     expect(parseEvmMesh("all")).toEqual(EVM_ARC_PEERS);
-    expect(() => parseEvmMesh("arc")).toThrow('NEXT_PUBLIC_EVM_MESH names "arc"');
-    expect(() => parseEvmMesh("solana")).toThrow('NEXT_PUBLIC_EVM_MESH names "solana"');
+    expect(() => parseEvmMesh("arc")).toThrow('mesh list names "arc"');
+    expect(() => parseEvmMesh("solana")).toThrow('mesh list names "solana"');
   });
 
   it("is off for a build that predates it (no evmMesh field)", () => {
@@ -169,9 +169,7 @@ describe("the route lists", () => {
 
   it("let Solana be a destination of Arc but never a source", () => {
     expect(parseArcSendsTo("solana")).toEqual(["solana"]);
-    expect(() => parseArcReceivesFrom("solana")).toThrow(
-      'NEXT_PUBLIC_ARC_RECEIVES_FROM names "solana"',
-    );
+    expect(() => parseArcReceivesFrom("solana")).toThrow('Arc receives-from list names "solana"');
   });
 
   it("fail loudly on a name they do not know, and on Arc", () => {
@@ -189,9 +187,7 @@ describe("the route lists", () => {
     expect(parseStellarSendsTo("all")).toEqual(EVM_ARC_PEERS);
     expect(parseStellarSendsTo("ink, base")).toEqual(["base", "ink"]);
     for (const other of ["arc", "solana", "starknet"]) {
-      expect(() => parseStellarSendsTo(other)).toThrow(
-        `NEXT_PUBLIC_STELLAR_SENDS_TO names "${other}"`,
-      );
+      expect(() => parseStellarSendsTo(other)).toThrow(`Stellar sends-to list names "${other}"`);
     }
   });
 });

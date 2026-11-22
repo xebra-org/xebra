@@ -92,6 +92,116 @@ The `approve` step has `expiresAt: null`: an approval does not go stale.
 - [`amount_below_minimum`](/docs/errors/amount_below_minimum): fees would take too much of a small
   transfer. The problem's `minimum` field says what is accepted.
 
+These are the API's answers. For what fails in the wallet or on the chain after that, see
+[When it goes wrong](#when-it-goes-wrong).
+
+## When it goes wrong
+
+An EVM transfer has one irreversible point: the burn's receipt coming back with `status` success.
+The approval moves nothing: it only lets Circle's messenger, or Xebra's fee contract, take up to the
+amount, and only in a burn the sender signs. A burn that reverts moves nothing either: taking the USDC
+and burning it happen in the same transaction, so a revert undoes both. What every mined transaction
+does spend, reverted or not, is the gas token.
+
+| What happened | Has money moved? | What to do |
+|---|---|---|
+| The quote or `createTransfer` refused | No | Fix what the error [`code`](/docs/errors) names, then ask again |
+| The sender has no gas token | No | Send the sender some, then continue |
+| The wallet declined the approval | No. Nothing is approved | Ask again, or build the transfer again |
+| The wallet declined the burn after the approval | No USDC moved. The approval stands; its gas is spent | Build again: the answer has only the burn |
+| The approval confirmed but the burn reverted | No USDC moved. The approval stands; gas for both is spent | Find the cause, then build again |
+| The network failed after signing | Unknown until you read the receipt | Look up the hash on the source chain before anything else |
+| The burn landed but delivery stopped | Burned and attested; not yet minted | [Claim it](/docs/guides/claim-a-stuck-transfer) |
+
+### Refused before anything was signed
+
+Before it builds, the API checks the sender's USDC balance and current allowance, the recipient's
+address, the route, the size of the transfer and the fee cap. A refusal is a problem with a `code`;
+the list [above](#errors-you-may-see) has the common ones and [Errors](/docs/errors) has them all.
+Nothing was signed, so nothing moved. Fix what the `detail` names and call `createTransfer` again.
+
+### The sender has no gas token
+
+Both the approval and the burn are paid for in the source chain's gas token (ETH on most chains).
+The API does not check that balance, only the USDC, so the transfer builds and the failure shows up
+in the wallet: it cannot estimate the transaction or refuses to send it, and how it says so depends
+on the wallet. Nothing was broadcast, so nothing moved. Send the sender a little of the gas token and
+carry on from the step that failed.
+
+If the approval went through and only the burn could not be paid for, the approval stands: once the
+sender has gas, build the transfer again and the answer has only the burn.
+
+Arc pays gas in USDC rather than a separate token, which is why the API keeps a small USDC reserve
+there and answers [`insufficient_balance`](/docs/errors/insufficient_balance) when the amount would
+eat into it.
+
+### The wallet declined
+
+A declined prompt rejects the `eth_sendTransaction` request; EIP-1193 wallets use error code `4001`
+for it. Nothing was signed or broadcast for that step.
+
+- **Declined the approval:** nothing is approved and nothing moved. Show the user the transfer was not
+  sent and offer to try again.
+- **Declined the burn, after the approval confirmed:** the USDC is still in the sender's wallet. The
+  approval stays in place: the spender may take exactly the amount, but only inside a burn the sender
+  signs, so it cannot be used to move the money anywhere else. Call `createTransfer` again: it reads
+  the allowance, sees it covers the amount, and returns only the `burn`, priced again. The user can
+  also set the allowance back to zero from their wallet if they no longer want to send.
+
+### The approval confirmed but the burn reverted
+
+The burn's receipt has `status` `0x0`. The whole transaction was undone: no USDC left the wallet,
+nothing was burned and the approval is unchanged. The gas for both transactions is spent.
+
+Common causes:
+
+- The allowance was lower than the amount. Wallets let the user edit an approval's amount in the
+  prompt, so check the allowance after the approval confirms.
+- The USDC balance dropped between building and signing.
+- Through Xebra's fee contract: the request's deadline passed (it is set half an hour after the build),
+  the fee rose above the `maxWrapperFee` the sender signed, or transfers were paused.
+
+To find these before gas is spent, simulate the burn with `eth_call` as the sender just before asking
+for the signature; Xebra's own site does. Then call `createTransfer` again, which re-checks the
+balance and allowance and re-prices the burn.
+
+A reverted burn never reaches Circle, so tracking it never settles: `getTransfer` answers `pending`,
+and `waitForDelivery` keeps polling until it times out. Read the receipt on the source chain to tell a
+revert from a burn that is still on its way.
+
+### The network failed after signing
+
+If `eth_sendTransaction` throws a network error or never answers after the user signed, the
+transaction may or may not have been broadcast. Find out before doing anything else:
+
+- With the hash, call `eth_getTransactionReceipt`. `status` `0x1` means it landed; `0x0` means it
+  reverted (see above); no receipt yet means it is not mined, or not broadcast at all.
+- Without the hash, look up the sender's recent transactions in the chain's explorer
+  (`explorerUrl` in `EVM_CHAINS` from `@xebra/sdk/core`).
+
+Do not use Xebra's tracking for this: until Circle has seen a burn it answers `pending`, the same for a
+burn that is on its way as for one that never existed.
+
+For the approval this is harmless either way: an approval sets the allowance, it does not add to it, so
+approving twice still allows only the amount. Call `createTransfer` again once you know; if the first
+approval landed, the answer has only the burn.
+
+For the burn, never build and sign a second one while the first is unaccounted for. A new burn is a new
+transaction, and both can land, which burns twice. A burn sent straight to Circle has no deadline and
+can still be mined until the wallet replaces it with another transaction from the same nonce; one sent
+through Xebra's fee contract reverts once its deadline has passed. Build a new transfer only once the
+first is known not to have landed.
+
+### The burn landed but the money did not arrive
+
+This is past the irreversible point but not lost. Tracking shows `needs_claim` or `failed` with
+Circle's `reason` and a `claimUrl` where the recipient, or anyone, can finish the mint with their own
+wallet. It still pays the recipient the burn named, and whoever claims only pays the destination's
+network fee. See [Claim a stuck transfer](/docs/guides/claim-a-stuck-transfer) and
+[Recovery](/docs/concepts/recovery). Do not fix it by sending the transfer again: that burns a second
+time. For a short explanation to give users, see
+[My transfer is stuck](/docs/guides/my-transfer-is-stuck).
+
 ## Track
 
 The burn's identifier is its transaction hash, `0x` and 64 hex characters, with the source chain as

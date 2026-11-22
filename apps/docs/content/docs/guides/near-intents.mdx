@@ -136,6 +136,7 @@ const res = await fetch("https://1click.chaindefuser.com/v0/quote", {
     deadline: new Date(Date.now() + 3_600_000).toISOString(),
   }),
 });
+if (!res.ok) throw new Error("1Click quote failed: " + res.statusText);
 const { quote } = (await res.json()) as { quote: { depositAddress: string } };
 
 // 3. The Stellar transaction that sends the USDC there. The user's wallet signs it.
@@ -204,6 +205,15 @@ if (hub) {
 If the user's chain is one NEAR Intents already lists (Base, Arbitrum, Solana...), price both paths
 and let the better one win: depositing straight into Intents usually pays more there, and Xebra
 adds nothing. [xebra.exchange/near-intents](https://xebra.exchange/near-intents) does exactly this.
+
+## Failure and refund handling
+
+If a transfer is disrupted, funds are protected by Circle's CCTP guarantees on the Xebra leg and 1Click's automated refund mechanism on the swap leg:
+
+- **The Xebra leg lands in [`needs_claim`](/docs/guides/claim-a-stuck-transfer) after the one-hour deadline**: If Circle's relayer does not deliver automatically (such as during a gas spike on the hub chain), Xebra's transfer transitions to `needs_claim`. When the transfer is claimed at `claimUrl` after the 1Click quote deadline (1 hour in the sample above), Circle mints the USDC into the 1Click `depositAddress`. Because the quote deadline has passed, 1Click will not execute the swap at stale market rates; instead, it automatically refunds the USDC to the configured `refundTo` address. Funds are never lost or stuck.
+- **1Click reports `REFUNDED`**: The swap could not be executed—typically because the quote deadline passed or market movements exceeded `slippageTolerance`. 1Click returns the full deposit amount to `refundTo`. For Stellar senders using `refundType: "INTENTS"`, the USDC is credited directly to their NEAR Intents account (`intentsAccountFor(sender)`), where it can be withdrawn or swapped by signing with their Stellar wallet. For EVM senders using `ORIGIN_CHAIN`, it returns to the sender's address on the hub chain.
+- **1Click reports `FAILED`**: An execution or solver failure occurred before the swap could be settled. 1Click marks the order terminal and sends a refund to `refundTo`. Never reuse the deposit address; start a fresh transfer with a new quote.
+- **1Click reports `INCOMPLETE_DEPOSIT`**: Less USDC arrived at `depositAddress` than specified in the quote. 1Click holds the deposit and either waits for the remaining amount to arrive before the deadline or refunds whatever amount arrived to `refundTo`.
 
 ## Proven on mainnet
 

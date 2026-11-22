@@ -1,7 +1,13 @@
 import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
 import { decideGate } from "./lib/admin/gate";
-import { decideApiHost, isApiHost } from "./lib/api/host";
+import {
+  allowedMethods,
+  decideApiHost,
+  isApiHost,
+  methodNotAllowed,
+  notFound,
+} from "./lib/api/host";
 
 /**
  * Two jobs, kept apart:
@@ -11,25 +17,14 @@ import { decideApiHost, isApiHost } from "./lib/api/host";
 export function middleware(req: NextRequest) {
   if (isApiHost(req.headers.get("host"))) {
     const decision = decideApiHost(req.nextUrl.pathname);
-    if (decision.action === "pass") return NextResponse.next();
     if (decision.action === "redirect") return NextResponse.redirect(decision.location, 308);
-    return new NextResponse(
-      JSON.stringify({
-        type: "https://docs.xebra.exchange/errors/not_found",
-        title: "Not found",
-        status: 404,
-        detail: "The API lives under /v1. See https://docs.xebra.exchange/api.",
-        code: "not_found",
-      }),
-      {
-        status: 404,
-        headers: {
-          "Content-Type": "application/problem+json",
-          "Access-Control-Allow-Origin": "*",
-          "Cache-Control": "no-store",
-        },
-      },
-    );
+    if (decision.action === "not-found") {
+      return notFound("The API lives under /v1. See https://docs.xebra.exchange/api.");
+    }
+    // Next would answer a known path in the wrong method with an empty 405; say it in a problem.
+    const allow = allowedMethods(req.nextUrl.pathname);
+    if (allow && !allow.includes(req.method)) return methodNotAllowed(req.method, allow);
+    return NextResponse.next();
   }
 
   const decision = decideGate({

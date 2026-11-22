@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { getDelivery, getRouteHealth, requestReattest } from "./circle-status";
+import { getWrapperSettings } from "./evm-wrapper";
 
 const reply = (body: unknown, status = 200) =>
   vi.stubGlobal(
@@ -7,7 +8,10 @@ const reply = (body: unknown, status = 200) =>
     vi.fn(async () => Response.json(body, { status })),
   );
 
-afterEach(() => vi.unstubAllGlobals());
+afterEach(() => {
+  vi.unstubAllGlobals();
+  vi.restoreAllMocks();
+});
 
 describe("getDelivery", () => {
   it("passes a known state through", async () => {
@@ -102,5 +106,58 @@ describe("requestReattest", () => {
       vi.fn(async () => Promise.reject(new Error("offline"))),
     );
     expect((await requestReattest("0xabc")).ok).toBe(false);
+  });
+});
+
+describe("status fetch timeouts", () => {
+  const hangingFetch = () =>
+    vi.fn(
+      (_url: string, init?: RequestInit) =>
+        new Promise<Response>((_resolve, reject) => {
+          const signal = init?.signal;
+          if (!signal) return;
+          if (signal.aborted) return reject(signal.reason);
+          signal.addEventListener("abort", () => reject(signal.reason), { once: true });
+        }),
+    );
+
+  it("aborts a hanging delivery fetch with a 10-15s timeout and reports unknown", async () => {
+    const origTimeout = AbortSignal.timeout.bind(AbortSignal);
+    const spy = vi.spyOn(AbortSignal, "timeout").mockImplementation((ms) => {
+      expect(ms).toBeGreaterThanOrEqual(10_000);
+      expect(ms).toBeLessThanOrEqual(15_000);
+      return origTimeout(10);
+    });
+    vi.stubGlobal("fetch", hangingFetch());
+
+    const view = await getDelivery("ab");
+    expect(spy).toHaveBeenCalledTimes(1);
+    expect(view).toEqual({ status: "unknown", reason: "could not reach the status service" });
+  });
+
+  it("aborts a hanging route-health fetch and returns null", async () => {
+    const origTimeout = AbortSignal.timeout.bind(AbortSignal);
+    const spy = vi.spyOn(AbortSignal, "timeout").mockImplementation((ms) => {
+      expect(ms).toBeGreaterThanOrEqual(10_000);
+      expect(ms).toBeLessThanOrEqual(15_000);
+      return origTimeout(10);
+    });
+    vi.stubGlobal("fetch", hangingFetch());
+
+    expect(await getRouteHealth(6, 26)).toBeNull();
+    expect(spy).toHaveBeenCalledTimes(1);
+  });
+
+  it("aborts a hanging wrapper-settings fetch and returns null", async () => {
+    const origTimeout = AbortSignal.timeout.bind(AbortSignal);
+    const spy = vi.spyOn(AbortSignal, "timeout").mockImplementation((ms) => {
+      expect(ms).toBeGreaterThanOrEqual(10_000);
+      expect(ms).toBeLessThanOrEqual(15_000);
+      return origTimeout(10);
+    });
+    vi.stubGlobal("fetch", hangingFetch());
+
+    expect(await getWrapperSettings(1)).toBeNull();
+    expect(spy).toHaveBeenCalledTimes(1);
   });
 });

@@ -1,6 +1,6 @@
 ---
 title: Wallet integration
-description: How to hand each kind of unsigned transaction to Stellar, EVM, Sui and Solana wallets.
+description: How to hand each kind of unsigned transaction to Stellar, EVM, Sui, Solana and Aptos wallets.
 ---
 
 Every step the API returns carries a `tx` with a `kind`. Xebra never signs or sends: your user's
@@ -12,7 +12,8 @@ uses each wallet's library, not `@xebra/sdk`, so it is illustrative rather than 
 | `stellar` | `xdr`, `networkPassphrase` | A Stellar wallet; then submitted to Soroban RPC |
 | `evm` | `chainId`, `to`, `data`, `value` (always `"0"`) | An EIP-1193 wallet, which also submits it |
 | `sui` | `json` | A Sui wallet, which also executes it |
-| `solana` | `transaction` (base64) | A Solana wallet; then sent to Solana RPC. Claims only |
+| `solana` | `transaction` (base64) | A Solana wallet; then sent to Solana RPC |
+| `aptos` | `chainId`, `bytecode`, `arguments` | An Aptos wallet, which also submits it |
 
 Ask for signatures in the order of `steps`, and wait for each to land before the next.
 
@@ -143,10 +144,10 @@ const { digest } = await wallet.features["sui:signAndExecuteTransaction"].signAn
 With `@mysten/dapp-kit`, pass `Transaction.from(step.tx.json)` (from `@mysten/sui/transactions`) to
 `signAndExecuteTransaction`.
 
-## Solana (claims)
+## Solana (source chain)
 
-Solana appears only in claims. `tx.transaction` is a legacy transaction serialized without signatures,
-in base64, with the payer as fee payer.
+Solana is a source chain alongside Sui and Aptos. `tx.transaction` is a legacy transaction serialized
+without signatures, in base64, with the payer as fee payer.
 
 ```ts
 import { Connection, Transaction } from "@solana/web3.js";

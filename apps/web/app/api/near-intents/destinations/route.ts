@@ -1,4 +1,5 @@
 import * as oneclick from "../../../../lib/near-intents/oneclick";
+import { failure } from "../_body";
 
 /**
  * The destinations the demo offers: a short list of what people actually ask for, looked up in
@@ -46,9 +47,6 @@ export async function GET(): Promise<Response> {
     }
     return Response.json({ destinations }, { headers: { "cache-control": "s-maxage=300" } });
   } catch (err) {
-    return Response.json(
-      { error: err instanceof Error ? err.message : "NEAR Intents could not be reached." },
-      { status: 502 },
-    );
+    return failure(err);
   }
 }

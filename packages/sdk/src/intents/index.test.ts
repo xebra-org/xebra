@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import type { Routes, TransferBuild, TransferRequest } from "../api/schemas.js";
 import { EVM_CHAINS } from "../core/chains/evm.js";
+import { XebraError } from "../errors.js";
 import {
   INTENTS_CHAINS,
   type IntentsToken,
@@ -27,6 +28,15 @@ function fakeClient(routes: Routes = ROUTES) {
       async (_r: TransferRequest) => ({ steps: [] }) as unknown as TransferBuild,
     ),
   };
+}
+
+function thrown(fn: () => unknown): unknown {
+  try {
+    fn();
+  } catch (err) {
+    return err;
+  }
+  return undefined;
 }
 
 // Entries copied from the live 1Click token list on 2026-11-12.
@@ -264,7 +274,26 @@ describe("buildDeposit", () => {
         sender: "GBTVJ6JACFRBNI6BETAY4CWYWYNJHX43TGNEAVC3YQCSPPPY4R7H5TBN",
         amount: "25",
       }),
-    ).rejects.toThrow("does not move USDC from stellar to arbitrum");
+    ).rejects.toMatchObject({
+      code: "route_unavailable",
+    });
+    expect(client.createTransfer).not.toHaveBeenCalled();
+  });
+
+  it("refuses an unknown chain before building anything", async () => {
+    const client = fakeClient();
+    const r = createIntentsRouter({ client });
+    await expect(
+      r.buildDeposit({
+        from: "stellar",
+        depositChain: "tron",
+        depositAddress: "0x1bEDCb7651837e4a60574C50Eb1d141bA0D9E270",
+        sender: "GBTVJ6JACFRBNI6BETAY4CWYWYNJHX43TGNEAVC3YQCSPPPY4R7H5TBN",
+        amount: "25",
+      }),
+    ).rejects.toMatchObject({
+      code: "unknown_chain",
+    });
     expect(client.createTransfer).not.toHaveBeenCalled();
   });
 });
@@ -278,9 +307,13 @@ describe("intentsAccountFor", () => {
   });
 
   it("refuses anything that is not a Stellar account address", () => {
-    expect(() =>
-      intentsAccountFor("CCPVTWII2TW6VVSVA4JQ2KFHICGBG4QVAHPIGUPSIW3E4VNPUI4Y2WQR"),
-    ).toThrow();
-    expect(() => intentsAccountFor("alice.near")).toThrow();
+    expect(
+      thrown(() => intentsAccountFor("CCPVTWII2TW6VVSVA4JQ2KFHICGBG4QVAHPIGUPSIW3E4VNPUI4Y2WQR")),
+    ).toMatchObject({
+      code: "invalid_recipient",
+    });
+    expect(thrown(() => intentsAccountFor("alice.near"))).toMatchObject({
+      code: "invalid_recipient",
+    });
   });
 });

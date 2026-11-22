@@ -79,6 +79,68 @@ type Attestation =
   | { status: "pending" }
   | { status: "unknown"; reason?: string };
 
+/** What Circle's service being down means to the person looking at the page. */
+export const CIRCLE_UNAVAILABLE_MESSAGE =
+  "Circle's service is not answering right now. Your transfer is not lost; try again in a few minutes.";
+
+export type AttestationLookup =
+  | { kind: "attestation"; attestation: Attestation }
+  | { kind: "input-error"; message: string }
+  | { kind: "circle-unavailable"; message: string }
+  | { kind: "not-found"; reason: string };
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null;
+}
+
+/**
+ * Maps an attestation lookup response to what the page should show, so a server
+ * failure is never mistaken for a wrong hash.
+ *
+ * - 400: the server rejected the request; its `error` is shown next to the input.
+ * - 502/503: Circle is not answering; the transfer is not lost, only unreachable.
+ * - 404: Circle has no message for that transaction; only this says "not found".
+ * - 200: a complete or pending attestation passes through. An "unknown" one is
+ *   Circle being unreachable when its reason says so ("Circle returned 500",
+ *   "lookups are paused"), and a real not-found otherwise.
+ */
+export function mapAttestationResponse(status: number, body: unknown): AttestationLookup {
+  if (status === 400) {
+    const message = isRecord(body) ? body.error : undefined;
+    return {
+      kind: "input-error",
+      message:
+        typeof message === "string" && message.length > 0
+          ? message
+          : "That request was not understood. Check the transaction hash and try again.",
+    };
+  }
+  if (status === 502 || status === 503) {
+    return { kind: "circle-unavailable", message: CIRCLE_UNAVAILABLE_MESSAGE };
+  }
+  if (status === 404) {
+    return { kind: "not-found", reason: "Circle has no message for that transaction." };
+  }
+  if (status !== 200) {
+    return { kind: "circle-unavailable", message: CIRCLE_UNAVAILABLE_MESSAGE };
+  }
+  const attestation = body as Attestation | null;
+  if (attestation?.status === "complete" || attestation?.status === "pending") {
+    return { kind: "attestation", attestation };
+  }
+  if (attestation?.status === "unknown") {
+    const reason = attestation.reason ?? "";
+    if (/circle returned \d+/i.test(reason) || /paused/i.test(reason)) {
+      return { kind: "circle-unavailable", message: CIRCLE_UNAVAILABLE_MESSAGE };
+    }
+    return {
+      kind: "not-found",
+      reason: reason || "Circle has no message for that transaction.",
+    };
+  }
+  return { kind: "circle-unavailable", message: CIRCLE_UNAVAILABLE_MESSAGE };
+}
+
 const STELLAR_HASH = /^[0-9a-f]{64}$/;
 const EVM_HASH = /^0x[0-9a-f]{64}$/;
 /** A Sui transaction digest: base58, so it is never lower-cased. */
@@ -124,6 +186,10 @@ export function ClaimClient() {
   const [provider, setProvider] = useState<PhantomProvider | null>(null);
   const [wallet, setWallet] = useState<string | null>(null);
   const [attestation, setAttestation] = useState<Attestation | null>(null);
+  /** A 400 from the lookup: the server's error, shown next to the input. */
+  const [inputError, setInputError] = useState<string | null>(null);
+  /** Circle not answering: a 502/503, or a lookup that timed out. */
+  const [circleUnavailable, setCircleUnavailable] = useState<string | null>(null);
   const [recipientOwner, setRecipientOwner] = useState("");
   const [needsOwner, setNeedsOwner] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
@@ -200,15 +266,38 @@ export function ClaimClient() {
     setBusy("Asking Circle for the attestation…");
     setError(null);
     setAttestation(null);
+    setInputError(null);
+    setCircleUnavailable(null);
     setNeedsOwner(null);
     setAlreadyMinted(false);
     try {
       const query = new URLSearchParams({ tx: hash });
       if (!onStellar) query.set("src", source);
-      const res = await fetch(`/api/attestation?${query}`);
-      setAttestation((await res.json()) as Attestation);
+      const res = await fetch(`/api/attestation?${query}`, {
+        signal: AbortSignal.timeout(15_000),
+      });
+      const outcome = mapAttestationResponse(res.status, await res.json().catch(() => null));
+      switch (outcome.kind) {
+        case "attestation":
+          setAttestation(outcome.attestation);
+          break;
+        case "input-error":
+          setInputError(outcome.message);
+          break;
+        case "circle-unavailable":
+          setCircleUnavailable(outcome.message);
+          break;
+        case "not-found":
+          setAttestation({ status: "unknown", reason: outcome.reason });
+          break;
+      }
     } catch (err) {
-      setError(reportError("could not reach Circle", err));
+      // A lookup that times out is Circle not answering, not a wrong hash.
+      if (err instanceof DOMException && err.name === "TimeoutError") {
+        setCircleUnavailable(CIRCLE_UNAVAILABLE_MESSAGE);
+      } else {
+        setError(reportError("could not reach Circle", err));
+      }
     } finally {
       setBusy(null);
     }
@@ -288,6 +377,8 @@ export function ClaimClient() {
           onChange={(e) => {
             setSource(e.target.value);
             setAttestation(null);
+            setInputError(null);
+            setCircleUnavailable(null);
             setError(null);
           }}
           className="mb-5 w-full appearance-none rounded-tray bg-obsidian-sunken px-3 py-2.5 text-sm text-bone/80 ring-1 ring-inset ring-bone/10 transition-colors duration-200 focus:outline-none focus:ring-bone/30"
@@ -310,7 +401,11 @@ export function ClaimClient() {
             id="tx"
             spellCheck={false}
             value={txHash}
-            onChange={(e) => setTxHash(e.target.value)}
+            onChange={(e) => {
+              setTxHash(e.target.value);
+              setInputError(null);
+              setCircleUnavailable(null);
+            }}
             placeholder={
               source === STELLAR
                 ? "64 hex characters"
@@ -331,6 +426,11 @@ export function ClaimClient() {
             Look up
           </button>
         </div>
+        {inputError && (
+          <p role="alert" className="mt-2 text-xs leading-relaxed text-alarm">
+            {inputError}
+          </p>
+        )}
       </section>
 
       {attestation?.status === "pending" && (
@@ -344,6 +444,12 @@ export function ClaimClient() {
       {attestation?.status === "unknown" && (
         <Notice tone="alarm" title="No CCTP transfer found">
           {attestation.reason ?? "Circle has no message for that transaction."}
+        </Notice>
+      )}
+
+      {circleUnavailable && (
+        <Notice tone="info" title="Circle is not answering right now">
+          {circleUnavailable}
         </Notice>
       )}
 

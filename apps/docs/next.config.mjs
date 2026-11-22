@@ -9,6 +9,10 @@ const config = {
   serverExternalPackages: ["typescript", "twoslash"],
   // Workspace packages ship built ESM; the SDK is read for its types and samples.
   transpilePackages: ["@xebra/sdk"],
+  // The link-preview images read the Geist fonts from disk; trace them into the function.
+  outputFileTracingIncludes: {
+    "/og/docs/[...slug]": ["./assets/og/*.ttf"],
+  },
   async redirects() {
     return [
       // The docs are the whole site.

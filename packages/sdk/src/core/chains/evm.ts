@@ -602,7 +602,7 @@ export function evmSources(routes: EnabledRoutes): EvmChainId[] {
  * leave a route off, and certainly not switch on something nobody named.
  */
 function parseRouteList<T extends string>(
-  variable: string,
+  label: string,
   raw: string | null | undefined,
   allowed: readonly T[],
 ): T[] {
@@ -612,9 +612,7 @@ function parseRouteList<T extends string>(
   const names = value.split(",").map((s) => s.trim());
   for (const name of names) {
     if (!(allowed as readonly string[]).includes(name)) {
-      throw new Error(
-        `${variable} names "${name}", which is not one of: ${allowed.join(", ")}, all`,
-      );
+      throw new Error(`${label} names "${name}", which is not one of: ${allowed.join(", ")}, all`);
     }
   }
   return allowed.filter((id) => names.includes(id));
@@ -625,7 +623,7 @@ function parseRouteList<T extends string>(
  * other. Arc and Solana have their own switches and are refused here.
  */
 export function parseEvmMesh(raw: string | null | undefined): EvmPeerId[] {
-  return parseRouteList("NEXT_PUBLIC_EVM_MESH", raw, EVM_ARC_PEERS);
+  return parseRouteList("mesh list", raw, EVM_ARC_PEERS);
 }
 
 /**
@@ -651,12 +649,12 @@ export function evmSendsToStellar(source: EvmChainId, routes: EnabledRoutes): bo
 
 /** `NEXT_PUBLIC_ARC_SENDS_TO`: where Arc may send. EVM chains and `solana`. */
 export function parseArcSendsTo(raw: string | null | undefined): PeerId[] {
-  return parseRouteList("NEXT_PUBLIC_ARC_SENDS_TO", raw, ARC_PEERS);
+  return parseRouteList("Arc sends-to list", raw, ARC_PEERS);
 }
 
 /** `NEXT_PUBLIC_ARC_RECEIVES_FROM`: which EVM chains may send into Arc. */
 export function parseArcReceivesFrom(raw: string | null | undefined): EvmPeerId[] {
-  return parseRouteList("NEXT_PUBLIC_ARC_RECEIVES_FROM", raw, EVM_ARC_PEERS);
+  return parseRouteList("Arc receives-from list", raw, EVM_ARC_PEERS);
 }
 
 /**
@@ -664,7 +662,7 @@ export function parseArcReceivesFrom(raw: string | null | undefined): EvmPeerId[
  * wrapper. Arc keeps its own switch (`NEXT_PUBLIC_ARC_ENABLED`) and Solana is always offered.
  */
 export function parseStellarSendsTo(raw: string | null | undefined): EvmPeerId[] {
-  return parseRouteList("NEXT_PUBLIC_STELLAR_SENDS_TO", raw, EVM_ARC_PEERS);
+  return parseRouteList("Stellar sends-to list", raw, EVM_ARC_PEERS);
 }
 
 export const explorerTxUrl = (chain: EvmChain, hash: string) => `${chain.explorerUrl}/tx/${hash}`;

@@ -6,6 +6,7 @@
     "send-from-evm",
     "sui-to-stellar",
     "track-a-transfer",
+    "my-transfer-is-stuck",
     "claim-a-stuck-transfer",
     "wallet-integration",
     "near-intents",

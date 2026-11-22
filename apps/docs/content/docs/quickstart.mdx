@@ -83,13 +83,25 @@ import { TransactionBuilder, rpc } from "@stellar/stellar-sdk";
 const step = steps[0];
 if (step.tx.kind !== "stellar") throw new Error("expected a Stellar transaction");
 
-const { signedTxXdr } = await signTransaction(step.tx.xdr, {
+const { signedTxXdr, error } = await signTransaction(step.tx.xdr, {
   networkPassphrase: step.tx.networkPassphrase,
 });
+if (error) throw new Error(error.message);
+
 const server = new rpc.Server("https://your-soroban-rpc.example");
 const sent = await server.sendTransaction(
   TransactionBuilder.fromXDR(signedTxXdr, step.tx.networkPassphrase),
 );
+if (sent.status === "TRY_AGAIN_LATER") throw new Error("Not queued; nothing moved. Try again.");
+if (sent.status === "ERROR") throw new Error("Rejected; nothing moved.");
+
+// PENDING or DUPLICATE: poll until it is in a ledger.
+let result = await server.getTransaction(sent.hash);
+while (result.status === "NOT_FOUND") {
+  await new Promise((r) => setTimeout(r, 2000));
+  result = await server.getTransaction(sent.hash);
+}
+if (result.status !== "SUCCESS") throw new Error(`Failed in ledger: ${sent.hash}`);
 const burnHash = sent.hash; // 64 hex characters
 ```
 
@@ -111,7 +123,8 @@ const status = await xebra.waitForDelivery("stellar", burnHash);
 if (status.state === "delivered") {
   console.log("Delivered in", status.deliveryTx);
 } else {
-  // needs_claim or failed: the recipient can finish it at status.claimUrl
+  // needs_claim or failed: finish at status.claimUrl when present, or with createClaim()
+  // (claimUrl is null for Sui and for Solana into Stellar)
   console.log(status.state, status.reason, status.claimUrl);
 }
 ```
@@ -119,6 +132,45 @@ if (status.state === "delivered") {
 `waitForDelivery` asks every 5 seconds, for up to 30 minutes, until the transfer is delivered, needs
 a claim, or failed. To check once, call `xebra.getTransfer("stellar", burnHash)`.
 [Track a transfer](/docs/guides/track-a-transfer) explains each state.
+
+</Step>
+<Step>
+
+### If something fails
+
+Calls to `quote`, `createTransfer`, or `waitForDelivery` reject with `XebraApiError` when the API
+refuses or an upstream cannot be reached:
+
+```ts twoslash
+import { createXebraClient, XebraApiError } from "@xebra/sdk";
+
+const xebra = createXebraClient();
+
+try {
+  const quote = await xebra.quote({ from: "stellar", to: "base", amount: "25" });
+  const { steps } = await xebra.createTransfer({
+    from: "stellar",
+    to: "base",
+    amount: "25",
+    sender: "GABC...",
+    recipient: "0x1234...",
+    maxTotalFee: quote.fees.total,
+  });
+} catch (err) {
+  if (err instanceof XebraApiError && err.code === "insufficient_balance") {
+    // The sender does not have enough USDC for the transfer.
+  } else if (err instanceof XebraApiError && err.code === "fee_above_limit") {
+    // Fees moved since the quote; price it again.
+  } else if (err instanceof XebraApiError) {
+    console.error(`API error ${err.code} (${err.status}): ${err.message}`);
+  } else {
+    throw err;
+  }
+}
+```
+
+Nothing has moved when `quote` or `createTransfer` throws. Fix what the error [`code`](/docs/errors)
+names and try again.
 
 </Step>
 </Steps>

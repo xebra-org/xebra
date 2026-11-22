@@ -1,0 +1,64 @@
+---
+title: My transfer is stuck. Did I lose my money?
+description: What to check when a USDC transfer is taking longer than expected, and how to get help.
+---
+
+Usually, no. A transfer moves in stages: your wallet sends USDC, Circle checks the transfer, then
+USDC is minted to the recipient on the other chain. Most transfers take a few minutes overall.
+
+Once Circle attests the burn, the USDC cannot be lost. Circle has signed proof of the transfer, and
+the mint can still be completed by anyone. The recipient and amount cannot be changed.
+
+## What happens, and how long does it take?
+
+| Stage | What is happening | Usual timing |
+|---|---|---|
+| Sent from your wallet | The source chain records your transfer. | Usually seconds to a few minutes, depending on the chain. |
+| Waiting for Circle | Circle is checking the transfer and preparing its signed proof. | Usually a few minutes after the source chain confirms it. |
+| Sending to the other chain | Circle is minting USDC for the recipient. | Usually shortly after Circle's check; sometimes a few more minutes. |
+| Arrived | USDC has been minted on the destination chain. | The transfer is complete. |
+| Needs a claim | Circle checked the transfer, but automatic delivery did not finish. | You can complete it yourself; see [Needs a claim](#needs-a-claim). |
+
+These are typical times, not a guarantee. A busy network or a delay at Circle can make a transfer
+take longer. For a detailed status guide, see [Track a transfer](/docs/guides/track-a-transfer).
+
+## My wallet showed an error
+
+A wallet can show an error even if it already sent the transaction. Before trying again:
+
+1. Open your wallet's activity and find the transfer. If it shows a transaction hash, open it in the
+   source chain's explorer (often linked from the activity).
+2. Check whether the explorer says the transaction succeeded, is still pending, or failed.
+3. If it succeeded, the transfer went out. Save its hash and [check its status](/docs/guides/track-a-transfer).
+   **Do not send it again**: that would start a second transfer.
+4. If it is pending, wait for the explorer to update. Do not send again while you are unsure.
+5. If it failed or there is no transaction in your wallet activity, it may not have been sent. If
+   you are unsure, contact us before trying again.
+
+Never share your wallet's recovery phrase or private keys with anyone.
+
+## It says “Waiting for Circle”
+
+This means Circle has not finished checking the transfer yet. It is normal for this to take a few
+minutes after the source chain confirms it. Keep the transaction hash and check again later.
+
+If the source chain shows that your transaction succeeded but it has been more than 30 minutes,
+contact us with the transaction hash and the chains you were sending between. A delay does not mean
+your USDC is lost.
+
+## Needs a claim
+
+This means Circle checked the transfer, but its automatic delivery did not complete. The USDC is
+still meant for the recipient named when you sent it. Open [the claim page](https://xebra.exchange/claim),
+connect a wallet on the destination chain, and follow the instructions. The wallet that submits the
+claim pays that chain's transaction fee.
+
+For more detail, see [Claim a stuck transfer](/docs/guides/claim-a-stuck-transfer).
+
+## Where to get help
+
+If you are unsure what happened, or your confirmed transfer has been waiting more than 30 minutes,
+email [partners@xebra.exchange](mailto:partners@xebra.exchange) or message
+[@xebra_exchange](https://x.com/xebra_exchange) on X. Include the transaction hash, the source and
+destination chains, and what your wallet or transfer status shows. Never send your recovery phrase
+or private keys.

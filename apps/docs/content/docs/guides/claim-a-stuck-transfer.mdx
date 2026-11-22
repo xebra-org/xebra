@@ -36,7 +36,7 @@ What comes back depends on the destination:
 | Destination | Steps | `tx.kind` |
 |---|---|---|
 | An EVM chain | `claim`: Circle's `receiveMessage` on that chain | `evm` |
-| Solana | `open_account` when the recipient's USDC account does not exist yet, then `claim` | `solana` |
+| Solana | `open_account` only when the recipient's USDC account does not exist yet; after confirming it, call `createClaim` again for `claim` | `solana` |
 | Stellar (from Sui) | `claim`: the mint through Circle's forwarder on Stellar | `stellar` |
 
 The claim is checked before it is returned, so nobody pays a fee for a mint that cannot work:
@@ -91,10 +91,11 @@ account; it costs the payer a small amount of SOL as rent, which is not returned
 next step.
 
 Each Solana `tx.transaction` is a legacy transaction, serialized without signatures, in base64, with the
-payer as fee payer and a recent blockhash already set. A recent blockhash is valid only briefly, and a
-wallet's simulation of the mint fails while the account it mints into does not exist. So when there is
-an `open_account` step: sign and confirm it, then call `createClaim` again. The second answer has only
-the `claim` step, built fresh.
+payer as fee payer and a recent blockhash already set. A Solana recent blockhash expires in about
+60 to 90 seconds, and a wallet's simulation of the mint fails while the account it mints into does
+not exist. Because of that, the first response returns only `open_account` (never a `claim` that
+could go stale before you reach it): sign and confirm `open_account`, then call `createClaim` again.
+The second answer has only the `claim` step, built fresh with a new blockhash.
 
 ## EVM: one transaction
 

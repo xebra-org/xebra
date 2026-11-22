@@ -104,6 +104,78 @@ export function base58Encode(bytes: Uint8Array): string {
   return out;
 }
 
+/**
+ * Reads the first signature from a serialized Solana transaction and returns it in base58.
+ * A wire transaction begins with a compact-u16 encoding the number of signatures,
+ * followed by that many 64-byte Ed25519 signatures. The first signature is the fee payer's
+ * signature, which Solana uses as the transaction ID.
+ */
+export function firstSignature(signed: Uint8Array): string {
+  let offset = 0;
+  let size = 0;
+  let shift = 0;
+  while (offset < signed.length) {
+    const byte = signed[offset++];
+    if (byte === undefined) break;
+    size |= (byte & 0x7f) << shift;
+    shift += 7;
+    if ((byte & 0x80) === 0) break;
+  }
+  if (size === 0 || signed.length < offset + 64) {
+    throw new Error("Invalid Solana transaction: no signature found.");
+  }
+  return base58Encode(signed.subarray(offset, offset + 64));
+}
+
+/**
+ * Broadcasts signed bytes through our RPC proxy (`/api/solana-rpc`): Solana's public RPC refuses
+ * browsers. A plain fetch, so the wallet layer loads no Solana SDK.
+ *
+ * If the connection drops or times out after forwarding the transaction, returns the extracted
+ * signature so callers can poll/wait for it rather than burning again.
+ */
+export async function broadcastSolana(signed: Uint8Array): Promise<string> {
+  let sig = "";
+  try {
+    sig = firstSignature(signed);
+  } catch {
+    // malformed signed bytes
+  }
+
+  let binary = "";
+  for (const b of signed) binary += String.fromCharCode(b);
+
+  let res: Response;
+  try {
+    res = await fetch("/api/solana-rpc", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        jsonrpc: "2.0",
+        id: 1,
+        method: "sendTransaction",
+        params: [btoa(binary), { encoding: "base64", preflightCommitment: "confirmed" }],
+      }),
+      signal: AbortSignal.timeout(15_000),
+    });
+  } catch (err) {
+    if (sig) return sig;
+    throw err;
+  }
+
+  let body: { result?: string; error?: { message?: string } } | null = null;
+  try {
+    body = (await res.json()) as { result?: string; error?: { message?: string } };
+  } catch {
+    if (res.status >= 500 && sig) return sig;
+    throw new Error(`Solana proxy returned invalid response (${res.status}).`);
+  }
+
+  if (typeof body?.result === "string") return body.result;
+  if (res.status >= 500 && sig) return sig;
+  throw new Error(body?.error?.message ?? `Solana refused the transaction (${res.status}).`);
+}
+
 type SignAndSendFeature = {
   signAndSendTransaction(
     ...inputs: Array<{

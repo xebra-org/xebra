@@ -74,6 +74,24 @@ jobs:
       - run: pnpm --filter docs build
       - run: pnpm --filter docs check:links
 
+      # Phone width and accessibility, against the build above: a sample of docs pages (home,
+      # quickstart, a guide, an API reference page, an error page) must not scroll sideways at
+      # 375 px, and must have no serious or critical axe-core violations.
+      - name: Install Playwright Chromium
+        run: pnpm --filter docs exec playwright install --with-deps chromium
+      - name: Docs mobile and accessibility checks
+        run: pnpm --filter docs test:e2e
+      - name: Upload Playwright report
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: docs-playwright-report
+          path: |
+            apps/docs/playwright-report/
+            apps/docs/test-results/
+          retention-days: 14
+          if-no-files-found: ignore
+
   soroban:
     name: soroban contracts
     runs-on: ubuntu-latest

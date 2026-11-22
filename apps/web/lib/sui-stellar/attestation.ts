@@ -20,7 +20,7 @@ export async function readAttestation(
 ): Promise<AttestationState> {
   const res = await irisFetch(
     `${irisBaseUrl()}/v2/messages/${sourceDomain}?transactionHash=${encodeURIComponent(digest)}`,
-    { cache: "no-store" },
+    { cache: "no-store", signal: AbortSignal.timeout(6_000) },
   );
   if (res.status === 404)
     return { state: "unknown", reason: "Circle has not indexed this burn yet" };

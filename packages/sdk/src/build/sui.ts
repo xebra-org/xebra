@@ -42,11 +42,37 @@ const SUI_DOMAIN = 8;
 export const SUI_ADDRESS = /^0x[0-9a-fA-F]{64}$/;
 
 export class InsufficientUsdcError extends Error {
+  readonly code = "insufficient_balance" as const;
   constructor(
     readonly have: bigint,
     readonly need: bigint,
   ) {
-    super("This Sui address does not hold enough USDC.");
+    super(`Insufficient USDC balance: have ${have}, need ${need} (base units).`);
+    this.name = "InsufficientUsdcError";
+  }
+}
+
+/**
+ * A burn request that fails before anything is built: a mistyped sender, or an amount that is
+ * zero or negative. Carries the API's error code, so a route can answer with it as it is.
+ */
+export class SuiBuildError extends Error {
+  constructor(
+    readonly code: "invalid_request" | "invalid_amount",
+    message: string,
+  ) {
+    super(message);
+    this.name = "SuiBuildError";
+  }
+}
+
+/** Sender and amount first, before any hook, fee or recipient check can throw. */
+function validateBurnInput(sender: string, amount: bigint): void {
+  if (!SUI_ADDRESS.test(sender)) {
+    throw new SuiBuildError("invalid_request", `sender is not a Sui address: ${sender}`);
+  }
+  if (amount <= 0n) {
+    throw new SuiBuildError("invalid_amount", "amount must be above zero");
   }
 }
 
@@ -61,10 +87,11 @@ function must2<T>(r: readonly T[]): [T, T] {
 }
 
 /** Sui to Stellar: the serialized burn for the wallet to sign. */
-export function buildBurn(
+export async function buildBurn(
   client: SuiGrpcClient,
   p: { sender: string; amount: bigint; stellarRecipient: string; fee?: SuiFee | undefined },
 ): Promise<{ transaction: string }> {
+  validateBurnInput(p.sender, p.amount);
   return burnTransaction(client, {
     sender: p.sender,
     amount: p.amount,
@@ -116,7 +143,7 @@ export function forwardBurnArgs(
  *
  * The caller has already validated the recipient for that chain and priced `maxFee`.
  */
-export function buildForwardedBurn(
+export async function buildForwardedBurn(
   client: SuiGrpcClient,
   p: {
     sender: string;
@@ -127,6 +154,7 @@ export function buildForwardedBurn(
     fee?: SuiFee | undefined;
   },
 ): Promise<{ transaction: string }> {
+  validateBurnInput(p.sender, p.amount);
   if (p.maxFee <= 0n || p.maxFee >= p.amount) {
     throw new Error("maxFee must be above zero and below the amount");
   }
@@ -141,7 +169,7 @@ export function buildForwardedBurn(
 }
 
 /** Sui to an EVM chain: `buildForwardedBurn` with an EVM address as the recipient. */
-export function buildEvmBurn(
+export async function buildEvmBurn(
   client: SuiGrpcClient,
   p: {
     sender: string;

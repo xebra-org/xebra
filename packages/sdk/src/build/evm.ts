@@ -2,6 +2,7 @@ import { encodeApprove, encodeDepositForBurnWithHook, encodeWrapperBridge } from
 import { encodeFunctionData } from "viem";
 import { formatUsdc6 } from "../core/amounts.js";
 import type { EvmChain } from "../core/chains/evm.js";
+import { XebraError } from "../errors.js";
 import type { TransferStep } from "./types.js";
 
 type Hex = `0x${string}`;
@@ -34,6 +35,38 @@ export interface EvmBurnInput {
   via: { address: string; maxWrapperFee: bigint } | null;
 }
 
+/**
+ * A burn request that fails before anything is built: a deadline outside the wrapper's range.
+ * Carries the API's error code and the field at fault, so a route can answer with it as it is.
+ */
+export class EvmBuildError extends XebraError {
+  constructor(
+    code: string,
+    readonly field: string,
+    message: string,
+  ) {
+    super(code, message);
+    this.name = "EvmBuildError";
+  }
+}
+
+/** The furthest ahead the wrapper takes a deadline, from the chain's latest block. */
+const WRAPPER_MAX_DEADLINE_SECS = 3600n;
+
+/** How `evmBurnCall` checks the wrapper's deadline. */
+export interface EvmBurnCallOptions {
+  /**
+   * The current time in seconds, best the chain's latest block timestamp: the wrapper compares the
+   * deadline with that, not with this machine's clock. Default `Date.now() / 1000`.
+   */
+  now?: number | bigint;
+  /**
+   * `false` skips the deadline check, for a dry-run encode made before the deadline is known (its
+   * other arguments are still checked). The real burn must be encoded with the check on.
+   */
+  checkDeadline?: boolean;
+}
+
 /** Who takes the USDC and is called: the wrapper, or Circle's messenger. */
 export function evmBurnTarget(p: EvmBurnInput): Hex {
   return (p.via?.address ?? p.source.tokenMessengerAddress) as Hex;
@@ -44,7 +77,22 @@ export function evmBurnTarget(p: EvmBurnInput): Hex {
  * latest block just before asking for the signature; direct to Circle the deadline is ignored.
  * Throws for anything the contract would revert, so no wallet is asked to sign it.
  */
-export function evmBurnCall(p: EvmBurnInput, deadline: bigint): { to: Hex; data: Hex } {
+export function evmBurnCall(
+  p: EvmBurnInput,
+  deadline: bigint,
+  opts: EvmBurnCallOptions = {},
+): { to: Hex; data: Hex } {
+  if (p.via && opts.checkDeadline !== false) {
+    const now = opts.now ?? Date.now() / 1000;
+    const current = typeof now === "bigint" ? now : BigInt(Math.floor(now));
+    if (deadline <= current || deadline > current + WRAPPER_MAX_DEADLINE_SECS) {
+      throw new EvmBuildError(
+        "invalid_request",
+        "deadline",
+        "deadline must be in seconds, between now and one hour from now",
+      );
+    }
+  }
   const data = p.via
     ? encodeWrapperBridge({
         amount: p.amount,
@@ -76,7 +124,13 @@ export function evmApproveCall(p: EvmBurnInput): { to: Hex; data: Hex } {
  * burn. Pure: the caller reads the allowance and picks the deadline.
  */
 export function buildEvmBridge(
-  p: EvmBurnInput & { from: string; allowance: bigint; deadline: bigint },
+  p: EvmBurnInput & {
+    from: string;
+    allowance: bigint;
+    deadline: bigint;
+    /** The current time in seconds, to check `deadline` against. Default `Date.now() / 1000`. */
+    now?: number;
+  },
 ): TransferStep[] {
   const steps: TransferStep[] = [];
   const evm = (call: { to: Hex; data: Hex }) =>
@@ -94,7 +148,7 @@ export function buildEvmBridge(
     id: "burn",
     chain: p.source.id,
     description: `Burn the USDC on ${p.source.name}; Circle mints it on the destination.`,
-    tx: evm(evmBurnCall(p, p.deadline)),
+    tx: evm(evmBurnCall(p, p.deadline, p.now === undefined ? {} : { now: p.now })),
     expiresAt: p.via ? new Date(Number(p.deadline) * 1000).toISOString() : null,
   });
   return steps;

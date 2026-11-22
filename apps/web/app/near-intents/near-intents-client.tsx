@@ -6,6 +6,7 @@ import {
   evmDestinationsFrom,
   evmSources,
   explorerTxUrl,
+  isEvmChainId,
 } from "@xebra/sdk/core";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Badge } from "../../components/ui/badge";
@@ -21,6 +22,7 @@ import { useWallets } from "../../components/wallet/wallet-provider";
 import { env } from "../../lib/env";
 import { ensureChain, readChainId, sendTransaction, waitForReceipt } from "../../lib/evm-rpc";
 import { reportError } from "../../lib/format-error";
+import { type ClassifiedError, classifyWalletError } from "../../lib/wallet-error";
 
 /**
  * USDC from a chain NEAR Intents does not reach into anything Intents delivers, with Xebra carrying
@@ -69,7 +71,7 @@ interface Comparison {
   viaXebra: PathPrice & { hub?: string; xebra?: XebraQuote };
 }
 
-interface Tracked {
+export interface Tracked {
   /** The source chain; absent on swaps saved before other chains existed, which were Stellar. */
   from?: Source;
   depositAddress: string;
@@ -95,7 +97,7 @@ const STORAGE_KEY = "xebra.near-intents.tracked";
 const HUB_NAME: Record<string, string> = { base: "Base", arbitrum: "Arbitrum", solana: "Solana" };
 const HUBS = ["base", "arbitrum"] as const;
 
-type Source = "stellar" | EvmChainId;
+export type Source = "stellar" | EvmChainId;
 
 /** Stands in for the sender while pricing, before a wallet is connected. */
 const PLACEHOLDER_SENDER = {
@@ -129,10 +131,50 @@ function remember(t: Tracked | null) {
   }
 }
 
-function recall(): Tracked | null {
+/**
+ * Validates and parses a saved NEAR Intents swap from localStorage.
+ *
+ * Drops the saved value on anything unexpected: malformed JSON, a missing field, or a source chain
+ * this build does not recognize.
+ */
+export function parseTracked(raw: string | null): Tracked | null {
+  if (!raw) return null;
+  try {
+    const v = JSON.parse(raw);
+    if (typeof v !== "object" || v === null || Array.isArray(v)) return null;
+
+    const from = v.from;
+    const validFrom =
+      from === undefined || from === "stellar" || (typeof from === "string" && isEvmChainId(from));
+    if (!validFrom) return null;
+
+    if (typeof v.depositAddress !== "string" || !v.depositAddress.trim()) return null;
+    if (typeof v.tx !== "string" || !v.tx.trim()) return null;
+    if (typeof v.hub !== "string" || !v.hub.trim()) return null;
+    if (typeof v.expectOut !== "string" || !v.expectOut.trim()) return null;
+    if (typeof v.symbol !== "string" || !v.symbol.trim()) return null;
+
+    return {
+      ...(from !== undefined ? { from } : {}),
+      depositAddress: v.depositAddress,
+      tx: v.tx,
+      hub: v.hub,
+      expectOut: v.expectOut,
+      symbol: v.symbol,
+    };
+  } catch {
+    return null;
+  }
+}
+
+export function recall(): Tracked | null {
   try {
     const raw = window.localStorage.getItem(STORAGE_KEY);
-    return raw ? (JSON.parse(raw) as Tracked) : null;
+    const parsed = parseTracked(raw);
+    if (raw && !parsed) {
+      window.localStorage.removeItem(STORAGE_KEY);
+    }
+    return parsed;
   } catch {
     return null;
   }
@@ -186,7 +228,7 @@ export function NearIntentsClient() {
   const [step, setStep] = useState<"idle" | "preparing" | "signing" | "burning" | "submitting">(
     "idle",
   );
-  const [sendError, setSendError] = useState<string | null>(null);
+  const [sendError, setSendError] = useState<ClassifiedError | null>(null);
   const [tracked, setTracked] = useState<Tracked | null>(null);
 
   useEffect(() => {
@@ -234,11 +276,14 @@ export function NearIntentsClient() {
   const cancel = useCallback(() => {
     attempt.current += 1;
     setStep("idle");
-    setSendError(
-      isStellar
+    setSendError({
+      kind: "declined",
+      message: isStellar
         ? "Cancelled. Nothing was sent: no transaction reached Stellar."
         : `Cancelled. Nothing was burned on ${chainName(from)}. If you had already approved, the approval stays and covers exactly this amount; the next attempt reuses it.`,
-    );
+      maybeSent: false,
+      raw: "Cancelled by user",
+    });
   }, [isStellar, from]);
 
   const send = useCallback(async () => {
@@ -269,9 +314,22 @@ export function NearIntentsClient() {
       if (!live()) return;
       console.info("[xebra] near-intents: deposit address", prepared.depositAddress);
 
+      const onBurn = (hash: string) => {
+        const t: Tracked = {
+          from,
+          depositAddress: prepared.depositAddress,
+          tx: hash,
+          hub: prepared.hub,
+          expectOut: prepared.intents.amountOutFormatted,
+          symbol: destination.symbol,
+        };
+        remember(t);
+        setTracked(t);
+      };
+
       const txHash = isStellar
         ? await signOnStellar(prepared.build.steps, live)
-        : await signOnEvm(prepared.build.steps, live);
+        : await signOnEvm(prepared.build.steps, live, onBurn);
       if (!txHash || !live()) return;
       console.info("[xebra] near-intents: submitted", txHash);
       const t: Tracked = {
@@ -285,7 +343,11 @@ export function NearIntentsClient() {
       remember(t);
       setTracked(t);
     } catch (e) {
-      if (live()) setSendError(reportError("The transfer", e));
+      if (live()) {
+        const classified = classifyWalletError(e);
+        reportError("The transfer", classified.raw);
+        setSendError(classified);
+      }
     } finally {
       if (live()) setStep("idle");
     }
@@ -319,7 +381,11 @@ export function NearIntentsClient() {
      * An exact-amount approval (when the allowance is short) and the burn, on the source chain, in
      * order, each confirmed before the next. Returns the burn's hash.
      */
-    async function signOnEvm(steps: { id: string; tx: UnsignedTx }[], live: () => boolean) {
+    async function signOnEvm(
+      steps: { id: string; tx: UnsignedTx }[],
+      live: () => boolean,
+      onBurn?: (hash: string) => void,
+    ) {
       const provider = connections.evm?.provider;
       if (from === "stellar" || !provider || !sender) throw new Error("Connect an EVM wallet.");
       const chain = EVM_CHAINS[from];
@@ -346,14 +412,35 @@ export function NearIntentsClient() {
           data: s.tx.data as `0x${string}`,
           chainId: chain.chainId,
         });
-        setStep("submitting");
-        const result = await waitForReceipt(provider, hash, { timeoutMs: 180_000 });
-        if (result !== "success") {
-          throw new Error(
-            `${s.id === "approve" ? "The approval" : "The burn"} reverted on ${chain.name}: ${explorerTxUrl(chain, hash)}`,
-          );
+        if (s.id === "burn") {
+          burn = hash;
+          // Save the tracked transfer as soon as the burn hash exists, before waiting for the receipt.
+          onBurn?.(hash);
         }
-        if (s.id === "burn") burn = hash;
+        setStep("submitting");
+        try {
+          const result = await waitForReceipt(provider, hash, { timeoutMs: 180_000 });
+          if (result !== "success") {
+            if (s.id === "burn") {
+              remember(null);
+              setTracked(null);
+            }
+            throw new Error(
+              `${s.id === "approve" ? "The approval" : "The burn"} reverted on ${chain.name}: ${explorerTxUrl(chain, hash)}`,
+            );
+          }
+        } catch (waitErr) {
+          const message = waitErr instanceof Error ? waitErr.message : String(waitErr);
+          if (s.id === "burn" && /no receipt|timeout/i.test(message)) {
+            // A receipt timeout is "still confirming", not a failure: keep tracking.
+            console.warn(
+              "[xebra] near-intents: burn receipt wait timed out, still confirming",
+              hash,
+            );
+            return hash;
+          }
+          throw waitErr;
+        }
       }
       return burn;
     }
@@ -500,11 +587,24 @@ export function NearIntentsClient() {
                   </button>
                 </div>
               )}
-              {sendError && (
-                <Notice tone="alarm" title="The transfer stopped">
-                  {sendError}
-                </Notice>
-              )}
+              {sendError &&
+                (sendError.kind === "declined" || sendError.kind === "popup" ? (
+                  <Notice tone="info" title="Wallet request cancelled">
+                    {sendError.message}
+                  </Notice>
+                ) : sendError.maybeSent ? (
+                  <Notice tone="alarm" title="Could not confirm transfer">
+                    <p>{sendError.message}</p>
+                    <p className="mt-2 text-bone/35">
+                      Check your wallet&apos;s activity before retrying. Full detail is in the
+                      browser console under <code className="font-mono">[xebra]</code>.
+                    </p>
+                  </Notice>
+                ) : (
+                  <Notice tone="alarm" title="The transfer stopped">
+                    {sendError.message}
+                  </Notice>
+                ))}
             </div>
           </GlassCard>
 
@@ -639,12 +739,28 @@ function deliveryUrl(out: { hash: string; explorerUrl: string }): string {
 const XEBRA_DONE = new Set(["delivered"]);
 const INTENTS_DONE = new Set(["SUCCESS", "REFUNDED", "FAILED"]);
 
+function isTerminal(s: Status | null): boolean {
+  if (!s) return false;
+  const intentsStatus = s.intents?.status?.toUpperCase();
+  if (intentsStatus && (INTENTS_DONE.has(intentsStatus) || intentsStatus === "DELIVERED")) {
+    return true;
+  }
+  if (s.xebra?.state === "failed") return true;
+  return false;
+}
+
 function Tracker({ tracked, onReset }: { tracked: Tracked; onReset: () => void }) {
   const [status, setStatus] = useState<Status | null>(null);
+  const [statusError, setStatusError] = useState<string | null>(null);
 
   useEffect(() => {
     let stop = false;
+    let timerId: ReturnType<typeof setTimeout> | null = null;
+    let consecutiveFailures = 0;
+
     const tick = async () => {
+      if (stop) return;
+      let terminal = false;
       try {
         const q = new URLSearchParams({
           depositAddress: tracked.depositAddress,
@@ -652,16 +768,35 @@ function Tracker({ tracked, onReset }: { tracked: Tracked; onReset: () => void }
           from: tracked.from ?? "stellar",
         });
         const res = await fetch(`/api/near-intents/status?${q}`);
-        if (res.ok && !stop) setStatus((await res.json()) as Status);
+        if (!res.ok) {
+          throw new Error(`Status check failed (${res.status})`);
+        }
+        const data = (await res.json()) as Status;
+        if (!stop) {
+          consecutiveFailures = 0;
+          setStatusError(null);
+          setStatus(data);
+          terminal = isTerminal(data);
+        }
       } catch {
-        // A missed poll is retried on the next tick.
+        if (!stop) {
+          consecutiveFailures += 1;
+          if (consecutiveFailures >= 5) {
+            setStatusError("We can't reach the status service right now");
+          }
+        }
+      }
+
+      if (!stop && !terminal) {
+        const delay = consecutiveFailures >= 5 ? 15000 : 5000;
+        timerId = setTimeout(tick, delay);
       }
     };
+
     void tick();
-    const id = setInterval(tick, 5000);
     return () => {
       stop = true;
-      clearInterval(id);
+      if (timerId) clearTimeout(timerId);
     };
   }, [tracked]);
 
@@ -727,6 +862,7 @@ function Tracker({ tracked, onReset }: { tracked: Tracked; onReset: () => void }
             links={out ? [{ href: deliveryUrl(out), label: "Delivery transaction" }] : []}
           />
         </ol>
+        {statusError && <Notice tone="alarm" title={statusError} />}
         <p className="text-xs text-bone/35">
           Deposit address <span className="font-mono text-bone/55">{tracked.depositAddress}</span>
         </p>

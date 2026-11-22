@@ -1,7 +1,15 @@
+import type { SuiGrpcClient } from "@mysten/sui/grpc";
 import { FORWARD_HOOK, ZERO_BYTES32, forwardHookWithAccount } from "@xebra/cctp-evm";
 import { describe, expect, it } from "vitest";
 import { bytesToHex, solanaAddressToBytes32 } from "../core/addresses/solana.js";
-import { burnMoveCalls, forwardBurnArgs } from "./sui.js";
+import {
+  InsufficientUsdcError,
+  buildBurn,
+  buildEvmBurn,
+  buildForwardedBurn,
+  burnMoveCalls,
+  forwardBurnArgs,
+} from "./sui.js";
 
 /**
  * The owner whose 65-byte hook Circle accepted on mainnet (`PROVEN_OWNER` in cctp-evm's tests), and
@@ -14,6 +22,14 @@ const ATA = "FpZKKHNFUZB6xESeycvXARXRvgFqRXDN9YNEKhqwHVYa";
 const ATA_HEX = "0xdc32745e4b3e2fe8b12d1d8eaddb25d4bffeffdbb84ee41cbabcd33a558b3af7";
 const SENDER = `0x${"5".repeat(64)}`;
 const EVM = "0x5b38da6a701c568545dcfcb03fcb875f56beddc4";
+const STELLAR_G = "GBZXN7PIRZGNMHGA7MUUUF4GWPY5AYPV6LY4UV2GL6VJGIQRXFDNMADI";
+
+/** A Sui client whose USDC balance is `balance` base units, and nothing else. */
+function clientWithBalance(balance: string): SuiGrpcClient {
+  return {
+    core: { getBalance: async () => ({ balance: { balance } }) },
+  } as unknown as SuiGrpcClient;
+}
 
 const hex = (bytes: Uint8Array) => bytesToHex(bytes);
 
@@ -58,6 +74,68 @@ describe("forwardBurnArgs to an EVM chain", () => {
     expect(() => forwardBurnArgs({ kind: "solana", tokenAccount: ATA_HEX }, 6)).toThrow();
     expect(() => forwardBurnArgs(EVM, 27)).toThrow();
     expect(() => forwardBurnArgs(EVM, 8)).toThrow();
+  });
+});
+
+describe("the Sui builders reject bad input", () => {
+  const client = clientWithBalance("1000000");
+
+  it("buildBurn rejects a mistyped sender with invalid_request", async () => {
+    await expect(
+      buildBurn(client, { sender: "0x123", amount: 1n, stellarRecipient: STELLAR_G }),
+    ).rejects.toMatchObject({ code: "invalid_request" });
+  });
+
+  it("buildBurn rejects a zero amount with invalid_amount", async () => {
+    await expect(
+      buildBurn(client, { sender: SENDER, amount: 0n, stellarRecipient: STELLAR_G }),
+    ).rejects.toMatchObject({ code: "invalid_amount" });
+  });
+
+  it("buildForwardedBurn and buildEvmBurn reject bad input too", async () => {
+    await expect(
+      buildForwardedBurn(client, {
+        sender: SENDER,
+        amount: 0n,
+        recipient: EVM,
+        destinationDomain: 6,
+        maxFee: 1n,
+      }),
+    ).rejects.toMatchObject({ code: "invalid_amount" });
+    await expect(
+      buildEvmBurn(client, {
+        sender: "nope",
+        amount: 1n,
+        evmRecipient: EVM,
+        destinationDomain: 6,
+        maxFee: 1n,
+      }),
+    ).rejects.toMatchObject({ code: "invalid_request" });
+  });
+});
+
+describe("InsufficientUsdcError", () => {
+  it("carries its name, code and both amounts", async () => {
+    const client = clientWithBalance("100");
+    let caught: unknown;
+    try {
+      await buildBurn(client, {
+        sender: SENDER,
+        amount: 5_000_000n,
+        stellarRecipient: STELLAR_G,
+      });
+    } catch (error) {
+      caught = error;
+    }
+    expect(caught).toBeInstanceOf(InsufficientUsdcError);
+    if (!(caught instanceof InsufficientUsdcError))
+      throw new Error("expected InsufficientUsdcError");
+    expect(caught.name).toBe("InsufficientUsdcError");
+    expect(caught.code).toBe("insufficient_balance");
+    expect(caught.have).toBe(100n);
+    expect(caught.need).toBe(5_000_000n);
+    expect(caught.message).toContain("100");
+    expect(caught.message).toContain("5000000");
   });
 });
 
@@ -118,5 +196,21 @@ describe("the Sui burn's Move call", () => {
   it("adds nothing without a fee", () => {
     const data = burnMoveCalls(base).getData();
     expect(data.commands.some((c) => c.$kind === "TransferObjects")).toBe(false);
+  });
+
+  it("carries Monad's domain and the left-padded EVM recipient for a Sui to Monad burn (#9)", () => {
+    const tx = burnMoveCalls({
+      sender: SENDER,
+      amount: 5_000_000n,
+      destinationDomain: 15,
+      maxFee: 54_785n,
+      ...forwardBurnArgs(EVM, 15),
+    });
+    // u32 little-endian.
+    expect(Array.from(pureArg(tx, 1))).toEqual([15, 0, 0, 0]);
+    expect(hex(pureArg(tx, 2))).toBe(`0x${"00".repeat(12)}${EVM.slice(2)}`);
+    expect(hex(pureArg(tx, 3))).toBe(ZERO_BYTES32);
+    const hook = pureArg(tx, 6);
+    expect(hex(hook.subarray(1))).toBe(FORWARD_HOOK);
   });
 });

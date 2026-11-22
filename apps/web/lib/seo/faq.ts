@@ -44,7 +44,7 @@ export function faqFor(arcViaWrapper: boolean): Faq[] {
     },
     {
       q: "Is there a minimum or maximum amount?",
-      a: `From Stellar, ${FEES.minTransferUsdc} to ${FEES.maxTransferUsdc} USDC per transfer, a limit kept low while the contract has had no external audit. On every route Circle's fee may be at most a tenth of what is burned, so the smallest transfer depends on the route; the bridge tells you if an amount is too small.`,
+      a: `From Stellar, ${FEES.minTransferUsdc} to ${FEES.stellarMaxTransferUsdc} USDC per transfer (as of ${FEES.asOf}); from Arc, ${FEES.minTransferUsdc} to ${FEES.arcMaxTransferUsdc} USDC per transfer (as of ${FEES.asOf}). The contracts have had no external audit. On every route Circle's fee may be at most a tenth of what is burned, so the smallest transfer depends on the route; the bridge tells you if an amount is too small.`,
     },
     {
       q: "Which chains does Xebra support?",

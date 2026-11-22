@@ -149,7 +149,7 @@ export interface BuildDeps {
     payer: string;
     recipientOwner?: string;
   }): Promise<
-    | { state: "ready"; setup: string | null; mint: string }
+    | { state: "ready"; setup: string | null; mint: string | null }
     | { state: "needs-owner"; reason: string }
     | { state: "delivered" }
   >;

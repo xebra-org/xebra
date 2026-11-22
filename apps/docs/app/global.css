@@ -85,3 +85,10 @@ html > body[data-scroll-locked] {
 .dark ::selection {
   background: hsl(40 22% 96% / 0.18);
 }
+
+/* Vesper paints code comments #8B8B8B at 58% opacity, which is 2.6:1 on the dark code block and
+   fails WCAG AA (4.5:1). The comments in the samples carry real instructions, so draw them opaque:
+   #8B8B8B on the code background is about 5.6:1. */
+.dark .shiki code span[style*="--shiki-dark:#8B8B8B94"] {
+  color: #8b8b8b;
+}

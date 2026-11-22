@@ -14,8 +14,10 @@ import {
   APTOS_CCTP,
   APTOS_DOMAIN,
   AptosBcsSerializer,
+  AptosBuildError,
   type AptosBurnArgs,
   type BcsWriter,
+  MoveAddress,
   aptosBurnArgs,
   aptosBurnArgsFromJson,
   aptosBurnArgsToJson,
@@ -264,6 +266,15 @@ function expectedPayload(a: AptosBurnArgs): Buffer {
   ]);
 }
 
+const envelope = {
+  sender: SENDER as `0x${string}`,
+  sequenceNumber: 330n,
+  maxGasAmount: 20_000n,
+  gasUnitPrice: 100n,
+  expirationTimestampSecs: 1_800_000_000n,
+  chainId: 1,
+};
+
 describe("BCS", () => {
   it("writes the script payload exactly as the rules say", () => {
     expect(hex(aptosBurnPayloadBytes(BASE_ARGS))).toBe(hex(expectedPayload(BASE_ARGS)));
@@ -335,15 +346,6 @@ describe("BCS", () => {
     expect(hook && "values" in hook && hook.values.length).toBe(32);
   });
 
-  const envelope = {
-    sender: SENDER as `0x${string}`,
-    sequenceNumber: 330n,
-    maxGasAmount: 20_000n,
-    gasUnitPrice: 100n,
-    expirationTimestampSecs: 1_800_000_000n,
-    chainId: 1,
-  };
-
   it("lays out a raw transaction: sender, sequence, payload, gas, expiry, chain", () => {
     const raw = Buffer.from(aptosRawTransactionBytes(BASE_ARGS, envelope));
     const payload = expectedPayload(BASE_ARGS);
@@ -385,5 +387,139 @@ describe("JSON", () => {
     expect(() => aptosBurnArgsFromJson({ ...j, amount: "1.5" })).toThrow();
     expect(() => aptosBurnArgsFromJson({ ...j, mintRecipient: "0x11" })).toThrow();
     expect(() => aptosBurnArgsFromJson({ ...j, hookData: "0x1" })).toThrow();
+  });
+});
+
+describe("Aptos builder validation errors name field and code", () => {
+  const j = aptosBurnArgsToJson(BASE_ARGS);
+
+  it("names amount when amount is not an integer", () => {
+    try {
+      aptosBurnArgsFromJson({ ...j, amount: "1.5" });
+      expect.unreachable("should have thrown");
+    } catch (e) {
+      expect(e).toBeInstanceOf(AptosBuildError);
+      expect(e).toMatchObject({ code: "invalid_request", field: "amount" });
+      expect((e as Error).message).toContain("amount");
+    }
+  });
+
+  it("names maxFee when maxFee is not an integer", () => {
+    try {
+      aptosBurnArgsFromJson({ ...j, maxFee: "invalid" });
+      expect.unreachable("should have thrown");
+    } catch (e) {
+      expect(e).toBeInstanceOf(AptosBuildError);
+      expect(e).toMatchObject({ code: "invalid_request", field: "maxFee" });
+      expect((e as Error).message).toContain("maxFee");
+    }
+  });
+
+  it("names the field and shows byte count for invalid 32-byte hex addresses", () => {
+    // mintRecipient with 1 byte (got 1)
+    try {
+      aptosBurnArgsFromJson({ ...j, mintRecipient: "0x11" });
+      expect.unreachable("should have thrown");
+    } catch (e) {
+      expect(e).toBeInstanceOf(AptosBuildError);
+      expect(e).toMatchObject({ code: "invalid_request", field: "mintRecipient" });
+      expect((e as Error).message).toBe("mintRecipient must be 32 bytes of lower-case hex, got 1");
+    }
+
+    // mintRecipient with 31 bytes (got 31)
+    try {
+      aptosBurnArgsFromJson({ ...j, mintRecipient: `0x${"aa".repeat(31)}` });
+      expect.unreachable("should have thrown");
+    } catch (e) {
+      expect(e).toBeInstanceOf(AptosBuildError);
+      expect(e).toMatchObject({ code: "invalid_request", field: "mintRecipient" });
+      expect((e as Error).message).toBe("mintRecipient must be 32 bytes of lower-case hex, got 31");
+    }
+
+    // destinationCaller with 31 bytes (got 31)
+    try {
+      aptosBurnArgsFromJson({ ...j, destinationCaller: `0x${"bb".repeat(31)}` });
+      expect.unreachable("should have thrown");
+    } catch (e) {
+      expect(e).toBeInstanceOf(AptosBuildError);
+      expect(e).toMatchObject({ code: "invalid_request", field: "destinationCaller" });
+      expect((e as Error).message).toBe(
+        "destinationCaller must be 32 bytes of lower-case hex, got 31",
+      );
+    }
+
+    // burnToken with 31 bytes (got 31)
+    try {
+      aptosBurnArgsFromJson({ ...j, burnToken: `0x${"cc".repeat(31)}` });
+      expect.unreachable("should have thrown");
+    } catch (e) {
+      expect(e).toBeInstanceOf(AptosBuildError);
+      expect(e).toMatchObject({ code: "invalid_request", field: "burnToken" });
+      expect((e as Error).message).toBe("burnToken must be 32 bytes of lower-case hex, got 31");
+    }
+  });
+
+  it("distinguishes bad amount from bad fee and names the field", () => {
+    // amount <= 0n
+    try {
+      aptosBurnArgsFromJson({ ...j, amount: "0" });
+      expect.unreachable("should have thrown");
+    } catch (e) {
+      expect(e).toBeInstanceOf(AptosBuildError);
+      expect(e).toMatchObject({ code: "invalid_amount", field: "amount" });
+      expect((e as Error).message).toContain("amount");
+    }
+
+    // maxFee >= amount
+    try {
+      aptosBurnArgsFromJson({ ...j, maxFee: j.amount });
+      expect.unreachable("should have thrown");
+    } catch (e) {
+      expect(e).toBeInstanceOf(AptosBuildError);
+      expect(e).toMatchObject({ code: "invalid_request", field: "maxFee" });
+      expect((e as Error).message).toContain("maxFee");
+    }
+  });
+
+  it("MoveAddress names field and byte length when not 32 bytes", () => {
+    try {
+      new MoveAddress(`0x${"aa".repeat(31)}` as `0x${string}`, "recipient");
+      expect.unreachable("should have thrown");
+    } catch (e) {
+      expect(e).toBeInstanceOf(AptosBuildError);
+      expect(e).toMatchObject({ code: "invalid_request", field: "recipient" });
+      expect((e as Error).message).toBe("recipient must be 32 bytes of lower-case hex, got 31");
+    }
+
+    try {
+      new MoveAddress("0x11" as `0x${string}`, "recipient");
+      expect.unreachable("should have thrown");
+    } catch (e) {
+      expect(e).toBeInstanceOf(AptosBuildError);
+      expect(e).toMatchObject({ code: "invalid_request", field: "recipient" });
+      expect((e as Error).message).toBe("recipient must be 32 bytes of lower-case hex, got 1");
+    }
+
+    try {
+      new MoveAddress("0x11" as `0x${string}`);
+      expect.unreachable("should have thrown");
+    } catch (e) {
+      expect(e).toBeInstanceOf(AptosBuildError);
+      expect(e).toMatchObject({ code: "invalid_request", field: "address" });
+    }
+  });
+
+  it("RawTransaction names sender when not an Aptos address", () => {
+    try {
+      aptosRawTransactionBytes(BASE_ARGS, {
+        ...envelope,
+        sender: "0xnot-an-aptos-address" as `0x${string}`,
+      });
+      expect.unreachable("should have thrown");
+    } catch (e) {
+      expect(e).toBeInstanceOf(AptosBuildError);
+      expect(e).toMatchObject({ code: "invalid_request", field: "sender" });
+      expect((e as Error).message).toContain("sender");
+    }
   });
 });

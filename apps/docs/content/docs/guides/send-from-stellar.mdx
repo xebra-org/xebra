@@ -124,3 +124,103 @@ its own `expiresAt`; after that, quote again.
   delivery does not complete, the transfer shows `needs_claim` or `failed`, and anyone can finish it.
   See [Claim a stuck transfer](/docs/guides/claim-a-stuck-transfer) and [Forwarding](/docs/concepts/forwarding).
 </Callout>
+
+## When it goes wrong
+
+A Stellar transfer has one irreversible point: the burn landing in a ledger. Everything before it can
+be retried with nothing lost, and everything after it is Circle's delivery, which never needs the
+sender again. Each failure below says where that line is.
+
+| What happened | Has money moved? | What to do |
+|---|---|---|
+| The quote or `createTransfer` refused | No | Fix what the error [`code`](/docs/errors) names, then ask again |
+| The wallet declined to sign | No | Sign again while the step has not expired, else build the transfer again |
+| The sender has no XLM for the fee | No | Send XLM to that account, then build again |
+| The RPC connection dropped after signing | The burn is in a ledger or it is not, never both | Resubmit the same signed envelope, or look up its hash |
+| The burn landed but delivery stopped | Burned and attested; not yet minted | [Claim it](/docs/guides/claim-a-stuck-transfer) |
+
+### Refused before anything was signed
+
+The API checks what it can before it builds: the sender's account and USDC balance
+([`insufficient_balance`](/docs/errors/insufficient_balance)), the recipient's address
+([`invalid_recipient`](/docs/errors/invalid_recipient)), the route
+([`route_unavailable`](/docs/errors/route_unavailable)), the size of the transfer
+([`amount_below_minimum`](/docs/errors/amount_below_minimum),
+[`amount_above_maximum`](/docs/errors/amount_above_maximum)) and the fee cap
+([`fee_above_limit`](/docs/errors/fee_above_limit)). Then it simulates the call against the wrapper
+contract, and a rejection comes back as [`transaction_rejected`](/docs/errors/transaction_rejected)
+with the contract's own words.
+
+None of these have moved anything: no signature was asked for and no burn exists. Fix the cause named
+in the problem's `detail` and call `createTransfer` again; a new quote may be needed if the fee is
+what changed.
+
+`transaction_rejected` is also where a sender with USDC but no XLM usually finds out, because the
+fee is paid from that XLM balance at execution. See [the next section](#the-sender-has-no-xlm).
+
+### The wallet declined to sign
+
+The wallet's `signTransaction` fails, or answers with an error the way Freighter does: see
+[Wallet integration](/docs/guides/wallet-integration). Nothing was submitted, so nothing moved and no
+burn exists. Show the user that the transfer was not sent, and offer to try again.
+
+The built transaction stays signable until its `expiresAt` (about two minutes after it was built).
+Within that window the same `tx.xdr` can be signed; after it, Stellar rejects the envelope with
+`txTooLate` and it must be built again. Do not hold a transaction across a page reload: build a fresh
+one instead.
+
+### The sender has no XLM
+
+Stellar charges the fee to the transaction's source account, which is the sender. Two things come out
+of it:
+
+- the inclusion bid, 0.1 XLM, which is a ceiling rather than a charge: Stellar charges the market rate
+  up to it, so in the normal case the sender pays the network minimum;
+- Soroban's resource fee, added by the simulation and fixed into the signed transaction.
+
+On top of that, the account has to keep Stellar's minimum balance: 1 XLM for the account (two base
+reserves) and 0.5 for its USDC trustline, 1.5 XLM in all. An account holding only USDC cannot pay,
+and one holding just over its minimum has nothing left for the fee.
+
+Nothing moves when this happens. If the simulation catches it, the build refuses with
+[`transaction_rejected`](/docs/errors/transaction_rejected); if it gets as far as submission, the RPC
+answers `ERROR` with `txInsufficientBalance` in `errorResult`. Send the account a little XLM and build
+the transfer again: the sender is the account that pays, so a sponsoring account cannot cover it.
+
+### The network failed after signing
+
+The signed envelope has a hash, and that hash is the burn: Stellar will include it once, and a second
+submission of the same bytes answers `DUPLICATE` rather than burning again. So a submit that failed on
+the network is safe to retry with the same `signedTxXdr`:
+
+- `PENDING` or `DUPLICATE` means it is on its way. Poll `getTransaction` with the hash.
+- `TRY_AGAIN_LATER` means the node did not queue it. Submit again in a few seconds; nothing moved.
+- A thrown network error, or no answer at all, means you do not know yet which of those it is.
+
+If the response never arrived and the hash went with it, it can be computed from the signed envelope
+without asking the RPC anything:
+
+```ts
+import { TransactionBuilder } from "@stellar/stellar-sdk";
+
+const signed = TransactionBuilder.fromXDR(signedTxXdr, networkPassphrase);
+const hash = signed.hash().toString("hex"); // the burn's id, 64 hex characters
+```
+
+Track that hash with `getTransfer("stellar", hash)`. While the burn is not in a ledger Circle cannot
+see it either, and the answer is [`upstream_unavailable`](/docs/errors/upstream_unavailable), which is
+not a verdict on the transfer; ask again in a few seconds.
+
+Two rules keep this from costing money. Never build a second transfer while the first is unaccounted
+for: a new build is a new envelope, and both can land, which burns twice. And once the envelope's
+`expiresAt` has passed it can never land, so a hash that never appears after that is spent: build a
+new transfer, and only then.
+
+### The burn landed but the money did not arrive
+
+This is past the irreversible point but not lost. Tracking shows `needs_claim` or `failed` with
+Circle's `reason` and a `claimUrl` where the recipient — or anyone — can finish the mint with their own
+wallet; it still pays the recipient the burn named, and whoever claims only pays the destination's
+network fee. See [Claim a stuck transfer](/docs/guides/claim-a-stuck-transfer) and
+[Recovery](/docs/concepts/recovery). Do not fix it by sending the transfer again: that burns a second
+time.

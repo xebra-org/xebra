@@ -17,7 +17,7 @@ export function llmsTxt(docs: Doc[]): string {
 Key facts, as of ${FEES.asOf}:
 
 - Website: ${SITE_URL}. Mainnet only. The asset is native USDC, moved by Circle's Cross-Chain Transfer Protocol (CCTP): burned on one chain, minted by Circle on the other.
-- From Stellar, Xebra's fee is ${FEES.bps / 100}% of the amount, at least ${FEES.minFeeUsdc} USDC; Circle's delivery fee is paid out of it. Transfers through Xebra's contracts are ${FEES.minTransferUsdc} to ${FEES.maxTransferUsdc} USDC.
+- From Stellar, Xebra's fee is ${FEES.bps / 100}% of the amount, at least ${FEES.minFeeUsdc} USDC; Circle's delivery fee is paid out of it. Transfers through Xebra's contracts are ${FEES.minTransferUsdc} to ${FEES.stellarMaxTransferUsdc} USDC from Stellar and ${FEES.minTransferUsdc} to ${FEES.arcMaxTransferUsdc} USDC from Arc.
 - Delivery is by Circle's Forwarding Service, usually within minutes. A transfer that is not delivered can be completed by anyone at ${absoluteUrl("/claim")}.
 - The contracts are open source (${SOURCE_URL}) and have not had an external audit.
 

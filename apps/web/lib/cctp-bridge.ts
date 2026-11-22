@@ -306,12 +306,18 @@ export async function submitBridge(
   }
   if (step.tx.kind !== "stellar") throw new Error("expected a Stellar transaction");
 
+  // Name the account the transaction was built for. Without `address` the wallet signs with
+  // whichever account is active now, so a switch in Freighter after connecting yields a
+  // signature from the wrong account (`txBadAuth`).
   const { signedTxXdr } = await kit.signTransaction(step.tx.xdr, {
     networkPassphrase: config.networkPassphrase,
+    address: userAddress,
   });
 
   const signedTx = TransactionBuilder.fromXDR(signedTxXdr, config.networkPassphrase);
-  return submitSigned(server, signedTx, "bridge transaction");
+  return submitSigned(server, signedTx, "bridge transaction", userAddress, {
+    horizonUrl: config.horizonUrl,
+  });
 }
 
 /**
@@ -336,6 +342,44 @@ export async function getUsdcBalance(config: BridgeChainConfig, owner: string): 
   return BigInt(scValToNative(retval) as string | bigint);
 }
 
+const PUBLIC_HORIZON_URL = "https://horizon.stellar.org";
+const TESTNET_HORIZON_URL = "https://horizon-testnet.stellar.org";
+const SUBMIT_RECOVERY_TIMEOUT_MS = 10_000;
+
+/**
+ * Thrown when `sendTransaction` fails with a transport error and short-window Horizon polling
+ * cannot confirm whether the transaction landed, so the caller surfaces the hash safely.
+ */
+export class UncertainSubmitError extends Error {
+  readonly txHash: string;
+
+  constructor(txHash: string, what: string, cause?: unknown) {
+    super(
+      `Submitting the ${what} failed, so the transaction may have gone out. Check transaction ${txHash} before retrying.`,
+      { cause },
+    );
+    this.name = "UncertainSubmitError";
+    this.txHash = txHash;
+  }
+}
+
+export interface SubmitSignedOptions {
+  horizonUrl?: string;
+  recoveryTimeoutMs?: number;
+  recoveryIntervalMs?: number;
+}
+
+function resolveHorizonUrl(
+  signedTx: Parameters<rpc.Server["sendTransaction"]>[0],
+  explicit?: string,
+): string {
+  if (explicit) return explicit;
+  const passphrase = (signedTx as { networkPassphrase?: unknown }).networkPassphrase;
+  return typeof passphrase === "string" && passphrase.includes("Test SDF")
+    ? TESTNET_HORIZON_URL
+    : PUBLIC_HORIZON_URL;
+}
+
 /**
  * Submits a signed transaction and interprets the full status set.
  *
@@ -343,13 +387,37 @@ export async function getUsdcBalance(config: BridgeChainConfig, owner: string): 
  * ERROR — and it returns a transaction **hash for all of them**. Checking only for ERROR
  * therefore treats TRY_AGAIN_LATER (the node declined to queue it, usually fee/congestion)
  * as success, and the caller then polls a hash that will never appear in any ledger.
+ *
+ * If `sendTransaction` throws a transport/network error, the signed transaction may still
+ * have reached the mempool. Precomputing its hash lets us check Horizon before failing, and
+ * carry the hash in the error if confirmation is still unknown.
  */
 export async function submitSigned(
   server: rpc.Server,
   signedTx: Parameters<rpc.Server["sendTransaction"]>[0],
   what: string,
+  /** The connected account, so a wrong-account failure can name the one to switch back to. */
+  account?: string,
+  options?: SubmitSignedOptions,
 ): Promise<{ txHash: string }> {
-  const result = await server.sendTransaction(signedTx);
+  const precomputedHash = Buffer.from(signedTx.hash()).toString("hex");
+  let result: Awaited<ReturnType<rpc.Server["sendTransaction"]>>;
+  try {
+    result = await server.sendTransaction(signedTx);
+  } catch (sendErr) {
+    const horizonUrl = resolveHorizonUrl(signedTx, options?.horizonUrl);
+    try {
+      await waitForTx(
+        { horizonUrl },
+        precomputedHash,
+        options?.recoveryTimeoutMs ?? SUBMIT_RECOVERY_TIMEOUT_MS,
+        options?.recoveryIntervalMs ?? 2000,
+      );
+      return { txHash: precomputedHash };
+    } catch {
+      throw new UncertainSubmitError(precomputedHash, what, sendErr);
+    }
+  }
 
   switch (result.status) {
     case "PENDING":
@@ -362,7 +430,7 @@ export async function submitSigned(
         `The network declined to queue the ${what} right now (TRY_AGAIN_LATER). Nothing has moved. Wait a few seconds and try again.`,
       );
     default:
-      throw new Error(describeRejectedTransaction(result, what));
+      throw new Error(describeRejectedTransaction(result, what, account));
   }
 }
 
@@ -379,13 +447,21 @@ const TX_RESULT_MESSAGES: Record<string, string> = {
   txInsufficientBalance:
     "Your wallet does not have enough XLM to cover the network fee. Add some XLM and try again.",
   txNoAccount: "This Stellar account is not funded yet. Add some XLM and try again.",
-  txBadAuth: "Your wallet signature was not accepted. Please try again.",
+  // `{account}` is filled in by `describeRejectedTransaction`. Retrying cannot fix this: the
+  // wallet will keep signing with the wrong account until the person switches back.
+  txBadAuth:
+    "Your wallet signed with a different account than the one connected here. Switch back to {account} in your wallet, or reconnect.",
   txBadAuthExtra: "Your wallet signature was not accepted. Please try again.",
   txFailed: "The transaction failed on the network. No USDC has moved.",
 };
 
 /** The `status: ERROR` reply carries an XDR result; read its code name rather than dumping it. */
-export function describeRejectedTransaction(result: unknown, what: string): string {
+export function describeRejectedTransaction(
+  result: unknown,
+  what: string,
+  /** The connected Stellar account, shown shortened (`GABC…WXYZ`) where a message names it. */
+  account?: string,
+): string {
   let code: string | undefined;
   try {
     const errorResult = (result as { errorResult?: { result(): { switch(): { name: string } } } })
@@ -395,7 +471,13 @@ export function describeRejectedTransaction(result: unknown, what: string): stri
     code = undefined;
   }
   const known = code ? TX_RESULT_MESSAGES[code] : undefined;
-  if (known) return known;
+  if (known) {
+    const shortAccount =
+      account && account.length > 10
+        ? `${account.slice(0, 4)}…${account.slice(-4)}`
+        : "your connected account";
+    return known.replace("{account}", shortAccount);
+  }
   return `The network rejected the ${what}${code ? ` (${code})` : ""}. No USDC has moved. Please try again.`;
 }
 
@@ -421,9 +503,10 @@ export function describeRejectedTransaction(result: unknown, what: string): stri
  * the funds path working without doing that mid-flight.
  */
 export async function waitForTx(
-  config: BridgeChainConfig,
+  config: Pick<BridgeChainConfig, "horizonUrl">,
   txHash: string,
   timeoutMs = 90_000,
+  pollIntervalMs = 2000,
 ): Promise<void> {
   const deadline = Date.now() + timeoutMs;
   const url = `${config.horizonUrl.replace(/\/$/, "")}/transactions/${txHash}`;
@@ -451,7 +534,7 @@ export async function waitForTx(
         throw err;
       }
     }
-    await new Promise((r) => setTimeout(r, 2000));
+    await new Promise((r) => setTimeout(r, pollIntervalMs));
   }
 
   throw new Error(

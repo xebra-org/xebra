@@ -1,4 +1,4 @@
-import { PublicKey } from "@solana/web3.js";
+import { Keypair, PublicKey, Transaction } from "@solana/web3.js";
 import type { Wallet, WalletAccount } from "@wallet-standard/base";
 import { describe, expect, it, vi } from "vitest";
 import {
@@ -11,13 +11,20 @@ import {
 } from "./evm";
 import {
   base58Encode,
+  broadcastSolana,
   canSignSolana,
+  firstSignature,
   isSolanaWallet,
   pickSolanaAccount,
   sendSolanaTransaction,
   solanaEntries,
 } from "./solana";
-import { keepDetected, stellarEntries } from "./stellar";
+import {
+  STELLAR_MAINNET_PASSPHRASE,
+  checkStellarNetwork,
+  keepDetected,
+  stellarEntries,
+} from "./stellar";
 import type { Connection, Eip1193Provider, WalletEntry } from "./types";
 
 const provider = (accounts: unknown): Eip1193Provider => ({
@@ -70,6 +77,20 @@ describe("EIP-6963", () => {
     expect((await connectEvm(entry, provider([good]))).address).toBe(good);
     await expect(connectEvm(entry, provider([]))).rejects.toThrow(/address/);
     await expect(connectEvm(entry, provider(["nope"]))).rejects.toThrow(/address/);
+  });
+  it("words a 4001 decline at connect", async () => {
+    const entry = evmEntries(reduceAnnouncements(new Map(), detail("a", "A")), null)[0];
+    if (!entry) throw new Error("no entry");
+    const rejecting: Eip1193Provider = {
+      request: async () => {
+        const err = new Error("User rejected");
+        Object.assign(err, { code: 4001 });
+        throw err;
+      },
+    };
+    await expect(connectEvm(entry, rejecting)).rejects.toThrow(
+      "You declined the request in your wallet.",
+    );
   });
 });
 
@@ -201,6 +222,40 @@ describe("Stellar detection", () => {
     const out = keepDetected([entry("lobstr", false)], [entry("lobstr", true)]);
     expect(out[0]?.installed).toBe(true);
   });
+
+  it("allows a wallet on the expected network through (match)", async () => {
+    const k = {
+      getNetwork: async () => ({
+        network: "PUBLIC",
+        networkPassphrase: STELLAR_MAINNET_PASSPHRASE,
+      }),
+    };
+    await expect(checkStellarNetwork(k)).resolves.toBeUndefined();
+  });
+
+  it("rejects a wallet on the wrong network with a clear message (mismatch)", async () => {
+    const k = {
+      getNetwork: async () => ({
+        network: "TESTNET",
+        networkPassphrase: "Test SDF Network ; September 2015",
+      }),
+    };
+    await expect(checkStellarNetwork(k)).rejects.toThrow(
+      "Your wallet is on Testnet. Switch it to Mainnet, then try again.",
+    );
+  });
+
+  it("allows a wallet that cannot report its network through (unsupported)", async () => {
+    const unsupported = {
+      getNetwork: async () => {
+        throw new Error("getNetwork is not supported");
+      },
+    };
+    await expect(checkStellarNetwork(unsupported)).resolves.toBeUndefined();
+
+    const missing = {};
+    await expect(checkStellarNetwork(missing)).resolves.toBeUndefined();
+  });
 });
 
 describe("Solana signing", () => {
@@ -257,5 +312,125 @@ describe("Solana signing", () => {
     await expect(sendSolanaTransaction(w, "Other", new Uint8Array(), vi.fn())).rejects.toThrow(
       /no longer connected/,
     );
+  });
+
+  describe("firstSignature", () => {
+    it("extracts the first signature from a signed wire transaction", () => {
+      const kp = Keypair.generate();
+      const tx = new Transaction({
+        recentBlockhash: "11111111111111111111111111111111",
+        feePayer: kp.publicKey,
+      });
+      tx.sign(kp);
+      const wire = tx.serialize();
+      const rawSig = tx.signatures[0]?.signature;
+      expect(rawSig).toBeDefined();
+      if (rawSig) {
+        expect(firstSignature(wire)).toBe(base58Encode(rawSig));
+      }
+    });
+
+    it("throws when bytes are too short or contain no signatures", () => {
+      expect(() => firstSignature(new Uint8Array([]))).toThrow(/no signature found/);
+      expect(() => firstSignature(new Uint8Array([0]))).toThrow(/no signature found/);
+      expect(() => firstSignature(new Uint8Array([1, 2, 3]))).toThrow(/no signature found/);
+    });
+  });
+
+  describe("broadcastSolana", () => {
+    it("returns the signature when the RPC proxy returns a successful result", async () => {
+      const origFetch = globalThis.fetch;
+      try {
+        globalThis.fetch = vi.fn(
+          async () =>
+            ({
+              status: 200,
+              json: async () => ({ result: "tx-sig-123" }),
+            }) as unknown as Response,
+        );
+
+        const sig = await broadcastSolana(new Uint8Array([0]));
+        expect(sig).toBe("tx-sig-123");
+      } finally {
+        globalThis.fetch = origFetch;
+      }
+    });
+
+    it("retains the transaction signature when fetch rejects with a network error/timeout", async () => {
+      const kp = Keypair.generate();
+      const tx = new Transaction({
+        recentBlockhash: "11111111111111111111111111111111",
+        feePayer: kp.publicKey,
+      });
+      tx.sign(kp);
+      const wire = tx.serialize();
+      const expectedSig = firstSignature(wire);
+
+      const origFetch = globalThis.fetch;
+      try {
+        globalThis.fetch = vi.fn(async () => {
+          throw new TypeError("Failed to fetch");
+        });
+
+        const sig = await broadcastSolana(wire);
+        expect(sig).toBe(expectedSig);
+      } finally {
+        globalThis.fetch = origFetch;
+      }
+    });
+
+    it("retains the transaction signature when the proxy returns a 5xx error", async () => {
+      const kp = Keypair.generate();
+      const tx = new Transaction({
+        recentBlockhash: "11111111111111111111111111111111",
+        feePayer: kp.publicKey,
+      });
+      tx.sign(kp);
+      const wire = tx.serialize();
+      const expectedSig = firstSignature(wire);
+
+      const origFetch = globalThis.fetch;
+      try {
+        globalThis.fetch = vi.fn(
+          async () =>
+            ({
+              status: 504,
+              json: async () => ({ error: { message: "Gateway Timeout" } }),
+            }) as unknown as Response,
+        );
+
+        const sig = await broadcastSolana(wire);
+        expect(sig).toBe(expectedSig);
+      } finally {
+        globalThis.fetch = origFetch;
+      }
+    });
+
+    it("throws when the proxy returns an explicit RPC rejection (e.g., BlockhashNotFound)", async () => {
+      const kp = Keypair.generate();
+      const tx = new Transaction({
+        recentBlockhash: "11111111111111111111111111111111",
+        feePayer: kp.publicKey,
+      });
+      tx.sign(kp);
+      const wire = tx.serialize();
+
+      const origFetch = globalThis.fetch;
+      try {
+        globalThis.fetch = vi.fn(
+          async () =>
+            ({
+              status: 200,
+              json: async () => ({
+                error: { message: "Transaction simulation failed: Blockhash not found" },
+              }),
+            }) as unknown as Response,
+        );
+
+        await expect(broadcastSolana(wire)).rejects.toThrow(/Blockhash not found/);
+      } finally {
+        globalThis.fetch = origFetch;
+      }
+    });
   });
 });

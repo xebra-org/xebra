@@ -105,8 +105,10 @@ export function DeliveryStatus({
 }) {
   const line = "mt-2.5 flex items-center gap-2 border-t border-bone/[0.06] pt-2.5 text-[0.75rem]";
 
+  let content: React.ReactNode;
+
   if (delivery?.status === "known" && delivery.state === "delivered") {
-    return (
+    content = (
       <div className={`${line} text-bone/45`}>
         <span className="h-1 w-1 shrink-0 rounded-full bg-signal" />
         <span>
@@ -124,13 +126,11 @@ export function DeliveryStatus({
         </span>
       </div>
     );
-  }
-
-  if (
+  } else if (
     delivery?.status === "known" &&
     (delivery.state === "failed" || delivery.state === "claimable")
   ) {
-    return (
+    content = (
       <div className="mt-2.5 border-t border-bone/[0.06] pt-2.5 text-[0.75rem] leading-relaxed text-bone/45">
         <p className="flex items-center gap-2">
           <span className="h-1 w-1 shrink-0 rounded-full bg-alarm" />
@@ -162,25 +162,30 @@ export function DeliveryStatus({
         </p>
       </div>
     );
-  }
-
-  if (delivery?.status === "unknown") {
-    return (
+  } else if (delivery?.status === "unknown") {
+    content = (
       <p className={`${line} text-bone/45`}>
         <span className="h-1 w-1 shrink-0 rounded-full bg-bone/30" />
         We cannot read Circle&rsquo;s status right now. Your transfer is not affected; check{" "}
         {destination.name} for the USDC, or try again shortly.
       </p>
     );
+  } else {
+    content = (
+      <p className={`${line} text-bone/45`}>
+        <span className="h-1 w-1 shrink-0 rounded-full bg-signal animate-breathe" />
+        {delivery?.status === "known" && delivery.state === "forwarding"
+          ? `Circle is delivering to ${destination.name}.`
+          : "Waiting for Circle to attest the transfer."}
+      </p>
+    );
   }
 
   return (
-    <p className={`${line} text-bone/45`}>
-      <span className="h-1 w-1 shrink-0 rounded-full bg-signal animate-breathe" />
-      {delivery?.status === "known" && delivery.state === "forwarding"
-        ? `Circle is delivering to ${destination.name}.`
-        : "Waiting for Circle to attest the transfer."}
-    </p>
+    // biome-ignore lint/a11y/useSemanticElements: delivery status live region announces updates to screen readers
+    <div role="status" aria-live="polite">
+      {content}
+    </div>
   );
 }
 

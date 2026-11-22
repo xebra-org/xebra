@@ -29,6 +29,10 @@ const nextConfig: NextConfig = {
   async rewrites() {
     return [{ source: "/:path(.*)\\.md", destination: "/md/:path" }];
   },
+  // A 14 Nov X reply linked /near-intent (no "s"); posts can't be edited, so the typo stays out there.
+  async redirects() {
+    return [{ source: "/near-intent", destination: "/near-intents", permanent: true }];
+  },
 };
 
 export default nextConfig;

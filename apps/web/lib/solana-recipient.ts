@@ -1,4 +1,5 @@
 import { solanaAddressToBytes32 } from "@xebra/sdk/core";
+import { readJson } from "./read-json";
 
 /**
  * The network half of Solana recipients: deriving the USDC token account and asking our own API
@@ -86,14 +87,23 @@ export async function resolveRecipient(ownerBase58: string): Promise<RecipientRe
   const res = await fetch(`/api/recipient?owner=${encodeURIComponent(ownerBase58)}`, {
     cache: "no-store",
   });
-  const body = (await res.json()) as {
+  const parsed = await readJson<{
     tokenAccount?: string;
     status?: RecipientStatus;
     reason?: string;
     error?: string;
-  };
+  }>(res);
 
-  if (!res.ok || !body.tokenAccount) {
+  if (!parsed.ok) {
+    const errorMsg =
+      parsed.body && typeof parsed.body === "object" && "error" in parsed.body
+        ? String((parsed.body as { error: unknown }).error)
+        : `Could not resolve the recipient (${parsed.status})`;
+    throw new Error(errorMsg);
+  }
+
+  const body = parsed.body;
+  if (!body.tokenAccount) {
     throw new Error(body.error ?? `Could not resolve the recipient (${res.status})`);
   }
 

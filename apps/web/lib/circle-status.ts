@@ -10,6 +10,8 @@ import type { CircleHealth, Delivery } from "@xebra/cctp-client";
  * refuses to work.
  */
 
+const STATUS_TIMEOUT_MS = 12_000;
+
 export type DeliveryView =
   | ({ status: "known" } & Delivery)
   /** Could not ask. Deliberately not "waiting" — an unanswerable question is not progress. */
@@ -23,7 +25,9 @@ export async function getDelivery(txHash: string, sourceDomain?: number): Promis
   try {
     const q = new URLSearchParams({ tx: txHash });
     if (sourceDomain !== undefined) q.set("src", String(sourceDomain));
-    const res = await fetch(`/api/delivery?${q}`);
+    const res = await fetch(`/api/delivery?${q}`, {
+      signal: AbortSignal.timeout(STATUS_TIMEOUT_MS),
+    });
     if (!res.ok) return { status: "unknown", reason: `status returned ${res.status}` };
     const body = (await res.json()) as DeliveryView;
     if (body.status === "known" && typeof body.state === "string") return body;
@@ -50,7 +54,9 @@ export async function getRouteHealth(
   try {
     const q = new URLSearchParams({ src: String(sourceDomain), dst: String(destinationDomain) });
     if (newAccount) q.set("newAccount", "1");
-    const res = await fetch(`/api/circle-health?${q}`);
+    const res = await fetch(`/api/circle-health?${q}`, {
+      signal: AbortSignal.timeout(STATUS_TIMEOUT_MS),
+    });
     if (!res.ok) return null;
     const body = (await res.json()) as CircleHealth;
     return body.status === "ok" || body.status === "degraded" || body.status === "down"

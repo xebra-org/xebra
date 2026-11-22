@@ -25,6 +25,7 @@
 import type { TransferBuild, Quote as XebraQuote } from "../api/schemas.js";
 import type { XebraClient } from "../client/index.js";
 import type { ChainId } from "../core/chains/ids.js";
+import { XebraError } from "../errors.js";
 import { type IntentsToken, createIntentsRouter, toXebraChain, usdcChainOf } from "./index.js";
 
 export const ONECLICK_BASE_URL = "https://1click.chaindefuser.com";
@@ -166,6 +167,12 @@ export function toUnits(amount: string, decimals: number): string {
 
 /** Integer units to a decimal string without trailing zeros. */
 export function fromUnits(units: string, decimals: number): string {
+  if (!/^-?\d+$/.test(units)) {
+    throw new XebraError(
+      "invalid_amount",
+      `units must be an integer string, got ${JSON.stringify(units)}`,
+    );
+  }
   const v = BigInt(units);
   const neg = v < 0n;
   const s = (neg ? -v : v).toString().padStart(decimals + 1, "0");

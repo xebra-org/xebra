@@ -1,5 +1,22 @@
 import { describe, expect, it } from "vitest";
-import { formatUsdc6, formatUsdcAmount, parseUsdc6, parseUsdcAmount } from "./amounts.js";
+import { XebraError } from "../errors.js";
+import { fromUnits } from "../intents/rebalance.js";
+import {
+  formatUsdc6,
+  formatUsdcAmount,
+  parseUsdc,
+  parseUsdc6,
+  parseUsdcAmount,
+} from "./amounts.js";
+
+function thrown(fn: () => unknown): unknown {
+  try {
+    fn();
+  } catch (err) {
+    return err;
+  }
+  return undefined;
+}
 
 describe("parseUsdc6", () => {
   it("reads whole and fractional amounts into 6-decimal units", () => {
@@ -11,12 +28,19 @@ describe("parseUsdc6", () => {
   });
 
   it("refuses a seventh decimal instead of rounding money", () => {
-    expect(() => parseUsdc6("1.0000001")).toThrow("at most 6 decimal places");
+    const err = thrown(() => parseUsdc6("12.1234567"));
+    expect(err).toBeInstanceOf(XebraError);
+    expect((err as XebraError).code).toBe("invalid_amount");
+    expect((err as XebraError).message).toBe(
+      'amount must be a decimal with at most 6 places, got "12.1234567"',
+    );
   });
 
   it("refuses anything that is not a plain number", () => {
     for (const bad of ["", ".", "1e3", "-5", "1,000", "abc", "1.2.3"]) {
-      expect(() => parseUsdc6(bad), bad).toThrow("Enter an amount in USDC");
+      const err = thrown(() => parseUsdc6(bad));
+      expect(err, bad).toBeInstanceOf(XebraError);
+      expect((err as XebraError).code, bad).toBe("invalid_amount");
     }
   });
 });
@@ -54,5 +78,45 @@ describe("canonical amounts (parseUsdcAmount / formatUsdcAmount)", () => {
     expect(formatUsdcAmount(1_000_000n)).toBe("1");
     expect(formatUsdcAmount(1_500_000n)).toBe("1.5");
     expect(formatUsdcAmount(1n)).toBe("0.000001");
+  });
+});
+
+describe("zero", () => {
+  it("is accepted by the throwing parsers and rejected (null) by parseUsdcAmount", () => {
+    expect(parseUsdc6("0")).toBe(0n);
+    expect(parseUsdc("0")).toBe(0n);
+    expect(parseUsdcAmount("0")).toBeNull();
+  });
+});
+
+describe("parseUsdc (Stellar, 7 decimals)", () => {
+  it("reads amounts into stroops", () => {
+    expect(parseUsdc("12.5")).toBe(125_000_000n);
+    expect(parseUsdc("0.0000001")).toBe(1n);
+  });
+
+  it("throws XebraError invalid_amount for junk and an eighth decimal", () => {
+    for (const bad of ["", ".", "-1", "abc", "1.2.3", "1.00000001"]) {
+      const err = thrown(() => parseUsdc(bad));
+      expect(err, bad).toBeInstanceOf(XebraError);
+      expect((err as XebraError).code, bad).toBe("invalid_amount");
+    }
+    expect((thrown(() => parseUsdc("1.00000001")) as XebraError).message).toBe(
+      'amount must be a decimal with at most 7 places, got "1.00000001"',
+    );
+  });
+});
+
+describe("fromUnits", () => {
+  it("formats integer units", () => {
+    expect(fromUnits("12500000", 6)).toBe("12.5");
+  });
+
+  it("throws XebraError invalid_amount, not a SyntaxError, on non-integers", () => {
+    for (const bad of ["", "abc", "1.5", "1e3"]) {
+      const err = thrown(() => fromUnits(bad, 6));
+      expect(err, bad).toBeInstanceOf(XebraError);
+      expect((err as XebraError).code, bad).toBe("invalid_amount");
+    }
   });
 });

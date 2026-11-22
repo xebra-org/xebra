@@ -32,8 +32,9 @@ Xebra being online. See [Recovery](/docs/concepts/recovery).
 
 The same rules hold on Xebra's contract on Stellar and its contract on Arc:
 
-- **Per-transfer limits.** Each transfer through a Xebra contract is capped (100 USDC as of
-  2026-11-12) while the contracts have had no external audit.
+- **Per-transfer limits.** Each transfer through a Xebra contract is capped: 1 to 10,000,000 USDC
+  from Stellar (as of 2026-11-16) and 1 to 100 USDC from Arc (as of 2026-11-16). The contracts have
+  had no external audit.
 - **Fee ceilings in code.** Xebra's percentage fee can never exceed 1%. Circle's delivery fee can
   never exceed 2 USDC, a per-destination cap set under the timelock, or a tenth of the transfer.
 - **Instant pause.** A pauser can stop new transfers at once. Only the admin can unpause.
@@ -88,8 +89,7 @@ The USDC address on each EVM chain is in `EVM_CHAINS` in `@xebra/sdk/core`. See 
 ## Audits
 
 The contracts have **not had an external audit** (as of 2026-11-12). They are tested with unit,
-property and fork tests, and with real transfers on testnet and mainnet. Per-transfer limits stay low
-until an audit is done. The source is public:
+property and fork tests, and with real transfers on testnet and mainnet. The source is public:
 [github.com/xebra-org/xebra](https://github.com/xebra-org/xebra).
 
 ## Reporting a problem

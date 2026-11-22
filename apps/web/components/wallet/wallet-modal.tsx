@@ -61,6 +61,7 @@ export function WalletModal({
   pending,
   error,
   onConnect,
+  onCancel,
   onDisconnect,
   onClose,
 }: {
@@ -70,12 +71,18 @@ export function WalletModal({
   pending: string | null;
   error: string | null;
   onConnect: (e: WalletEntry) => void;
+  onCancel?: () => void;
   onDisconnect: (f: Family) => void;
   onClose: () => void;
 }) {
   const ref = useRef<HTMLDialogElement>(null);
   const [tab, setTab] = useState<Family>("stellar");
+  const [activeError, setActiveError] = useState<string | null>(null);
   const [solanaSends, setSolanaSends] = useState(false);
+
+  useEffect(() => {
+    setActiveError(error);
+  }, [error]);
   useEffect(() => {
     if (!families?.includes("solana")) return;
     let live = true;
@@ -92,6 +99,7 @@ export function WalletModal({
     if (!d) return;
     if (families && !d.open) {
       setTab(families[0] ?? "stellar");
+      setActiveError(null);
       d.showModal();
     }
     if (!families && d.open) d.close();
@@ -141,7 +149,12 @@ export function WalletModal({
               type="button"
               role="tab"
               aria-selected={tab === f}
-              onClick={() => setTab(f)}
+              onClick={() => {
+                if (tab !== f) {
+                  setTab(f);
+                  setActiveError(null);
+                }
+              }}
               className={cn(
                 "flex-1 rounded-full px-3 py-1.5 text-[0.8125rem] font-medium transition-colors",
                 tab === f ? "bg-bone text-obsidian" : "text-bone/55 hover:text-bone",
@@ -191,43 +204,78 @@ export function WalletModal({
           ) : (
             list.map((w) => (
               <li key={w.key}>
-                <button
-                  type="button"
-                  disabled={pending !== null}
-                  onClick={() => onConnect(w)}
-                  className={cn(
-                    "flex w-full items-center gap-3 rounded-2xl p-3 text-left ring-1 ring-inset transition-colors",
-                    "ring-bone/10 hover:bg-bone/[0.06] hover:ring-bone/25",
-                    "disabled:cursor-wait disabled:opacity-50 disabled:hover:bg-transparent",
-                  )}
-                >
-                  {w.icon ? (
-                    <img
-                      src={w.icon}
-                      alt=""
-                      width={32}
-                      height={32}
-                      className="h-8 w-8 rounded-lg"
-                    />
-                  ) : (
-                    <span
-                      aria-hidden="true"
-                      className="grid h-8 w-8 place-items-center rounded-lg bg-bone/10 text-xs"
-                    >
-                      {w.name.slice(0, 1)}
-                    </span>
-                  )}
-                  <span className="flex-1 text-[0.9375rem] font-medium">{w.name}</span>
-                  <span className="text-[0.75rem] text-bone/45">
-                    {pending === w.key
-                      ? "Check your wallet…"
-                      : w.installed
+                {pending === w.key ? (
+                  <div
+                    className={cn(
+                      "flex w-full items-center gap-3 rounded-2xl p-3 text-left ring-1 ring-inset",
+                      "ring-bone/10 bg-bone/[0.04]",
+                    )}
+                  >
+                    {w.icon ? (
+                      <img
+                        src={w.icon}
+                        alt=""
+                        width={32}
+                        height={32}
+                        className="h-8 w-8 rounded-lg"
+                      />
+                    ) : (
+                      <span
+                        aria-hidden="true"
+                        className="grid h-8 w-8 place-items-center rounded-lg bg-bone/10 text-xs"
+                      >
+                        {w.name.slice(0, 1)}
+                      </span>
+                    )}
+                    <span className="flex-1 text-[0.9375rem] font-medium">{w.name}</span>
+                    <span className="text-[0.75rem] text-bone/45">Check your wallet…</span>
+                    {onCancel ? (
+                      <button
+                        type="button"
+                        onClick={onCancel}
+                        className="shrink-0 rounded-full px-2.5 py-1 text-[0.75rem] font-medium text-bone/70 ring-1 ring-inset ring-bone/15 transition-colors hover:text-bone hover:ring-bone/30"
+                      >
+                        Cancel
+                      </button>
+                    ) : null}
+                  </div>
+                ) : (
+                  <button
+                    type="button"
+                    disabled={pending !== null}
+                    onClick={() => onConnect(w)}
+                    className={cn(
+                      "flex w-full items-center gap-3 rounded-2xl p-3 text-left ring-1 ring-inset transition-colors",
+                      "ring-bone/10 hover:bg-bone/[0.06] hover:ring-bone/25",
+                      "disabled:cursor-wait disabled:opacity-50 disabled:hover:bg-transparent",
+                    )}
+                  >
+                    {w.icon ? (
+                      <img
+                        src={w.icon}
+                        alt=""
+                        width={32}
+                        height={32}
+                        className="h-8 w-8 rounded-lg"
+                      />
+                    ) : (
+                      <span
+                        aria-hidden="true"
+                        className="grid h-8 w-8 place-items-center rounded-lg bg-bone/10 text-xs"
+                      >
+                        {w.name.slice(0, 1)}
+                      </span>
+                    )}
+                    <span className="flex-1 text-[0.9375rem] font-medium">{w.name}</span>
+                    <span className="text-[0.75rem] text-bone/45">
+                      {w.installed
                         ? connections[w.family]?.walletKey === w.key
                           ? "Connected"
                           : "Detected"
                         : "Not detected · try anyway"}
-                  </span>
-                </button>
+                    </span>
+                  </button>
+                )}
                 {!w.installed && w.installUrl ? (
                   <a
                     href={w.installUrl}
@@ -243,12 +291,12 @@ export function WalletModal({
           )}
         </ul>
 
-        {error ? (
+        {activeError ? (
           <p
             role="alert"
             className="mt-4 rounded-2xl bg-alarm/10 p-3 text-[0.8125rem] leading-relaxed text-alarm ring-1 ring-inset ring-alarm/25"
           >
-            {error}
+            {activeError}
           </p>
         ) : null}
       </div>

@@ -91,6 +91,26 @@ describe("describeRejectedTransaction", () => {
     expect(msg).not.toMatch(/_switch|_attributes|txTooLate/);
   });
 
+  it("tells the person to switch back when the wallet signed with another account", async () => {
+    const { describeRejectedTransaction } = await import("./cctp-bridge");
+    const account = "GBFI4X5EXAMPLEACCOUNTADDRESSFORTESTINGONLYAAAAAAAAAAWXYZ";
+    const msg = describeRejectedTransaction(failure("txBadAuth"), "bridge transaction", account);
+    expect(msg).toBe(
+      "Your wallet signed with a different account than the one connected here. Switch back to GBFI…WXYZ in your wallet, or reconnect.",
+    );
+    // Retrying cannot fix a wrong account, so the message must not tell them to.
+    expect(msg).not.toMatch(/try again/i);
+    expect(msg).not.toMatch(/\{account\}/);
+  });
+
+  it("still gives a usable txBadAuth message when no account is known", async () => {
+    const { describeRejectedTransaction } = await import("./cctp-bridge");
+    const msg = describeRejectedTransaction(failure("txBadAuth"), "mint");
+    expect(msg).toMatch(/different account/i);
+    expect(msg).toMatch(/switch back to your connected account/i);
+    expect(msg).not.toMatch(/\{account\}/);
+  });
+
   it("never dumps raw objects for unknown codes", async () => {
     const { describeRejectedTransaction } = await import("./cctp-bridge");
     expect(describeRejectedTransaction({}, "bridge transaction")).not.toMatch(/[{}]/);

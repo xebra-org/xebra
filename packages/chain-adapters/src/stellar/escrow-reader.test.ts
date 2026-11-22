@@ -100,12 +100,17 @@ describe("readEscrow", () => {
   });
 
   it("names the undecodable-extension case instead of crashing on an XDR error", async () => {
+    const original = new TypeError("Bad union switch: 1");
     const sim: EscrowSimulator = {
       simulateTransaction: async () => {
-        throw new TypeError("Bad union switch: 1");
+        throw original;
       },
     };
-    await expect(readEscrow(sim, Networks.TESTNET, CONTRACT, HASH)).rejects.toThrow(/expired/);
+    const err = await readEscrow(sim, Networks.TESTNET, CONTRACT, HASH).catch((e) => e);
+    expect(err).toBeInstanceOf(EscrowReadError);
+    expect(err.name).toBe("EscrowReadError");
+    expect(err.cause).toBe(original);
+    expect(err.message).toMatch(/expired/);
   });
 
   it("rejects a hash that is not 32 bytes before any network call", async () => {
