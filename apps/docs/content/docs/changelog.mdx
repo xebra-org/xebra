@@ -10,6 +10,11 @@ description: What changed in the Xebra API and SDK, newest first.
 - `invalid_request` and `invalid_amount` from checking the input carry `issues`, each field that
   failed as `{ path, message }`, beside the `detail` sentence. `openapi.json` lists it, and in
   `@xebra/sdk` `ProblemSchema` has it as optional and `XebraApiError` carries it on `extra.issues`.
+- Sui to Stellar transfers built through `/v1` are now finished by Xebra's relayer, as the web app's
+  are. When `GET /v1/transfers/sui/{tx}` sees an attested burn that has not been minted, it hands it
+  to the relayer and answers `delivering` (with `deliveryTx` once the mint is sent) instead of
+  `needs_claim`. `needs_claim` now means the relayer refused (its `reason` says why) or is switched
+  off, and `POST /v1/claims` still finishes it. No new call, field or state.
 
 **SDK**, `@xebra/sdk`:
 

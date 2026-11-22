@@ -574,3 +574,85 @@ describe("request ids", () => {
     expect(line().stack).toBeUndefined();
   });
 });
+
+describe("GET /transfers/sui/{tx}: a Sui burn built through /v1 is relayed to Stellar", () => {
+  const DIGEST = "37cRcRxVbwscXJAjLfqmXh19CDdKeHMBVJ1GMSqJKEE7";
+  const attested = async () => ({ state: "complete", delivered: false, httpStatus: 200 });
+  const on = { suiStellar: { enabled: true, maxUnits: null }, suiStatus: attested };
+
+  async function poll(over: Partial<Deps>) {
+    const res = await api(over).getTransfer(get(`/transfers/sui/${DIGEST}`), {
+      chain: "sui",
+      tx: DIGEST,
+    });
+    expect(res.status).toBe(200);
+    return TransferStatusSchema.parse(await res.json());
+  }
+
+  it("hands the attested, unminted burn to the relayer and reports it delivering", async () => {
+    const relayed: string[] = [];
+    const status = await poll({
+      ...on,
+      suiRelay: async (digest) => {
+        relayed.push(digest);
+        return { status: "scheduled" };
+      },
+    });
+    expect(relayed).toEqual([DIGEST]);
+    expect(status.state).toBe("delivering");
+  });
+
+  it("reports the relayer's mint as the delivery once it is submitted", async () => {
+    const status = await poll({
+      ...on,
+      suiRelay: async () => ({ status: "submitted", hash: "ab12" }),
+    });
+    expect(status.state).toBe("delivering");
+    expect(status.deliveryTx).toBe("ab12");
+  });
+
+  it("does not call the relayer before Circle has attested, or after the mint", async () => {
+    const relayed: string[] = [];
+    const suiRelay = async (digest: string) => {
+      relayed.push(digest);
+      return { status: "scheduled" };
+    };
+    expect(
+      (await poll({ ...on, suiRelay, suiStatus: async () => ({ state: "pending" }) })).state,
+    ).toBe("pending");
+    expect(
+      (
+        await poll({
+          ...on,
+          suiRelay,
+          suiStatus: async () => ({ state: "complete", delivered: true }),
+        })
+      ).state,
+    ).toBe("delivered");
+    expect(relayed).toEqual([]);
+  });
+
+  it("falls back to needs_claim, with the relayer's reason, when it refuses", async () => {
+    const status = await poll({
+      ...on,
+      suiRelay: async () => ({ status: "refused", reason: "The recipient has no USDC trustline." }),
+    });
+    expect(status.state).toBe("needs_claim");
+    expect(status.reason).toBe("The recipient has no USDC trustline.");
+  });
+
+  it("falls back to needs_claim when the relayer is off, fails or throws", async () => {
+    for (const suiRelay of [
+      async () => ({ status: "unavailable", reason: "Completion is not switched on." }),
+      async () => ({ status: "failed", hash: "ab12" }),
+      async () => null,
+      async () => {
+        throw new Error("boom");
+      },
+    ]) {
+      expect((await poll({ ...on, suiRelay })).state).toBe("needs_claim");
+    }
+    // And without a relayer wired at all, as before.
+    expect((await poll(on)).state).toBe("needs_claim");
+  });
+});
