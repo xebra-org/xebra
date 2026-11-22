@@ -790,6 +790,30 @@
           },
           "needs": {
             "type": "string"
+          },
+          "issues": {
+            "description": "On `invalid_request` and `invalid_amount` from checking the input: each field that failed, and why.",
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "path": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  },
+                  "description": "Where the problem is, such as `[\"amount\"]`. Empty for the whole input."
+                },
+                "message": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "path",
+                "message"
+              ],
+              "additionalProperties": false
+            }
           }
         },
         "required": [

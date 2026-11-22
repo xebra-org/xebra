@@ -26,6 +26,8 @@ served as `application/problem+json`:
   line Xebra logged. The API host's own `not_found` and method errors carry no `instance`.
 - Some codes add fields, such as `minimum`, `maximum`, `have`, `need`, `total`, `limit` and `needs`.
   Amounts are decimal strings of USDC, like everywhere else in the API.
+- `invalid_request` and `invalid_amount` from checking the input add `issues`: each field that
+  failed, as `{ "path": ["amount"], "message": "..." }`, so a form can mark it.
 
 The SDK throws these as `XebraApiError`, with the extra fields on `err.extra`:
 

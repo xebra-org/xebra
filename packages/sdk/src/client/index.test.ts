@@ -65,6 +65,15 @@ describe("createXebraClient", () => {
     });
   });
 
+  it("puts a problem's field issues on extra.issues", async () => {
+    const issues = [{ path: ["amount"], message: "must be more than zero" }];
+    const client = createXebraClient({
+      fetch: async () => problem(422, "invalid_amount", { issues }),
+    });
+    const err = await client.routes().catch((e) => e);
+    expect(err).toMatchObject({ status: 422, code: "invalid_amount", extra: { issues } });
+  });
+
   it("refuses an answer that does not match the schema rather than passing it on", async () => {
     const client = createXebraClient({ fetch: async () => json(200, { routes: "nope" }) });
     await expect(client.routes()).rejects.toMatchObject({ code: "invalid_response" });
