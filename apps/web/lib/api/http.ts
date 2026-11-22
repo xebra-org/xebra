@@ -90,19 +90,29 @@ export function preflight(): Response {
   return new Response(null, { status: 204, headers: CORS });
 }
 
+/** At most this many field problems go in a problem's `issues`; `detail` names the first five. */
+const MAX_ISSUES = 20;
+
 function invalid(issues: Array<{ path: PropertyKey[]; message: string }>): ApiError {
+  // For a form to mark the field: `detail` is a sentence, `issues` is the same thing as data.
+  const fields = {
+    issues: issues
+      .slice(0, MAX_ISSUES)
+      .map((i) => ({ path: i.path.map(String), message: i.message })),
+  };
   const amountIssue = issues.find((i) => AMOUNT_FIELDS.has(String(i.path[0])));
   if (amountIssue) {
     return new ApiError(
       "invalid_amount",
       `${String(amountIssue.path[0])}: ${amountIssue.message}.`,
+      fields,
     );
   }
   const detail = issues
     .slice(0, 5)
     .map((i) => (i.path.length > 0 ? `${i.path.map(String).join(".")}: ${i.message}` : i.message))
     .join("; ");
-  return new ApiError("invalid_request", `${detail}.`);
+  return new ApiError("invalid_request", `${detail}.`, fields);
 }
 
 async function readBody(req: Request): Promise<unknown> {
