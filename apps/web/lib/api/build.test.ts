@@ -14,6 +14,7 @@ import {
   planWrapperFee,
   solanaAddressToBytes32,
   stellarDestination,
+  withAttribution,
 } from "@xebra/sdk/core";
 import { decodeFunctionData, erc20Abi } from "viem";
 import { describe, expect, it, vi } from "vitest";
@@ -587,20 +588,24 @@ describe("buildTransfer: the exact figures signed", () => {
       const burn = steps.find((x) => x.id === "burn");
       if (burn?.tx.kind !== "evm") throw new Error("no EVM burn");
       expect(burn.tx.data).toBe(
-        encodeDepositForBurnWithHook({
-          amount: 25_000_000n,
-          destinationDomain: 5,
-          recipient: {
-            kind: "solana",
-            tokenAccount: bytesToHex(solanaAddressToBytes32(TOKEN_ACCOUNT)),
-            createAccountFor:
-              status === "missing" ? bytesToHex(solanaAddressToBytes32(SOLANA_WALLET)) : undefined,
-          },
-          burnToken: EVM_CHAINS.arc.usdcAddress,
-          // What Circle may keep is the quote's delivery plus its transfer fee.
-          maxFee: quote.fees.delivery + quote.fees.circle,
-          minFinalityThreshold: FINALITY.standard,
-        }),
+        withAttribution(
+          encodeDepositForBurnWithHook({
+            amount: 25_000_000n,
+            destinationDomain: 5,
+            recipient: {
+              kind: "solana",
+              tokenAccount: bytesToHex(solanaAddressToBytes32(TOKEN_ACCOUNT)),
+              createAccountFor:
+                status === "missing"
+                  ? bytesToHex(solanaAddressToBytes32(SOLANA_WALLET))
+                  : undefined,
+            },
+            burnToken: EVM_CHAINS.arc.usdcAddress,
+            // What Circle may keep is the quote's delivery plus its transfer fee.
+            maxFee: quote.fees.delivery + quote.fees.circle,
+            minFinalityThreshold: FINALITY.standard,
+          }),
+        ),
       );
     });
   }
