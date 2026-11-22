@@ -349,7 +349,11 @@ Three codes come from the client itself, rather than coming from an API problem 
 - `network_error` (`status` 0): the request did not reach the API.
 - `timeout` (`status` 0): no answer within `timeoutMs`, or `waitForDelivery` ran out of time.
 - `invalid_response` (carries the real HTTP status, such as 502): the API answered with something
-  that is not JSON or does not match the SDK's schema.
+  that is not JSON or does not match the SDK's schema. A JSON body, such as a gateway's own error,
+  is on `err.extra.body`.
+
+A problem whose `code` is newer than your SDK keeps that `code` and its `detail`, with the whole
+problem on `err.extra.body`. Treat a code you do not know by its `status`.
 
 The list of every code, with its HTTP status, is exported as `ERROR_STATUS` and `ERROR_CODES`.
 
