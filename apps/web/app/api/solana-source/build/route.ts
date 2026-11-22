@@ -68,7 +68,7 @@ export async function POST(request: Request): Promise<Response> {
     // What the person entered leaves the wallet; Xebra's flat fee is paid out of it, in the same
     // transaction as the burn, and the burn is the rest.
     const units = amount as bigint;
-    const flat = flatFeeOn("solana", chain ? chain.cctpDomainId : STELLAR_DOMAIN);
+    const flat = flatFeeOn("solana", chain ? chain.cctpDomainId : STELLAR_DOMAIN, units);
     const burn = units - flat.fee;
     if (burn <= 0n) {
       throw new SolanaSourceError(

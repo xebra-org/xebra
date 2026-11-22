@@ -268,7 +268,7 @@ export function SuiForwarded({
             amount: units,
             tier,
             destination: feeDestination(chain, opensAccount),
-            xebraFee: flatFeeFor(chain.cctpDomainId),
+            xebraFee: flatFeeFor(chain.cctpDomainId, units),
           })
         : null,
     [units, tier, chain, opensAccount],

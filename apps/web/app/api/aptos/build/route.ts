@@ -35,8 +35,8 @@ export async function POST(request: Request): Promise<Response> {
   try {
     // What the person entered leaves the wallet: the burn is the rest of it after Xebra's flat
     // fee, which is its own transaction (Circle's burn is a fixed script), signed after the burn.
-    const flat = flatFeeOn("aptos", domainOf(body.to));
     const entered = typeof body.amount === "string" ? parseUsdcAmount(body.amount) : null;
+    const flat = flatFeeOn("aptos", domainOf(body.to), entered ?? 0n);
     if (entered === null || entered <= flat.fee) {
       return Response.json(
         { error: `Send more than Xebra's ${formatUsdcAmount(flat.fee)} USDC fee.` },

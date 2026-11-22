@@ -397,7 +397,7 @@ export function SuiTransfer({
       <Field
         id="sui-amount"
         label="Amount"
-        hint={`USDC on Sui${maxUsdc !== null ? `, up to ${maxUsdc} per transfer` : ""}. Xebra takes ${formatUsdc6(XEBRA_FLAT_FEE.deliver)} USDC of it in the same transaction; the recipient gets the rest.`}
+        hint={`USDC on Sui${maxUsdc !== null ? `, up to ${maxUsdc} per transfer` : ""}. Xebra takes 0.01 USDC plus 0.01% of it in the same transaction; the recipient gets the rest.`}
         trailing={<span className="text-xs text-bone/35">USDC</span>}
       >
         <Input

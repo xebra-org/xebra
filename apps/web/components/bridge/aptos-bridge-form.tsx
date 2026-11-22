@@ -6,7 +6,7 @@ import {
   EVM_CHAINS,
   type EvmChainId,
   type FeePlan,
-  XEBRA_FLAT_FEE,
+  STELLAR_CCTP_DOMAIN,
   checkAddressOn,
   checkSolanaAddress,
   flatFeeFor,
@@ -219,7 +219,7 @@ export function AptosBridgeForm({
       amount: units,
       tier,
       destination: feeDestination(dest, opensAccount),
-      xebraFee: flatFeeFor(dest.cctpDomainId),
+      xebraFee: flatFeeFor(dest.cctpDomainId, units),
     });
   }, [units, tier, to, opensAccount]);
   const routeDown =
@@ -457,12 +457,16 @@ export function AptosBridgeForm({
           ? units !== null && (
               <Notice tone="info" title="No delivery fee to Stellar" className="-mt-2">
                 Circle does not forward into Stellar, so it is paid nothing. Xebra takes{" "}
-                {formatUsdc6(XEBRA_FLAT_FEE.deliver)} USDC, a second wallet request after the burn,
-                and the recipient gets{" "}
-                {formatUsdc6(units > XEBRA_FLAT_FEE.deliver ? units - XEBRA_FLAT_FEE.deliver : 0n)}{" "}
+                {formatUsdc6(flatFeeFor(STELLAR_CCTP_DOMAIN, units))} USDC (0.01 plus 0.01% of the amount), a
+                second wallet request after the burn, and the recipient gets{" "}
+                {formatUsdc6(
+                  units > flatFeeFor(STELLAR_CCTP_DOMAIN, units)
+                    ? units - flatFeeFor(STELLAR_CCTP_DOMAIN, units)
+                    : 0n,
+                )}{" "}
                 USDC.{" "}
                 {source.relayer
-                  ? "Xebra completes the mint on Stellar for transfers of 1.10 USDC or more; for less, you finish it from a Stellar wallet for a few hundredths of an XLM."
+                  ? "Xebra completes the mint on Stellar for transfers of 1.02 USDC or more; for less, you finish it from a Stellar wallet for a few hundredths of an XLM."
                   : "You finish the mint from a Stellar wallet once Circle attests the burn, for a few hundredths of an XLM."}
               </Notice>
             )

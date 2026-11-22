@@ -33,12 +33,14 @@ export interface FlatFee {
 export function flatFeeOn(
   family: keyof FeeAddresses,
   destinationDomain: number,
+  /** What leaves the wallet, the amount the person entered; Xebra's fee includes 0.01% of it. */
+  amount: bigint,
   addresses: FeeAddresses = serverFeeAddresses(),
 ): FlatFee {
   const address = addresses[family];
   if (!address) throw new FeeAddressMissing(family);
   return {
-    fee: flatFeeFor(destinationDomain),
+    fee: flatFeeFor(destinationDomain, amount),
     address,
     kind: flatFeeKind(destinationDomain),
   };

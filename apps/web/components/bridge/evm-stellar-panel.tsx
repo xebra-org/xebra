@@ -290,7 +290,7 @@ export function EvmStellarPanel({
       <Field
         id="evm-stellar-amount"
         label="Amount"
-        hint={`USDC on ${source.name}. Xebra's fee comes out of it; at least ${to ? "0.50" : "1.10"} to ${destName}.`}
+        hint={`USDC on ${source.name}. Xebra's fee comes out of it; at least ${to ? "0.11" : "1.02"} to ${destName}.`}
         trailing={<span className="text-xs text-bone/35">USDC</span>}
       >
         <Input

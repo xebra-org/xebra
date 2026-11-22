@@ -27,6 +27,7 @@ import {
   evmDestinationsFrom,
   evmSendsToStellar,
   evmSources,
+  amountForBurn,
   flatFeeFor,
   formatUsdc,
   formatUsdcAmount,
@@ -146,8 +147,8 @@ const SOLANA_DOMAIN = 5;
  * (`/api/stellar-inbound/complete`).
  */
 const RELAYED_MIN_UNITS = 1_000_000n;
-/** The smallest burn into a chain the recipient claims on: with Xebra's 0.05, fees stay within a tenth. */
-const CLAIM_ONLY_MIN_BURN = 450_000n;
+/** The smallest burn into a chain the recipient claims on: with Xebra's 0.01, fees stay within a tenth. */
+const CLAIM_ONLY_MIN_BURN = 90_000n;
 
 function checkSender(from: SourceId, sender: string): void {
   const ok =
@@ -518,7 +519,11 @@ export function createService(deps: Deps, now: () => number = Date.now) {
    * this build charges none at all (`deps.feeAddresses` absent). A source whose fee address is not
    * set is refused: a route is never served free by accident.
    */
-  function flatFee(from: SourceId, to: DestId): { fee: bigint; address: string } | null {
+  function flatFee(
+    from: SourceId,
+    to: DestId,
+    amount: bigint,
+  ): { fee: bigint; address: string } | null {
     const family = feeFamily(from);
     if (!family || !deps.feeAddresses) return null;
     const address = deps.feeAddresses[family];
@@ -528,7 +533,7 @@ export function createService(deps: Deps, now: () => number = Date.now) {
         `Transfers from ${SOURCE_NAME(from)} are off for now: Xebra's fee address there is not set up.`,
       );
     }
-    return { fee: flatFeeFor(destinationDomain(to)), address };
+    return { fee: flatFeeFor(destinationDomain(to), amount), address };
   }
 
   /**
@@ -556,9 +561,9 @@ export function createService(deps: Deps, now: () => number = Date.now) {
     minBurn: bigint,
     maximum: bigint | null,
   ): { health: CircleHealth | null; options: QuoteOption[] } {
-    const flat = flatFee(from, to);
+    const flat = flatFee(from, to, amount);
     const fee = flat?.fee ?? 0n;
-    const minimum = minBurn + fee;
+    const minimum = flat ? amountForBurn(destinationDomain(to), minBurn) : minBurn;
     const quote = quoteOf(
       from,
       to,
@@ -599,7 +604,7 @@ export function createService(deps: Deps, now: () => number = Date.now) {
   ): QuoteOption {
     const dest = routeDestination(to as Exclude<DestId, "stellar">);
     const destination = feeDestination(dest, opensAccount);
-    const flat = wrapper ? null : flatFee(from, to);
+    const flat = wrapper ? null : flatFee(from, to, units);
     const xebraFee = flat?.fee ?? 0n;
     const plan = wrapper
       ? planWrapperFee({
@@ -749,7 +754,7 @@ export function createService(deps: Deps, now: () => number = Date.now) {
     if (q.from === "solana") return solanaOptions(q.to, q.amount);
     if (q.from !== "stellar" && isClaimOnly(q.to)) {
       // Circle does not deliver there: no hook, no Circle fee, the recipient claims it. Fees
-      // within a tenth of the amount, so at least 0.50 with Xebra's 0.05.
+      // within a tenth of the amount, so about 0.10 at least with Xebra's 0.01.
       return unforwarded(q.from, q.to, q.amount, CLAIM_ONLY_MIN_BURN, null);
     }
     if (q.to === "stellar" && q.from !== "stellar") {
@@ -803,7 +808,7 @@ export function createService(deps: Deps, now: () => number = Date.now) {
       );
     }
     const chain = EVM_CHAINS[to as EvmChainId];
-    const flat = flatFee("solana", to);
+    const flat = flatFee("solana", to, amount);
     const xebraFee = flat?.fee ?? 0n;
     const plan = planEvmFee({ amount, tier, destination: chain, xebraFee });
     const minimum = suggestedEvmMinimum(minimumEvmAmount(tier, xebraFee));

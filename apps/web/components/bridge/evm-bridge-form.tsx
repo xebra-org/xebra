@@ -306,7 +306,7 @@ export function EvmBridgeForm({
           amount: value,
           tier: feeTier,
           destination: feeDest,
-          xebraFee: flatFeeFor(destination.cctpDomainId),
+          xebraFee: flatFeeFor(destination.cctpDomainId, value),
         });
       if (!settings) return null;
       return planWrapperFee({

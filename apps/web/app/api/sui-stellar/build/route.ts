@@ -63,7 +63,7 @@ export async function POST(request: Request): Promise<Response> {
   try {
     // What the person entered leaves the wallet; Xebra's flat fee is paid out of it in the burn's
     // own transaction (Stellar is delivered by Xebra's relayer: the delivered fee).
-    const flat = flatFeeOn("sui", STELLAR_DOMAIN);
+    const flat = flatFeeOn("sui", STELLAR_DOMAIN, amount);
     const burn = amount - flat.fee;
     if (burn <= 0n) {
       return Response.json(

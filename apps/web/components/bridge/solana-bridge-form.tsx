@@ -6,7 +6,8 @@ import {
   EVM_CHAINS,
   type EvmChainId,
   type FeePlan,
-  XEBRA_FLAT_FEE,
+  STELLAR_CCTP_DOMAIN,
+  amountForBurn,
   checkAddressOn,
   explorerTxUrl,
   flatFeeFor,
@@ -291,7 +292,7 @@ export function SolanaBridgeForm({
             amount: units,
             tier,
             destination: chain,
-            xebraFee: flatFeeFor(chain.cctpDomainId),
+            xebraFee: flatFeeFor(chain.cctpDomainId, units),
           })
         : null,
     [chain, units, tier],
@@ -304,7 +305,10 @@ export function SolanaBridgeForm({
       : null;
 
   // What the relayer completes, plus Xebra's fee on top of the burn.
-  const stellarMin = (parseAmount(config.stellarMinUsdc) ?? 1_000_000n) + XEBRA_FLAT_FEE.deliver;
+  const stellarMin = amountForBurn(
+    STELLAR_CCTP_DOMAIN,
+    parseAmount(config.stellarMinUsdc) ?? 1_000_000n,
+  );
   const cap = config.maxUsdc !== null ? parseAmount(config.maxUsdc) : null;
   const amountError =
     amount.trim() === ""
@@ -531,7 +535,7 @@ export function SolanaBridgeForm({
       <div className="px-5 py-6 sm:px-6">
         {sourcePicker}
         <Notice tone="info" title="Fees from Solana" className="mb-6">
-          Xebra takes {formatUsdc6(XEBRA_FLAT_FEE.deliver)} USDC, paid in the same transaction.{" "}
+          Xebra takes 0.01 USDC plus 0.01% of the amount, paid in the same transaction.{" "}
           {to === "stellar"
             ? "Circle charges nothing to Stellar."
             : "You also pay Circle's delivery fee, shown below."}{" "}
@@ -653,12 +657,12 @@ export function SolanaBridgeForm({
                       : "Circle attests the burn; you complete the mint from a Stellar wallet for a few hundredths of an XLM."
                   }
                 />
-                <DataRow label="Xebra fee" value={`−${formatUsdc6(XEBRA_FLAT_FEE.deliver)} USDC`} />
+                <DataRow label="Xebra fee" value={`−${formatUsdc6(flatFeeFor(STELLAR_CCTP_DOMAIN, units))} USDC`} />
                 <div className="pt-3">
                   <StripeRule className="mb-3 opacity-50" />
                   <DataRow
                     label="Recipient gets"
-                    value={`${formatUsdc6(units > XEBRA_FLAT_FEE.deliver ? units - XEBRA_FLAT_FEE.deliver : 0n)} USDC`}
+                    value={`${formatUsdc6(units > flatFeeFor(STELLAR_CCTP_DOMAIN, units) ? units - flatFeeFor(STELLAR_CCTP_DOMAIN, units) : 0n)} USDC`}
                     emphasis
                   />
                 </div>

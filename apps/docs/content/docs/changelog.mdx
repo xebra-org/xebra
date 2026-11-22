@@ -7,9 +7,9 @@ description: What changed in the Xebra API and SDK, newest first.
 
 **API**:
 
-- Every route without a Xebra fee contract carries Xebra's flat fee: 0.10 USDC where the transfer
-  arrives by itself (Circle's Forwarding Service, or Xebra's relayer into Stellar), 0.05 where the
-  recipient claims it. `fees.xebra` shows it; `amount` is what leaves the wallet and the burn is the
+- Every route without a Xebra fee contract carries Xebra's fee: 0.01 USDC plus 0.01% of the
+  amount, whether the transfer arrives by itself (Circle's Forwarding Service, or Xebra's relayer
+  into Stellar) or the recipient claims it. `fees.xebra` shows it; `amount` is what leaves the wallet and the burn is the
   rest. See [Fees](/docs/concepts/fees).
 - `POST /v1/transfers` returns a `fee` step after the burn from EVM chains (a USDC transfer) and
   from Aptos (a new `aptos_call` transaction). From Solana and Sui the fee is in the burn's own

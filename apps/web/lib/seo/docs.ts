@@ -61,7 +61,7 @@ If delivery ever fails, the transfer is still attested and anyone can finish it:
 
 ## Fees
 
-From Stellar, Xebra charges ${xebraFeeRule}, and Circle's delivery fee is paid out of that, not added on top. ${arcViaWrapper ? "From Arc the same rule applies." : "From Arc, Xebra takes a flat 0.10 USDC plus Circle's delivery fee."} From every other chain without a Xebra contract, Xebra takes a flat 0.10 USDC (0.05 where the recipient claims the transfer), paid beside the burn. Details on [fees](/fees).
+From Stellar, Xebra charges ${xebraFeeRule}, and Circle's delivery fee is paid out of that, not added on top. ${arcViaWrapper ? "From Arc the same rule applies." : "From Arc, Xebra takes 0.01 USDC plus 0.01% of the amount, plus Circle's delivery fee."} From every other chain without a Xebra contract, Xebra takes 0.01 USDC plus 0.01% of the amount, paid beside the burn, on top of Circle's fees and gas. Details on [fees](/fees).
 
 ## Safety
 
@@ -142,11 +142,14 @@ The bridge always shows exactly what the recipient will get before you sign, rea
 
 Xebra's fee is **${xebraFeeRule}**. Circle's delivery fee is paid **out of** Xebra's fee, not added on top: if Circle's fee is ever the larger of the two, you pay Circle's fee and Xebra keeps nothing.
 
-| You send | Fee | Recipient gets |
+So below about 500 USDC you pay Circle's delivery fee and nothing more; above that, ${FEES.bps / 100}% of the amount. Circle's fee depends on the destination and moves a little over the day; the bridge shows the exact figure.
+
+| You send | Fee to Arc (Circle about 0.02) | Fee to Base (Circle about 0.05) |
 |---|---|---|
-| 10 USDC | 0.10 USDC | 9.90 USDC |
-| 50 USDC | 0.10 USDC | 49.90 USDC |
-| 100 USDC | 0.10 USDC | 99.90 USDC |
+| 10 USDC | about 0.02 USDC | about 0.05 USDC |
+| 100 USDC | about 0.02 USDC | about 0.05 USDC |
+| 1,000 USDC | 0.10 USDC | 0.10 USDC |
+| 10,000 USDC | 1.00 USDC | 1.00 USDC |
 
 The only other cost is the Stellar network fee, a fraction of a cent in XLM. Each transfer is ${FEES.minTransferUsdc} to ${FEES.maxTransferUsdc} USDC.
 
@@ -155,7 +158,7 @@ The only other cost is the Stellar network fee, a fraction of a cent in XLM. Eac
 ${
   arcViaWrapper
     ? `Transfers out of Arc go through Xebra's contract on Arc with the same rule: **${xebraFeeRule}**, with Circle's delivery fee paid out of it.`
-    : "Transfers out of Arc call Circle directly. Xebra takes a **flat 0.10 USDC**, paid in its own step after the burn, and you pay Circle's delivery fee, usually a few cents, out of the amount."
+    : "Transfers out of Arc call Circle directly. Xebra takes **0.01 USDC plus 0.01% of the amount**, paid in its own step after the burn, and you pay Circle's delivery fee, usually a few cents, out of the amount."
 } Arc charges gas in USDC, a fraction of a cent per transaction; keep a few cents in the wallet.
 
 ## Circle's delivery fee
@@ -314,9 +317,7 @@ function routeDoc(r: RouteInfo, all: RouteInfo[]): Doc {
   const title = `Bridge USDC from ${from} to ${to}`;
   const feeRow = viaXebra
     ? `${xebraFeeRule}, with Circle's delivery fee paid out of it`
-    : claimed
-      ? "0.05 USDC flat, paid beside the burn"
-      : "0.10 USDC flat (0.05 where the recipient claims), paid beside the burn";
+    : "0.01 USDC plus 0.01% of the amount, paid beside the burn";
   const recipient = relayed
     ? "an existing Stellar account (G…) that holds a USDC trustline"
     : toEvm
@@ -328,9 +329,9 @@ function routeDoc(r: RouteInfo, all: RouteInfo[]): Doc {
   const limits = viaXebra
     ? `${FEES.minTransferUsdc} to ${FEES.maxTransferUsdc} USDC per transfer`
     : relayed
-      ? "From 1.10 USDC; no Xebra maximum"
+      ? "From 1.02 USDC; no Xebra maximum"
       : claimed
-        ? "From 0.50 USDC; no Xebra maximum"
+        ? "From 0.11 USDC; no Xebra maximum"
         : "No Xebra limit; fees may be at most a tenth of the amount";
   const circleRow = relayed
     ? "None: Circle does not deliver into Stellar; Xebra's relayer completes the mint"
@@ -343,7 +344,7 @@ function routeDoc(r: RouteInfo, all: RouteInfo[]): Doc {
     path: `/bridge/${r.slug}`,
     markdownPath: md(`/bridge/${r.slug}`),
     title,
-    description: `Send native USDC from ${from} to ${to} over Circle's CCTP. ${viaXebra ? `Fee ${FEES.bps / 100}%, at least ${FEES.minFeeUsdc} USDC` : "Xebra fee 0.10 USDC"}, usually minutes, and claimable if delivery fails.`,
+    description: `Send native USDC from ${from} to ${to} over Circle's CCTP. ${viaXebra ? `Fee ${FEES.bps / 100}%, at least ${FEES.minFeeUsdc} USDC` : "Xebra fee 0.01 USDC plus 0.01%"}, usually minutes, and claimable if delivery fails.`,
     section: "routes",
     breadcrumb: [
       { name: "Xebra", path: "/" },

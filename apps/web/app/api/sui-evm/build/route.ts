@@ -137,7 +137,7 @@ export async function POST(request: Request): Promise<Response> {
   // own transaction, and the burn is the rest.
   let flat: ReturnType<typeof flatFeeOn>;
   try {
-    flat = flatFeeOn("sui", chain.cctpDomainId);
+    flat = flatFeeOn("sui", chain.cctpDomainId, amount);
   } catch (err) {
     if (err instanceof FeeAddressMissing) {
       return Response.json({ error: err.message }, { status: err.status });
