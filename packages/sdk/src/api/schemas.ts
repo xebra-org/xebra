@@ -218,6 +218,20 @@ export const ProblemSchema = z
     total: AmountOutSchema.optional(),
     limit: AmountOutSchema.optional(),
     needs: z.string().optional(),
+    issues: z
+      .array(
+        z.object({
+          path: z.array(z.string()).meta({
+            description: 'Where the problem is, such as `["amount"]`. Empty for the whole input.',
+          }),
+          message: z.string(),
+        }),
+      )
+      .optional()
+      .meta({
+        description:
+          "On `invalid_request` and `invalid_amount` from checking the input: each field that failed, and why.",
+      }),
   })
   .meta({ id: "Problem", description: "An RFC 9457 problem. `detail` is written for a person." });
 

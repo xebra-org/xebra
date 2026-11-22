@@ -13,6 +13,10 @@ HTTP **422**. `type`: `https://docs.xebra.exchange/errors/invalid_amount`
 
 Send amounts as decimal strings such as `"25"` or `"12.5"`, never as JSON numbers.
 
+## Extra fields
+
+- `issues`: Each field that failed its checks, as data: `path` names the field (`["amount"]` or `["maxTotalFee"]`) and `message` says what was wrong. The SDK puts it on `err.extra.issues`.
+
 ## Example
 
 ```json
@@ -21,7 +25,8 @@ Send amounts as decimal strings such as `"25"` or `"12.5"`, never as JSON number
   "title": "Invalid amount",
   "status": 422,
   "detail": "amount: must be more than zero.",
-  "code": "invalid_amount"
+  "code": "invalid_amount",
+  "issues": [{ "path": ["amount"], "message": "must be more than zero" }]
 }
 ```
 

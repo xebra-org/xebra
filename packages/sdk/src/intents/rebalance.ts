@@ -229,6 +229,25 @@ function floorTo(amount: string, places: number): string {
   return t ? `${i}.${t}` : (i as string);
 }
 
+const isRecord = (v: unknown): v is Record<string, unknown> =>
+  typeof v === "object" && v !== null && !Array.isArray(v);
+const isUnits = (v: unknown): boolean => typeof v === "string" && /^\d+$/.test(v);
+
+/** Shape checks for the 1Click answers this module reads. A body that fails is `invalid_response`. */
+const SHAPES = {
+  tokens: (v: unknown) => Array.isArray(v),
+  quote: (v: unknown) =>
+    isRecord(v) &&
+    isRecord(v.quote) &&
+    isUnits(v.quote.amountOut) &&
+    isUnits(v.quote.minAmountOut) &&
+    typeof v.quote.timeEstimate === "number" &&
+    (v.quote.depositAddress === undefined || typeof v.quote.depositAddress === "string"),
+  intent: (v: unknown) => isRecord(v) && isRecord(v.intent),
+  submitted: (v: unknown) => isRecord(v) && typeof v.intentHash === "string",
+  status: (v: unknown) => isRecord(v) && typeof v.status === "string",
+};
+
 export function createRebalancer(opts: RebalancerOptions) {
   const doFetch = opts.fetch ?? globalThis.fetch;
   const now = opts.now ?? Date.now;
@@ -244,11 +263,17 @@ export function createRebalancer(opts: RebalancerOptions) {
       throw new OneClickError(
         "Withdrawing from NEAR Intents needs a 1Click partner API key (oneClick.apiKey).",
         0,
+        { code: "missing_api_key" },
       );
     }
   }
 
-  async function call<T>(path: string, body?: unknown, needsKey = false): Promise<T> {
+  async function call<T>(
+    path: string,
+    body: unknown,
+    needsKey: boolean,
+    valid: (json: unknown) => boolean,
+  ): Promise<T> {
     if (needsKey) requireKey();
     let res: Response;
     let text: string;
@@ -286,14 +311,21 @@ export function createRebalancer(opts: RebalancerOptions) {
         json && typeof json === "object" && "message" in json && typeof json.message === "string"
           ? json.message
           : `1Click answered ${res.status}`;
-      throw new OneClickError(said, res.status);
+      throw new OneClickError(said, res.status, { body: json ?? (text || undefined) });
+    }
+    if (!valid(json)) {
+      throw new OneClickError(
+        `1Click answered ${res.status} to ${path.split("?")[0]}, but not with the fields Xebra reads.`,
+        res.status,
+        { code: "invalid_response", body: json ?? text },
+      );
     }
     return json as T;
   }
 
   async function tokens(): Promise<IntentsToken[]> {
     if (tokenCache && now() - tokenCache.at < 300_000) return tokenCache.list;
-    const list = await call<IntentsToken[]>("/v0/tokens");
+    const list = await call<IntentsToken[]>("/v0/tokens", undefined, false, SHAPES.tokens);
     tokenCache = { at: now(), list };
     return list;
   }
@@ -322,11 +354,7 @@ export function createRebalancer(opts: RebalancerOptions) {
   }
 
   function quote(q: Record<string, unknown>): Promise<{ quote: OneClickQuote }> {
-    return call("/v0/quote", {
-      slippageTolerance: 10,
-      referral,
-      ...q,
-    });
+    return call("/v0/quote", { slippageTolerance: 10, referral, ...q }, false, SHAPES.quote);
   }
 
   function withdrawQuote(
@@ -456,7 +484,12 @@ export function createRebalancer(opts: RebalancerOptions) {
     const { fromToken } = await resolve(r);
     requireKey();
     const { quote: q } = await withdrawQuote(r, fromToken, false);
-    if (!q.depositAddress) throw new OneClickError("1Click issued no deposit address.", 0);
+    if (!q.depositAddress) {
+      throw new OneClickError("1Click issued no deposit address.", 0, {
+        code: "no_deposit_address",
+        body: q,
+      });
+    }
     const { intent } = await call<{ intent: Withdrawal["intent"] }>(
       "/v0/generate-intent",
       {
@@ -466,6 +499,7 @@ export function createRebalancer(opts: RebalancerOptions) {
         depositAddress: q.depositAddress,
       },
       true,
+      SHAPES.intent,
     );
     return {
       depositAddress: q.depositAddress,
@@ -484,6 +518,7 @@ export function createRebalancer(opts: RebalancerOptions) {
       "/v0/submit-intent",
       { type: "swap_transfer", signedData: { ...w.intent, ...signed } },
       true,
+      SHAPES.submitted,
     );
   }
 
@@ -507,7 +542,12 @@ export function createRebalancer(opts: RebalancerOptions) {
       throw new Error(`CCTP fees ${x.fees.total} exceed maxTotalFee ${r.maxTotalFee}.`);
     }
     const { quote: q } = await depositQuote(r, toToken, x.recipientGets, false, o.minutes ?? 120);
-    if (!q.depositAddress) throw new OneClickError("1Click issued no deposit address.", 0);
+    if (!q.depositAddress) {
+      throw new OneClickError("1Click issued no deposit address.", 0, {
+        code: "no_deposit_address",
+        body: q,
+      });
+    }
     const build = await router.buildDeposit({
       from,
       depositChain: to,
@@ -523,27 +563,61 @@ export function createRebalancer(opts: RebalancerOptions) {
   async function status(depositAddress: string): Promise<OneClickStatus> {
     const s = await call<{ status: OneClickStatus }>(
       `/v0/status?${new URLSearchParams({ depositAddress })}`,
+      undefined,
+      false,
+      SHAPES.status,
     );
     return s.status;
   }
 
-  /** Polls `status` until SUCCESS, REFUNDED or FAILED. Default every 5 s for up to 2 h. */
+  /** Waits `ms`, or rejects with the signal's reason as soon as it aborts. */
+  function sleep(ms: number, signal?: AbortSignal): Promise<void> {
+    return new Promise((ok, fail) => {
+      if (signal?.aborted) return fail(signal.reason);
+      const onAbort = () => {
+        clearTimeout(t);
+        fail(signal?.reason);
+      };
+      const t = setTimeout(() => {
+        signal?.removeEventListener("abort", onAbort);
+        ok();
+      }, ms);
+      signal?.addEventListener("abort", onAbort, { once: true });
+    });
+  }
+
+  /**
+   * Polls `status` until SUCCESS, REFUNDED or FAILED. Default every 5 s for up to 2 h. Network
+   * errors, timeouts, 429 and 5xx from 1Click do not end the wait: it backs off (doubling, up to
+   * a minute) and keeps polling until the deadline. An abort through `signal` ends it at once.
+   */
   async function waitFor(
     depositAddress: string,
     o: { intervalMs?: number; timeoutMs?: number; signal?: AbortSignal } = {},
   ): Promise<OneClickStatus> {
     const interval = o.intervalMs ?? 5_000;
     const end = now() + (o.timeoutMs ?? 2 * 60 * 60_000);
+    let wait = interval;
+    let lastError: unknown;
     for (;;) {
       o.signal?.throwIfAborted();
       try {
         const s = await status(depositAddress);
         if (s === "SUCCESS" || s === "REFUNDED" || s === "FAILED") return s;
+        wait = interval;
+        lastError = undefined;
       } catch (err) {
-        if (!(err instanceof OneClickError) || err.status < 500) throw err;
+        if (!(err instanceof OneClickError) || !err.retryable) throw err;
+        lastError = err;
+        wait = Math.max(interval, Math.min(wait * 2, 60_000));
       }
-      if (now() + interval > end) throw new Error(`${depositAddress} did not settle in time.`);
-      await new Promise((ok) => setTimeout(ok, interval));
+      if (now() + wait > end) {
+        throw new Error(
+          `${depositAddress} did not settle in time. It may still: check status() before acting again.`,
+          { cause: lastError },
+        );
+      }
+      await sleep(wait, o.signal);
     }
   }
 
