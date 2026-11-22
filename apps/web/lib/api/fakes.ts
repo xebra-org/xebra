@@ -87,6 +87,17 @@ export const SUI_STEP: TransferStep = {
   expiresAt: null,
 };
 
+/**
+ * A status route's answer for a burn Circle attested and the Stellar side is to finish, where the
+ * mint check could not get an answer: `mint: "unknown"`, from `/api/sui-stellar/status`,
+ * `/api/aptos/status` and `/api/solana-source/status`.
+ */
+export const mintUnchecked = (): Record<string, unknown> => ({
+  state: "complete",
+  delivered: false,
+  mint: "unknown",
+});
+
 export function buildDeps(over: Partial<BuildDeps> = {}): BuildDeps {
   return {
     stellarRpc: () => ({
