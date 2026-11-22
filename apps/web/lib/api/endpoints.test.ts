@@ -221,6 +221,31 @@ describe("bad requests", () => {
     expect((await problemOf(res)).detail).toContain("to");
   });
 
+  it("lists each field that failed as data, as well as in the detail", async () => {
+    const res = await api().quote(get("/quote?from=stellar&to=ethereum2&amount=10"));
+    expect((await problemOf(res)).issues).toEqual([{ path: ["to"], message: expect.any(String) }]);
+
+    const typo = await api().createTransfer(
+      post("/transfers", { from: "stellar", to: "base", amount: "10", recipient: RECIPIENT }),
+    );
+    expect(await problemOf(typo)).toMatchObject({
+      code: "invalid_request",
+      issues: [{ path: ["sender"], message: expect.any(String) }],
+    });
+  });
+
+  it("lists the amount's issues on invalid_amount too", async () => {
+    const res = await api().quote(get("/quote?from=stellar&to=base&amount=1.1234567"));
+    const body = await problemOf(res);
+    expect(body.code).toBe("invalid_amount");
+    expect(body.issues).toContainEqual({ path: ["amount"], message: expect.any(String) });
+  });
+
+  it("sends no issues when the body could not be read at all", async () => {
+    const res = await api().createTransfer(post("/transfers", "{not json"));
+    expect(await problemOf(res)).not.toHaveProperty("issues");
+  });
+
   it("says a route is unavailable when the chains exist but do not connect", async () => {
     const res = await api().quote(get("/quote?from=stellar&to=sui&amount=10"));
     expect(res.status).toBe(422);
