@@ -364,6 +364,26 @@ describe("waitForReceipt", () => {
       t += 10_000;
       return t;
     };
+    const clock = { ...fast, timeoutMs: 30_000, now, chainName: "Base" };
+    const err = await waitForReceipt(
+      wallet(() => null),
+      HASH,
+      clock,
+    ).catch((e) => e);
+    expect(err).toBeInstanceOf(ReceiptTimeoutError);
+    expect(err.message).toBe(
+      `Base has not confirmed the transaction yet. It may still go through: check ${HASH}.`,
+    );
+    expect(err.hash).toBe(HASH);
+    expect(err.txHash).toBe(HASH);
+  });
+
+  it("defaults chain name to The network when not given and carries hash", async () => {
+    let t = 0;
+    const now = () => {
+      t += 10_000;
+      return t;
+    };
     const clock = { ...fast, timeoutMs: 30_000, now };
     const err = await waitForReceipt(
       wallet(() => null),
