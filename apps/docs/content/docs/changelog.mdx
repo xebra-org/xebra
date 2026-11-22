@@ -7,13 +7,13 @@ description: What changed in the Xebra API and SDK, newest first.
 
 **SDK**, `@xebra/sdk`:
 
+- `isXebraApiError(e)` (additive): a type guard for `XebraApiError` that also works when two copies
+  of the SDK are installed, where `instanceof` does not. It checks a brand,
+  `Symbol.for("xebra.error")`, and the error's `name`.
 - `XebraError` (additive): shared base error class exported from `@xebra/sdk` with `code`,
   `retryable`, and `cause`. `XebraApiError` now extends `XebraError` (keeping `instanceof
   XebraApiError` compatibility), preserves `cause` when wrapping errors, and marks `network_error`,
   `timeout`, `rate_limited`, `upstream_unavailable`, and `internal_error` as `retryable`.
-- `isXebraApiError(e)` (additive): a type guard for `XebraApiError` that also works when two copies
-  of the SDK are installed, where `instanceof` does not. It checks a brand,
-  `Symbol.for("xebra.error")`, and the error's `name`.
 
 ## 0.4.0 (2026-11-15)
 
