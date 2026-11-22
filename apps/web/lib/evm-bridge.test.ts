@@ -197,7 +197,13 @@ describe("submitEvmBridge", () => {
   it("calls onApprovalHash as soon as the approval transaction is sent", async () => {
     const c = chain();
     let hash: Hex | null = null;
-    await submitEvmBridge(request(c, { onApprovalHash: (h) => { hash = h; } }));
+    await submitEvmBridge(
+      request(c, {
+        onApprovalHash: (h) => {
+          hash = h;
+        },
+      }),
+    );
     expect(hash).toBe(APPROVAL_HASH);
 
     const [approval, burn] = c.sent;
