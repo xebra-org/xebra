@@ -9,11 +9,24 @@ HTTP **429**. `type`: `https://docs.xebra.exchange/errors/rate_limited`
 
 Too many requests in a short time.
 
+The API does not send this code today: `/v1` enforces no per-client limits yet. The code is
+reserved for when per-key limits ship with API keys (see [Planned](/docs/changelog#planned)), so
+code written against it now keeps working then. Until then, keep your request rate reasonable, as
+[Limits](/docs/api#limits) asks.
+
 ## What to do
 
-Wait for the number of seconds in the `Retry-After` header, then ask again. The SDK's `waitForDelivery` waits this out on its own.
+Treat it like any other retryable error: wait, then ask again.
 
-<Callout>Per-key limits arrive with API keys. See the [changelog](/docs/changelog).</Callout>
+- If the response has a `Retry-After` header, wait at least that many seconds.
+- If it has none, back off: wait a few seconds, then double the wait each time it happens again,
+  up to about a minute.
+
+In the SDK the error is an `XebraApiError` with `code: "rate_limited"` and `retryable: true`. It
+does not carry the response's headers, so around your own calls (`quote`, `createTransfer`,
+`createClaim`, `getTransfer`) back off as above. `waitForDelivery` does not throw it: it waits its
+usual interval (`intervalMs`, 5 seconds by default) and asks again, until `timeoutMs` runs out. It
+does not read `Retry-After`.
 
 ## Example
 
