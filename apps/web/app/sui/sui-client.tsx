@@ -56,10 +56,20 @@ function recall(): string | null {
   }
 }
 
+export function recallSuiDigest(): string | null {
+  if (typeof window === "undefined") return null;
+  const fromUrl = new URLSearchParams(window.location.search).get("tx")?.trim() ?? "";
+  if (DIGEST.test(fromUrl)) return fromUrl;
+  const direct = recall();
+  if (direct) return direct;
+  const evm = recallSuiEvm();
+  if (evm?.digest && DIGEST.test(evm.digest)) return evm.digest;
+  return null;
+}
+
 /** Whether a Sui transfer is in the address (`?tx=`) or was being followed in this browser. */
 export function hasRememberedSuiTransfer(): boolean {
-  const fromUrl = new URLSearchParams(window.location.search).get("tx")?.trim() ?? "";
-  return DIGEST.test(fromUrl) || recall() !== null || recallSuiEvm() !== null;
+  return recallSuiDigest() !== null;
 }
 
 const short = (s: string) => `${s.slice(0, 6)}...${s.slice(-4)}`;

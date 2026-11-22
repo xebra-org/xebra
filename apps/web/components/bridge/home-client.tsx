@@ -10,10 +10,10 @@ import {
   parseDeepLink,
 } from "@xebra/sdk/core";
 import type React from "react";
-import { useCallback, useEffect, useMemo, useState } from "react";
-import { SuiTransfer, hasRememberedSuiTransfer } from "../../app/sui/sui-client";
-import { recallSuiEvm } from "../../app/sui/sui-evm";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { SuiTransfer, recallSuiDigest } from "../../app/sui/sui-client";
 import { env, isCctpRailConfigured } from "../../lib/env";
+import { useSourceConfig } from "../../lib/use-source-config";
 import { SiteFooter } from "../site/site-footer";
 import { TopBar } from "../site/top-bar";
 import { Eyebrow } from "../ui/badge";
@@ -38,30 +38,19 @@ import {
 } from "./solana-bridge-form";
 import { StellarBridgeForm } from "./stellar-bridge-form";
 
-const SUI_DIGEST = /^[1-9A-HJ-NP-Za-km-z]{32,64}$/;
-
-function recallSuiDigest(): string | null {
-  if (typeof window === "undefined") return null;
-  try {
-    const fromUrl = new URLSearchParams(window.location.search).get("tx")?.trim() ?? "";
-    if (SUI_DIGEST.test(fromUrl)) return fromUrl;
-    const direct = window.localStorage.getItem("xebra.sui-stellar.digest");
-    if (direct && SUI_DIGEST.test(direct)) return direct;
-    const evm = recallSuiEvm();
-    if (evm?.digest) return evm.digest;
-  } catch {
-    return null;
-  }
-  return null;
-}
+const SUI_DOMAIN = 8;
+const SOLANA_DOMAIN = 5;
+const APTOS_DOMAIN = 9;
 
 function TransferNotice({
   chain,
   hash,
+  domain,
   className,
 }: {
   chain: string;
   hash: string;
+  domain: number;
   className?: string;
 }) {
   return (
@@ -74,7 +63,7 @@ function TransferNotice({
       <p className="mt-2">
         You can track or complete the transfer on the{" "}
         <a
-          href={`/claim?tx=${encodeURIComponent(hash)}`}
+          href={`/claim?tx=${encodeURIComponent(hash)}&src=${domain}`}
           className="underline underline-offset-2 hover:text-bone"
         >
           claim page
@@ -115,230 +104,149 @@ interface SuiSource {
 export function HomeClient({ children }: { children?: React.ReactNode }) {
   const { connections, stellarKit: kit, open: openWallets } = useWallets();
 
-  // Aptos, like Sui, is switched on by a server setting and asked for after mounting. Until it
-  // answers, or when it is off, the screen is exactly what it was.
-  const [aptos, setAptos] = useState<AptosSource | null>(null);
-  const [aptosError, setAptosError] = useState(false);
-  const [aptosRemembered, setAptosRemembered] = useState<{ tx: string } | null>(null);
+  const [from, setFrom] = useState<SourceId>("stellar");
+  const [busy, setBusy] = useState(false);
+  const busyRef = useRef(busy);
+  busyRef.current = busy;
 
-  useEffect(() => {
-    let live = true;
-    let timer: ReturnType<typeof setTimeout> | undefined;
-    let delay = 1000;
+  const switchedRef = useRef(false);
+  const switchOnce = useCallback((target: SourceId) => {
+    if (switchedRef.current || busyRef.current) return;
+    if (typeof window !== "undefined" && parseDeepLink(window.location.search).from) return;
+    switchedRef.current = true;
+    setFrom(target);
+  }, []);
 
-    const initial = recallAptosTransfer();
-    if (initial) setAptosRemembered({ tx: initial.tx });
+  const initialAptos = useMemo(() => {
+    const rem = recallAptosTransfer();
+    return rem ? { tx: rem.tx } : null;
+  }, []);
 
-    const load = async () => {
-      try {
-        const r = await fetch("/api/aptos/config", { cache: "no-store" });
-        if (!r.ok) throw new Error(`HTTP ${r.status}`);
-        const c = (await r.json()) as {
-          enabled?: boolean;
-          destinations?: unknown;
-          maxUsdc?: string | null;
-          relayer?: boolean;
-        } | null;
-        if (!live) return;
-        setAptosError(false);
-        if (!c?.enabled) return;
-        const destinations = Array.isArray(c.destinations)
-          ? c.destinations.filter(isAptosDestination)
-          : [];
-        if (destinations.length === 0) return;
-        setAptos({ destinations, maxUsdc: c.maxUsdc ?? null, relayer: c.relayer === true });
-        // A transfer this browser was following comes back on screen.
-        if (recallAptosTransfer() && !parseDeepLink(window.location.search).from) {
-          setFrom("aptos");
-        }
-      } catch {
-        if (!live) return;
-        const rem = recallAptosTransfer();
-        if (rem) {
-          setAptosRemembered({ tx: rem.tx });
-          setAptosError(true);
-          if (!parseDeepLink(window.location.search).from) {
-            setFrom("aptos");
-          }
-        }
-        timer = setTimeout(load, delay);
-        delay = Math.min(delay * 2, 30000);
-      }
-    };
+  const parseAptos = useCallback((json: unknown): AptosSource | null => {
+    const c = json as {
+      enabled?: boolean;
+      destinations?: unknown;
+      maxUsdc?: string | null;
+      relayer?: boolean;
+    } | null;
+    if (!c?.enabled) return null;
+    const destinations = Array.isArray(c.destinations)
+      ? c.destinations.filter(isAptosDestination)
+      : [];
+    if (destinations.length === 0) return null;
+    return { destinations, maxUsdc: c.maxUsdc ?? null, relayer: c.relayer === true };
+  }, []);
 
-    void load();
+  const {
+    config: aptos,
+    error: aptosError,
+    remembered: aptosRemembered,
+  } = useSourceConfig<AptosSource>({
+    url: "/api/aptos/config",
+    remembered: initialAptos,
+    parse: parseAptos,
+    onSelect: () => switchOnce("aptos"),
+  });
 
-    return () => {
-      live = false;
-      if (timer) clearTimeout(timer);
+  const initialSui = useMemo(() => {
+    const d = recallSuiDigest();
+    return d ? { tx: d } : null;
+  }, []);
+
+  const parseSui = useCallback((json: unknown): SuiSource | null => {
+    const c = json as {
+      enabled?: boolean;
+      relayer?: boolean;
+      maxUsdc?: string | null;
+      evm?: unknown;
+      solana?: unknown;
+    } | null;
+    if (!c?.enabled) return null;
+    return {
+      relayer: c.relayer === true,
+      maxUsdc: c.maxUsdc ?? null,
+      evm: Array.isArray(c.evm)
+        ? c.evm.filter((id): id is EvmChainId => typeof id === "string" && isEvmChainId(id))
+        : [],
+      solana: c.solana === true,
     };
   }, []);
 
-  // Stellar always; an EVM chain only once this build lets it send. With none on, there is one
-  // source, no picker, and the screen is exactly the Stellar one.
-  // Sui is switched on by a server setting, so it is asked for after mounting. Until it answers, or
-  // when it is off, the screen is exactly what it was.
-  const [sui, setSui] = useState<SuiSource | null>(null);
-  const [suiError, setSuiError] = useState(false);
-  const [suiRemembered, setSuiRemembered] = useState<{ tx: string } | null>(null);
+  const {
+    config: sui,
+    error: suiError,
+    remembered: suiRemembered,
+  } = useSourceConfig<SuiSource>({
+    url: "/api/sui-stellar/config",
+    remembered: initialSui,
+    parse: parseSui,
+    onSelect: () => switchOnce("sui"),
+  });
 
-  useEffect(() => {
-    let live = true;
-    let timer: ReturnType<typeof setTimeout> | undefined;
-    let delay = 1000;
+  const initialSolana = useMemo(() => {
+    const rem = recallSolanaTransfer();
+    return rem ? { tx: rem.tx } : null;
+  }, []);
 
-    const initial = recallSuiDigest();
-    if (initial) setSuiRemembered({ tx: initial });
-
-    const load = async () => {
-      try {
-        const r = await fetch("/api/sui-stellar/config", { cache: "no-store" });
-        if (!r.ok) throw new Error(`HTTP ${r.status}`);
-        const c = (await r.json()) as {
-          enabled?: boolean;
-          relayer?: boolean;
-          maxUsdc?: string | null;
-          evm?: unknown;
-          solana?: unknown;
-        } | null;
-        if (!live) return;
-        setSuiError(false);
-        if (!c?.enabled) return;
-        setSui({
-          relayer: c.relayer === true,
-          maxUsdc: c.maxUsdc ?? null,
-          // Only names this build knows: a newer server cannot make the page render a chain it lacks.
-          evm: Array.isArray(c.evm)
-            ? c.evm.filter((id): id is EvmChainId => typeof id === "string" && isEvmChainId(id))
-            : [],
-          solana: c.solana === true,
-        });
-        // A transfer this browser was following comes back on screen, as it does on /sui.
-        if (hasRememberedSuiTransfer() && !parseDeepLink(window.location.search).from) {
-          setFrom("sui");
-        }
-      } catch {
-        if (!live) return;
-        const d = recallSuiDigest();
-        if (d || hasRememberedSuiTransfer()) {
-          const tx =
-            d ??
-            recallSuiEvm()?.digest ??
-            new URLSearchParams(window.location.search).get("tx")?.trim() ??
-            "";
-          if (tx) setSuiRemembered({ tx });
-          setSuiError(true);
-          if (!parseDeepLink(window.location.search).from) {
-            setFrom("sui");
-          }
-        }
-        timer = setTimeout(load, delay);
-        delay = Math.min(delay * 2, 30000);
-      }
-    };
-
-    void load();
-
-    return () => {
-      live = false;
-      if (timer) clearTimeout(timer);
+  const parseSolana = useCallback((json: unknown): SolanaSourceConfig | null => {
+    const c = json as {
+      enabled?: boolean;
+      evm?: unknown;
+      stellar?: boolean;
+      relayer?: boolean;
+      maxUsdc?: string | null;
+      stellarMinUsdc?: string;
+    } | null;
+    if (!c?.enabled) return null;
+    const evm = Array.isArray(c.evm)
+      ? c.evm.filter((id): id is EvmChainId => typeof id === "string" && isEvmChainId(id))
+      : [];
+    if (evm.length === 0 && c.stellar !== true) return null;
+    return {
+      evm,
+      stellar: c.stellar === true,
+      relayer: c.relayer === true,
+      maxUsdc: c.maxUsdc ?? null,
+      stellarMinUsdc: c.stellarMinUsdc ?? "1",
     };
   }, []);
 
-  // Solana is switched on by `SOLANA_SENDS_TO`, asked for the same way as Sui.
-  const [solana, setSolana] = useState<SolanaSourceConfig | null>(null);
-  const [solanaError, setSolanaError] = useState(false);
-  const [solanaRemembered, setSolanaRemembered] = useState<{ tx: string } | null>(null);
+  const {
+    config: solana,
+    error: solanaError,
+    remembered: solanaRemembered,
+  } = useSourceConfig<SolanaSourceConfig>({
+    url: "/api/solana-source/config",
+    remembered: initialSolana,
+    parse: parseSolana,
+    onSelect: () => switchOnce("solana"),
+  });
 
-  useEffect(() => {
-    let live = true;
-    let timer: ReturnType<typeof setTimeout> | undefined;
-    let delay = 1000;
-
-    const initial = recallSolanaTransfer();
-    if (initial) setSolanaRemembered({ tx: initial.tx });
-
-    const load = async () => {
-      try {
-        const r = await fetch("/api/solana-source/config", { cache: "no-store" });
-        if (!r.ok) throw new Error(`HTTP ${r.status}`);
-        const c = (await r.json()) as {
-          enabled?: boolean;
-          evm?: unknown;
-          stellar?: boolean;
-          relayer?: boolean;
-          maxUsdc?: string | null;
-          stellarMinUsdc?: string;
-        } | null;
-        if (!live) return;
-        setSolanaError(false);
-        if (!c?.enabled) return;
-        // Only names this build knows: a newer server cannot make the page render a chain it lacks.
-        const evm = Array.isArray(c.evm)
-          ? c.evm.filter((id): id is EvmChainId => typeof id === "string" && isEvmChainId(id))
-          : [];
-        if (evm.length === 0 && c.stellar !== true) return;
-        setSolana({
-          evm,
-          stellar: c.stellar === true,
-          relayer: c.relayer === true,
-          maxUsdc: c.maxUsdc ?? null,
-          stellarMinUsdc: c.stellarMinUsdc ?? "1",
-        });
-        // A transfer this browser was following comes back on screen.
-        if (recallSolanaTransfer() && !parseDeepLink(window.location.search).from) {
-          setFrom("solana");
-        }
-      } catch {
-        if (!live) return;
-        const rem = recallSolanaTransfer();
-        if (rem) {
-          setSolanaRemembered({ tx: rem.tx });
-          setSolanaError(true);
-          if (!parseDeepLink(window.location.search).from) {
-            setFrom("solana");
-          }
-        }
-        timer = setTimeout(load, delay);
-        delay = Math.min(delay * 2, 30000);
-      }
-    };
-
-    void load();
-
-    return () => {
-      live = false;
-      if (timer) clearTimeout(timer);
-    };
-  }, []);
-  // The top bar's wallet modal: a Sui tab too once Sui is a source here.
+  // The top bar's wallet modal: only offer sui/aptos/solana once config confirms enabled
   const connect = useCallback(
     () =>
       openWallets([
         "stellar",
         "solana",
         "evm",
-        ...(sui || suiRemembered ? (["sui"] as const) : []),
-        ...(aptos || aptosRemembered ? (["aptos"] as const) : []),
+        ...(sui ? (["sui"] as const) : []),
+        ...(aptos ? (["aptos"] as const) : []),
       ]),
-    [openWallets, sui, aptos, suiRemembered, aptosRemembered],
+    [openWallets, sui, aptos],
   );
 
   const sources = useMemo<SourceId[]>(
     () => [
       "stellar",
-      ...(sui || suiRemembered ? (["sui"] as const) : []),
-      ...(solana || solanaRemembered ? (["solana"] as const) : []),
-      ...(aptos || aptosRemembered ? (["aptos"] as const) : []),
+      ...(sui ? (["sui"] as const) : []),
+      ...(solana ? (["solana"] as const) : []),
+      ...(aptos ? (["aptos"] as const) : []),
       ...evmSources(env.evmRoutes),
     ],
-    [sui, solana, aptos, suiRemembered, solanaRemembered, aptosRemembered],
+    [sui, solana, aptos],
   );
   const manyRoutes = sources.length > 1;
-  const [from, setFrom] = useState<SourceId>("stellar");
-  // A transfer being signed, or a receipt on show, belongs to the source it started from.
-  // Changing the source then would throw away the only place its hash is displayed.
-  const [busy, setBusy] = useState(false);
+
   // What a link asked to have filled in (`packages/sdk/src/core/deep-link.ts`). Read once after mount, because the
   // server render cannot know the query. Prefill only: the person still reviews and signs.
   const [link, setLink] = useState<DeepLink | null>(null);
@@ -416,17 +324,17 @@ export function HomeClient({ children }: { children?: React.ReactNode }) {
 
         {from !== "aptos" && aptosRemembered && aptosError && (
           <Reveal delay={80} className="mt-10">
-            <TransferNotice chain="Aptos" hash={aptosRemembered.tx} />
+            <TransferNotice chain="Aptos" hash={aptosRemembered.tx} domain={APTOS_DOMAIN} />
           </Reveal>
         )}
         {from !== "sui" && suiRemembered && suiError && (
           <Reveal delay={80} className="mt-10">
-            <TransferNotice chain="Sui" hash={suiRemembered.tx} />
+            <TransferNotice chain="Sui" hash={suiRemembered.tx} domain={SUI_DOMAIN} />
           </Reveal>
         )}
         {from !== "solana" && solanaRemembered && solanaError && (
           <Reveal delay={80} className="mt-10">
-            <TransferNotice chain="Solana" hash={solanaRemembered.tx} />
+            <TransferNotice chain="Solana" hash={solanaRemembered.tx} domain={SOLANA_DOMAIN} />
           </Reveal>
         )}
 
@@ -458,7 +366,7 @@ export function HomeClient({ children }: { children?: React.ReactNode }) {
               <div className="px-5 py-6 sm:px-6">
                 {sourcePicker}
                 {suiRemembered && suiError && (
-                  <TransferNotice chain="Sui" hash={suiRemembered.tx} />
+                  <TransferNotice chain="Sui" hash={suiRemembered.tx} domain={SUI_DOMAIN} />
                 )}
               </div>
             ) : from === "solana" && solana ? (
@@ -471,7 +379,11 @@ export function HomeClient({ children }: { children?: React.ReactNode }) {
               <div className="px-5 py-6 sm:px-6">
                 {sourcePicker}
                 {solanaRemembered && solanaError && (
-                  <TransferNotice chain="Solana" hash={solanaRemembered.tx} />
+                  <TransferNotice
+                    chain="Solana"
+                    hash={solanaRemembered.tx}
+                    domain={SOLANA_DOMAIN}
+                  />
                 )}
               </div>
             ) : from === "aptos" && aptos ? (
@@ -480,7 +392,7 @@ export function HomeClient({ children }: { children?: React.ReactNode }) {
               <div className="px-5 py-6 sm:px-6">
                 {sourcePicker}
                 {aptosRemembered && aptosError && (
-                  <TransferNotice chain="Aptos" hash={aptosRemembered.tx} />
+                  <TransferNotice chain="Aptos" hash={aptosRemembered.tx} domain={APTOS_DOMAIN} />
                 )}
               </div>
             ) : (
