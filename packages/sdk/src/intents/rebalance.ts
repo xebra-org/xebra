@@ -181,6 +181,41 @@ export function fromUnits(units: string, decimals: number): string {
   return `${neg ? "-" : ""}${int}${frac ? `.${frac}` : ""}`;
 }
 
+/** The rebalance step that failed. */
+export type RebalanceStage = "resolve" | "withdraw" | "deposit_quote" | "build";
+
+/**
+ * A step that runs once the market maker's USDC has left (or may have left) NEAR Intents failed:
+ * `submitWithdrawal` (stage "withdraw") or `prepareDeposit` ("resolve", "deposit_quote",
+ * "build"). The message says where the USDC is now. `code` is the cause's `XebraError` code, else
+ * `<stage>_failed`. `retryable` says whether calling the same step again can help. `cause` is the
+ * original error.
+ */
+export class RebalanceError extends XebraError {
+  readonly stage: RebalanceStage;
+
+  constructor(
+    stage: RebalanceStage,
+    message: string,
+    opts: { code: string; retryable: boolean; cause: unknown },
+  ) {
+    super(opts.code, message, { retryable: opts.retryable, cause: opts.cause });
+    this.name = "RebalanceError";
+    this.stage = stage;
+  }
+}
+
+function afterWithdrawal(stage: RebalanceStage, where: string, err: unknown): RebalanceError {
+  const said = err instanceof Error ? err.message : String(err);
+  const known = err instanceof XebraError;
+  return new RebalanceError(stage, `${said} ${where}`, {
+    code: known ? err.code : `${stage}_failed`,
+    // Asking again after an unsure withdrawal could sign a second one: check status first.
+    retryable: stage !== "withdraw" && known && err.retryable,
+    cause: err,
+  });
+}
+
 /** Exact decimal subtraction for the 6/7-place amounts used here. */
 function sub(a: string, b: string): string {
   const d = 7;
@@ -268,7 +303,10 @@ export function createRebalancer(opts: RebalancerOptions) {
     if (!from || !to) throw new Error(`Unknown chain: ${!from ? r.from : r.to}`);
     if (from === to) throw new Error("`from` and `to` are the same chain.");
     if (!(await router.isRouteAvailable(from, to))) {
-      throw new Error(`Xebra does not move USDC from ${from} to ${to} right now.`);
+      throw new XebraError(
+        "route_unavailable",
+        `Xebra does not move USDC from ${from} to ${to} right now.`,
+      );
     }
     const [fromToken, toToken] = await Promise.all([usdcAsset(from), usdcAsset(to)]);
     return { from, to, fromToken, toToken };
@@ -422,8 +460,7 @@ export function createRebalancer(opts: RebalancerOptions) {
     };
   }
 
-  /** Step 1, submit. `signed` is what the wallet returned for `w.intent.payload`. */
-  function submitWithdrawal(
+  function submitIntent(
     w: Withdrawal,
     signed: { public_key: string; signature: string },
   ): Promise<{ intentHash: string }> {
@@ -435,6 +472,26 @@ export function createRebalancer(opts: RebalancerOptions) {
   }
 
   /**
+   * Step 1, submit. `signed` is what the wallet returned for `w.intent.payload`. Throws
+   * RebalanceError (stage "withdraw", never `retryable`): the withdrawal may have been accepted,
+   * so check `status(w.depositAddress)` before signing another.
+   */
+  async function submitWithdrawal(
+    w: Withdrawal,
+    signed: { public_key: string; signature: string },
+  ): Promise<{ intentHash: string }> {
+    try {
+      return await submitIntent(w, signed);
+    } catch (err) {
+      throw afterWithdrawal(
+        "withdraw",
+        `The withdrawal may already be on its way to your wallet: check status("${w.depositAddress}") before signing another.`,
+        err,
+      );
+    }
+  }
+
+  /**
    * Step 2. A 1Click deposit address on `to` for the market maker's Intents account, and the
    * unsigned CCTP burn from `fromWallet` into it. Call once the withdrawal has landed; `amount` is
    * what arrived in the wallet (default: the request's amount).
@@ -442,19 +499,42 @@ export function createRebalancer(opts: RebalancerOptions) {
    * `minutes` is how long the deposit address waits for Circle's mint before refunding to
    * `toWallet`. Standard CCTP waits for the source chain to finalize (minutes on most EVM chains),
    * so the default is generous.
+   *
+   * Safe to call again: it signs and moves nothing. A failure throws RebalanceError, whose message
+   * says the withdrawn USDC is still in `fromWallet`; call again with the same `amount`.
    */
   async function prepareDeposit(
     r: RebalanceRequest,
     o: { amount?: string; minutes?: number } = {},
   ): Promise<Deposit> {
+    const at: { stage: RebalanceStage } = { stage: "resolve" };
+    try {
+      return await depositSteps(r, o, at);
+    } catch (err) {
+      const where = `Nothing was burned: the USDC withdrawn from NEAR Intents is still in ${r.fromWallet} on ${r.from}. prepareDeposit is safe to call again.`;
+      throw afterWithdrawal(at.stage, where, err);
+    }
+  }
+
+  async function depositSteps(
+    r: RebalanceRequest,
+    o: { amount?: string; minutes?: number },
+    at: { stage: RebalanceStage },
+  ): Promise<Deposit> {
     const { from, to, toToken } = await resolve(r);
+    at.stage = "deposit_quote";
     const amount = o.amount ?? r.amount;
     const x = await xebraQuote(from, to, amount, r.speed);
     if (r.maxTotalFee !== undefined && cmp(x.fees.total, r.maxTotalFee) > 0) {
-      throw new Error(`CCTP fees ${x.fees.total} exceed maxTotalFee ${r.maxTotalFee}.`);
+      throw new XebraError(
+        "fees_above_cap",
+        `CCTP fees ${x.fees.total} exceed maxTotalFee ${r.maxTotalFee}.`,
+        { retryable: true },
+      );
     }
     const { quote: q } = await depositQuote(r, toToken, x.recipientGets, false, o.minutes ?? 120);
     if (!q.depositAddress) throw new OneClickError("1Click issued no deposit address.", 0);
+    at.stage = "build";
     const build = await router.buildDeposit({
       from,
       depositChain: to,

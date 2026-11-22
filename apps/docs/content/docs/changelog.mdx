@@ -12,6 +12,11 @@ description: What changed in the Xebra API and SDK, newest first.
   XebraApiError` compatibility), preserves `cause` when wrapping errors, and marks `network_error`,
   `timeout`, `rate_limited`, `upstream_unavailable`, and `internal_error` as `retryable`.
 
+- `RebalanceError` (`@xebra/sdk/intents`): `submitWithdrawal` and `prepareDeposit` throw it, with
+  `stage` (`withdraw`, `resolve`, `deposit_quote`, `build`), `code`, `retryable` and `cause`, and a
+  message that says where the market maker's USDC is now. `prepareDeposit` is safe to call again.
+  A route Xebra stopped running is `route_unavailable`; fees over `maxTotalFee` are `fees_above_cap`.
+
 ## 0.4.0 (2026-11-15)
 
 **SDK**, `@xebra/sdk` 0.4.0, `@xebra/sdk/intents`:

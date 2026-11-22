@@ -1,6 +1,13 @@
 import { describe, expect, it, vi } from "vitest";
 import type { Quote, Routes, TransferBuild, TransferRequest } from "../api/schemas.js";
-import { OneClickError, createRebalancer, fromUnits, toUnits } from "./rebalance.js";
+import { XebraApiError } from "../client/index.js";
+import {
+  OneClickError,
+  RebalanceError,
+  createRebalancer,
+  fromUnits,
+  toUnits,
+} from "./rebalance.js";
 
 // Entries copied from the live 1Click token list on 2026-11-14.
 const BASE = "nep141:base-0x833589fcd6edb6e08f4c7c32d4f71b54bda02913.omft.near";
@@ -289,6 +296,85 @@ describe("prepareDeposit", () => {
     const rb = createRebalancer({ xebra: fakeXebra(), fetch: one.fetch, now: () => NOW });
     await expect(rb.prepareDeposit({ ...REQ, maxTotalFee: "0.01" })).rejects.toThrow(/exceed/);
     expect(one.calls.some((c) => c.path === "/v0/quote")).toBe(false);
+  });
+});
+
+describe("a failure after the withdrawal", () => {
+  /** Xebra lists the route for the withdrawal (uncached: `complete: false`), then `then`. */
+  function routesThen(then: () => Promise<Routes>) {
+    const x = fakeXebra();
+    x.routes.mockResolvedValueOnce({ ...ROUTES, complete: false }).mockImplementation(then);
+    return x;
+  }
+
+  async function withdrawThenDeposit(x: ReturnType<typeof fakeXebra>) {
+    const one = fake1Click();
+    const rb = createRebalancer({
+      xebra: x,
+      fetch: one.fetch,
+      now: () => NOW,
+      oneClick: { apiKey: "k" },
+    });
+    const w = await rb.startWithdrawal(REQ);
+    return rb.prepareDeposit(REQ, { amount: w.receives }).catch((e: unknown) => e);
+  }
+
+  it("says the USDC is in the wallet when Xebra cannot be reached for the deposit", async () => {
+    const down = new XebraApiError(0, "network_error", "Could not reach the Xebra API.");
+    const err = await withdrawThenDeposit(routesThen(() => Promise.reject(down)));
+    expect(err).toBeInstanceOf(RebalanceError);
+    expect(err).toMatchObject({ stage: "resolve", code: "network_error", retryable: true });
+    expect((err as RebalanceError).cause).toBe(down);
+    expect((err as Error).message).toContain(`still in ${REQ.fromWallet} on base`);
+    expect((err as Error).message).toContain("safe to call again");
+  });
+
+  it("is not retryable when Xebra stopped running the route", async () => {
+    const err = await withdrawThenDeposit(routesThen(async () => ({ routes: [], complete: true })));
+    expect(err).toBeInstanceOf(RebalanceError);
+    expect(err).toMatchObject({ stage: "resolve", code: "route_unavailable", retryable: false });
+    expect((err as Error).message).toMatch(/does not move USDC.*still in 0x1111/);
+  });
+
+  it("marks a fee cap as deposit_quote and retryable, and a build failure as build", async () => {
+    const one = fake1Click();
+    const capped = await createRebalancer({ xebra: fakeXebra(), fetch: one.fetch, now: () => NOW })
+      .prepareDeposit({ ...REQ, maxTotalFee: "0.01" })
+      .catch((e: unknown) => e);
+    expect(capped).toMatchObject({
+      stage: "deposit_quote",
+      code: "fees_above_cap",
+      retryable: true,
+    });
+
+    const x = fakeXebra();
+    x.createTransfer.mockRejectedValue(new XebraApiError(503, "upstream_unavailable", "Circle"));
+    const built = await createRebalancer({ xebra: x, fetch: one.fetch, now: () => NOW })
+      .prepareDeposit(REQ)
+      .catch((e: unknown) => e);
+    expect(built).toMatchObject({ stage: "build", code: "upstream_unavailable", retryable: true });
+  });
+
+  it("never invites a blind retry of a submitted withdrawal", async () => {
+    const one = fake1Click();
+    const fetch = (async (url: string | URL | Request, init?: RequestInit) =>
+      new URL(String(url)).pathname === "/v0/submit-intent"
+        ? new Response("{}", { status: 503 })
+        : one.fetch(url, init)) as typeof globalThis.fetch;
+    const rb = createRebalancer({
+      xebra: fakeXebra(),
+      fetch,
+      now: () => NOW,
+      oneClick: { apiKey: "k" },
+    });
+    const w = await rb.startWithdrawal(REQ);
+    const err = await rb
+      .submitWithdrawal(w, { public_key: "ed25519:P", signature: "ed25519:S" })
+      .catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(RebalanceError);
+    expect(err).toMatchObject({ stage: "withdraw", retryable: false });
+    expect((err as RebalanceError).cause).toBeInstanceOf(OneClickError);
+    expect((err as Error).message).toContain('check status("dep.intents")');
   });
 });
 
