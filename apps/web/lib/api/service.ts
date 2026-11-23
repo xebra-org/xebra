@@ -134,6 +134,17 @@ const SOLANA_DOMAIN = 5;
 /** The smallest Solana to Stellar transfer: what the relayer completes (`/api/stellar-inbound/complete`). */
 const SOLANA_STELLAR_MIN_UNITS = 1_000_000n;
 
+/**
+ * The status routes say `mint: "unknown"` when the mint on Stellar could not be read. That is no
+ * verdict on the transfer: answering needs_claim would send someone to claim one already delivered.
+ */
+function mintUnreadable(): ApiError {
+  return new ApiError(
+    "upstream_unavailable",
+    "Whether the mint already happened on Stellar could not be read just now. That does not mean the transfer needs claiming. Try again shortly.",
+  );
+}
+
 function checkSender(from: SourceId, sender: string): void {
   const ok =
     from === "stellar"
@@ -815,6 +826,9 @@ export function createService(deps: Deps, now: () => number = Date.now) {
     }
     const stellar = await deps.solanaStellarStatus?.(tx).catch(() => null);
     if (stellar?.state === "complete" && typeof stellar.refusal !== "string") {
+      // Could not read the mint on Stellar: saying needs_claim would send someone to claim a
+      // transfer that may already be delivered.
+      if (stellar.mint === "unknown") throw mintUnreadable();
       return {
         state: stellar.delivered === true ? "delivered" : "needs_claim",
         chain: "solana",
@@ -1264,6 +1278,8 @@ export function createService(deps: Deps, now: () => number = Date.now) {
     if (circleState === "complete" && typeof answer.refusal === "string") return null;
     // Not attested yet: whether it is bound for Stellar is not known, so ask Circle's record too.
     if (circleState !== "complete") return null;
+    // The burn is Stellar's to finish, but the mint on Stellar could not be read: no verdict.
+    if (answer.mint === "unknown") throw mintUnreadable();
     return {
       state: answer.delivered === true ? "delivered" : "needs_claim",
       chain: "aptos",
@@ -1299,6 +1315,10 @@ export function createService(deps: Deps, now: () => number = Date.now) {
       // minted by Circle's Forwarding Service, so its record, not the Stellar check, is the answer.
       const forwarded = await suiForwarded(digest);
       if (forwarded) return forwarded;
+    }
+    // A burn Stellar is to finish, but the mint on Stellar could not be read: no verdict.
+    if (circleState === "complete" && !refusal && answer.mint === "unknown") {
+      throw mintUnreadable();
     }
     // Circle not having indexed the burn yet is "not yet", the same as waiting for attestation.
     const state: DeliveryState =
