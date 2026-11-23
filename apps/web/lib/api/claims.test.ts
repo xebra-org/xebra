@@ -3,7 +3,16 @@ import { EVM_CHAINS } from "@xebra/sdk/core";
 import { describe, expect, it, vi } from "vitest";
 import type { BuildDeps, Deps } from "./deps";
 import { ApiError } from "./errors";
-import { EVM_SENDER, EVM_TX, SENDER, SOLANA_WALLET, STELLAR_TX, buildDeps, deps } from "./fakes";
+import {
+  EVM_SENDER,
+  EVM_TX,
+  SENDER,
+  SOLANA_WALLET,
+  STELLAR_TX,
+  buildDeps,
+  deps,
+  mintUnchecked,
+} from "./fakes";
 import { createService } from "./service";
 
 const DIGEST = "37cRcRxVbwscXJAjLfqmXh19CDdKeHMBVJ1GMSqJKEE7";
@@ -225,6 +234,8 @@ describe("transferStatus: Sui", () => {
     [{ state: "unknown", reason: "Circle has not indexed this burn yet" }, "pending"],
     [{ state: "complete", delivered: true }, "delivered"],
     [{ state: "complete", delivered: false }, "needs_claim"],
+    [{ state: "complete", delivered: true, mint: "delivered" }, "delivered"],
+    [{ state: "complete", delivered: false, mint: "open" }, "needs_claim"],
     [{ state: "complete", delivered: false, refusal: "not a burn to Stellar" }, "failed"],
   ];
   for (const [answer, state] of cases) {
@@ -257,6 +268,22 @@ describe("transferStatus: Sui", () => {
       ).transferStatus({ chain: "sui", tx: DIGEST }),
     );
     expect(err.code).toBe("upstream_unavailable");
+  });
+
+  it('reads mint: "unknown" as upstream_unavailable (503), not needs_claim', async () => {
+    // The burn is Stellar's to finish, but the mint check could not say whether it already did:
+    // claiming a delivered transfer costs the payer a fee for nothing.
+    const err = await refusal(
+      svc(
+        {},
+        {
+          ...on,
+          suiStatus: async () => mintUnchecked(),
+          delivery: async () => ({ status: "known", state: "claimable", forwardTxHash: null }),
+        },
+      ).transferStatus({ chain: "sui", tx: DIGEST }),
+    );
+    expect(err).toMatchObject({ code: "upstream_unavailable", status: 503 });
   });
 
   it("keeps a not-yet-indexed burn (200 unknown) pending", async () => {

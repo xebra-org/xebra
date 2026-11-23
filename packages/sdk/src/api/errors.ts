@@ -25,4 +25,21 @@ export type ApiErrorCode = keyof typeof ERROR_STATUS;
 
 export const ERROR_CODES = Object.keys(ERROR_STATUS) as ApiErrorCode[];
 
+/**
+ * The codes the SDK's client throws on its own; the API never answers with them. The request did
+ * not reach the API (`network_error`), no answer came in time (`timeout`), the answer could not be
+ * read (`invalid_response`), or `waitForDelivery` ran out of time (`wait_timeout`).
+ */
+export const CLIENT_ERROR_CODES = [
+  "network_error",
+  "timeout",
+  "invalid_response",
+  "wait_timeout",
+] as const;
+
+export type ClientErrorCode = (typeof CLIENT_ERROR_CODES)[number];
+
+/** Every code an `XebraApiError` can carry: the API's and the client's own. */
+export type XebraErrorCode = ApiErrorCode | ClientErrorCode;
+
 export const ERROR_TYPE_BASE = "https://docs.xebra.exchange/errors/";

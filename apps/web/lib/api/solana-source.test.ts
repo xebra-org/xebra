@@ -2,7 +2,7 @@ import type { TransferStep } from "@xebra/sdk/build";
 import { describe, expect, it, vi } from "vitest";
 import type { BuildDeps, Deps } from "./deps";
 import { ApiError } from "./errors";
-import { RECIPIENT, STELLAR_RECIPIENT, buildDeps, deps, health } from "./fakes";
+import { RECIPIENT, STELLAR_RECIPIENT, buildDeps, deps, health, mintUnchecked } from "./fakes";
 import { createService } from "./service";
 
 /** The /v1 surface for transfers that start on Solana (`SOLANA_SENDS_TO`). */
@@ -215,6 +215,16 @@ describe("transferStatus", () => {
       tx: SIG,
     });
     expect(delivery).toHaveBeenCalledWith(SIG, 5);
+  });
+
+  it("says unavailable (503), not needs_claim, when the mint on Stellar could not be checked", async () => {
+    const err = await refusal(
+      svc({}, { solanaStellarStatus: async () => mintUnchecked() }).transferStatus({
+        chain: "solana",
+        tx: SIG,
+      }),
+    );
+    expect(err).toMatchObject({ code: "upstream_unavailable", status: 503 });
   });
 
   it("refuses something that is not a signature", async () => {

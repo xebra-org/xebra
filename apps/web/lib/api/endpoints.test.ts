@@ -221,6 +221,31 @@ describe("bad requests", () => {
     expect((await problemOf(res)).detail).toContain("to");
   });
 
+  it("lists each field that failed as data, as well as in the detail", async () => {
+    const res = await api().quote(get("/quote?from=stellar&to=ethereum2&amount=10"));
+    expect((await problemOf(res)).issues).toEqual([{ path: ["to"], message: expect.any(String) }]);
+
+    const typo = await api().createTransfer(
+      post("/transfers", { from: "stellar", to: "base", amount: "10", recipient: RECIPIENT }),
+    );
+    expect(await problemOf(typo)).toMatchObject({
+      code: "invalid_request",
+      issues: [{ path: ["sender"], message: expect.any(String) }],
+    });
+  });
+
+  it("lists the amount's issues on invalid_amount too", async () => {
+    const res = await api().quote(get("/quote?from=stellar&to=base&amount=1.1234567"));
+    const body = await problemOf(res);
+    expect(body.code).toBe("invalid_amount");
+    expect(body.issues).toContainEqual({ path: ["amount"], message: expect.any(String) });
+  });
+
+  it("sends no issues when the body could not be read at all", async () => {
+    const res = await api().createTransfer(post("/transfers", "{not json"));
+    expect(await problemOf(res)).not.toHaveProperty("issues");
+  });
+
   it("says a route is unavailable when the chains exist but do not connect", async () => {
     const res = await api().quote(get("/quote?from=stellar&to=sui&amount=10"));
     expect(res.status).toBe(422);
@@ -547,5 +572,87 @@ describe("request ids", () => {
     expect(line().instance).toBe(`urn:xebra:request:${held.headers.get("X-Request-Id")}`);
     // Our own error: where it was raised is known, so no stack.
     expect(line().stack).toBeUndefined();
+  });
+});
+
+describe("GET /transfers/sui/{tx}: a Sui burn built through /v1 is relayed to Stellar", () => {
+  const DIGEST = "37cRcRxVbwscXJAjLfqmXh19CDdKeHMBVJ1GMSqJKEE7";
+  const attested = async () => ({ state: "complete", delivered: false, httpStatus: 200 });
+  const on = { suiStellar: { enabled: true, maxUnits: null }, suiStatus: attested };
+
+  async function poll(over: Partial<Deps>) {
+    const res = await api(over).getTransfer(get(`/transfers/sui/${DIGEST}`), {
+      chain: "sui",
+      tx: DIGEST,
+    });
+    expect(res.status).toBe(200);
+    return TransferStatusSchema.parse(await res.json());
+  }
+
+  it("hands the attested, unminted burn to the relayer and reports it delivering", async () => {
+    const relayed: string[] = [];
+    const status = await poll({
+      ...on,
+      suiRelay: async (digest) => {
+        relayed.push(digest);
+        return { status: "scheduled" };
+      },
+    });
+    expect(relayed).toEqual([DIGEST]);
+    expect(status.state).toBe("delivering");
+  });
+
+  it("reports the relayer's mint as the delivery once it is submitted", async () => {
+    const status = await poll({
+      ...on,
+      suiRelay: async () => ({ status: "submitted", hash: "ab12" }),
+    });
+    expect(status.state).toBe("delivering");
+    expect(status.deliveryTx).toBe("ab12");
+  });
+
+  it("does not call the relayer before Circle has attested, or after the mint", async () => {
+    const relayed: string[] = [];
+    const suiRelay = async (digest: string) => {
+      relayed.push(digest);
+      return { status: "scheduled" };
+    };
+    expect(
+      (await poll({ ...on, suiRelay, suiStatus: async () => ({ state: "pending" }) })).state,
+    ).toBe("pending");
+    expect(
+      (
+        await poll({
+          ...on,
+          suiRelay,
+          suiStatus: async () => ({ state: "complete", delivered: true }),
+        })
+      ).state,
+    ).toBe("delivered");
+    expect(relayed).toEqual([]);
+  });
+
+  it("falls back to needs_claim, with the relayer's reason, when it refuses", async () => {
+    const status = await poll({
+      ...on,
+      suiRelay: async () => ({ status: "refused", reason: "The recipient has no USDC trustline." }),
+    });
+    expect(status.state).toBe("needs_claim");
+    expect(status.reason).toBe("The recipient has no USDC trustline.");
+  });
+
+  it("falls back to needs_claim when the relayer is off, fails or throws", async () => {
+    for (const suiRelay of [
+      async () => ({ status: "unavailable", reason: "Completion is not switched on." }),
+      async () => ({ status: "failed", hash: "ab12" }),
+      async () => null,
+      async () => {
+        throw new Error("boom");
+      },
+    ]) {
+      expect((await poll({ ...on, suiRelay })).state).toBe("needs_claim");
+    }
+    // And without a relayer wired at all, as before.
+    expect((await poll(on)).state).toBe("needs_claim");
   });
 });

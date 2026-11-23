@@ -1,6 +1,13 @@
 import { describe, expect, it, vi } from "vitest";
 import type { Quote, Routes, TransferBuild, TransferRequest } from "../api/schemas.js";
-import { OneClickError, createRebalancer, fromUnits, toUnits } from "./rebalance.js";
+import { XebraApiError } from "../client/index.js";
+import {
+  OneClickError,
+  RebalanceError,
+  createRebalancer,
+  fromUnits,
+  toUnits,
+} from "./rebalance.js";
 
 // Entries copied from the live 1Click token list on 2026-11-14.
 const BASE = "nep141:base-0x833589fcd6edb6e08f4c7c32d4f71b54bda02913.omft.near";
@@ -148,6 +155,52 @@ describe("units", () => {
   });
 });
 
+describe("1Click answers that are not what Xebra reads", () => {
+  /** fake1Click, except that `path` answers 200 with `body` (a string is sent as is). */
+  function answering(path: string, body: unknown) {
+    const one = fake1Click();
+    const fetch = (async (url: string | URL | Request, init?: RequestInit) => {
+      if (new URL(String(url)).pathname !== path) return one.fetch(url, init);
+      return new Response(typeof body === "string" ? body : JSON.stringify(body), { status: 200 });
+    }) as typeof globalThis.fetch;
+    return createRebalancer({ xebra: fakeXebra(), fetch, now: () => NOW });
+  }
+
+  it("refuses an empty or non-JSON quote body as invalid_response, with the body kept", async () => {
+    for (const body of ["", "<html>busy</html>", null]) {
+      const err = await answering("/v0/quote", body)
+        .estimate(REQ)
+        .catch((e: unknown) => e);
+      expect(err).toBeInstanceOf(OneClickError);
+      expect(err).toMatchObject({ code: "invalid_response", status: 200, retryable: false });
+      expect((err as OneClickError).body).toBe(body === null ? "null" : body);
+    }
+  });
+
+  it("refuses a quote without minAmountOut instead of failing on BigInt", async () => {
+    const quote = { amountIn: "1", amountOut: "1", timeEstimate: 10 };
+    const err = await answering("/v0/quote", { quote })
+      .estimate(REQ)
+      .catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(OneClickError);
+    expect(err).toMatchObject({ code: "invalid_response", body: { quote } });
+  });
+
+  it("stops waitFor at once when a status answer has no status", async () => {
+    const rb = answering("/v0/status", { correlationId: "c" });
+    await expect(rb.waitFor("0xdep", { intervalMs: 1, timeoutMs: 60_000 })).rejects.toMatchObject({
+      code: "invalid_response",
+      body: { correlationId: "c" },
+    });
+  });
+
+  it("refuses a token list that is not a list", async () => {
+    await expect(answering("/v0/tokens", { tokens: [] }).estimate(REQ)).rejects.toMatchObject({
+      code: "invalid_response",
+    });
+  });
+});
+
 describe("estimate", () => {
   it("prices withdraw + CCTP + deposit and reports a missing direct swap", async () => {
     const one = fake1Click();
@@ -161,7 +214,11 @@ describe("estimate", () => {
     expect(e.fees.cctp).toBe("0.0625");
     expect(e.fees.total).toBe("0.0649");
     expect(e.arrives).toBe("99999.9351");
-    expect(e.direct).toEqual({ arrives: null, reason: "No liquidity available" });
+    expect(e.direct).toEqual({
+      arrives: null,
+      reason: "No liquidity available",
+      code: "http_error",
+    });
     expect(e.better).toBe("rebalance");
     // Every quote was dry: nothing issued, nothing to sign.
     for (const c of one.calls.filter((c) => c.path === "/v0/quote")) expect(c.body?.dry).toBe(true);
@@ -173,6 +230,49 @@ describe("estimate", () => {
     const e = await rb.estimate(REQ);
     expect(e.direct).toEqual({ arrives: "99999.99" });
     expect(e.better).toBe("direct");
+  });
+
+  /** fake1Click, except that the direct-swap quote (different assets) gets `answer` instead. */
+  function directFails(answer: () => Promise<Response>) {
+    const one = fake1Click({ directSwap: "99999990000" });
+    return (async (url: string | URL | Request, init?: RequestInit) => {
+      const body = init?.body ? (JSON.parse(String(init.body)) as Body) : undefined;
+      if (body && body.originAsset !== body.destinationAsset) return answer();
+      return one.fetch(url, init);
+    }) as typeof globalThis.fetch;
+  }
+
+  it("says unknown, not rebalance, when the direct quote hits a network error", async () => {
+    const fetch = directFails(async () => {
+      throw new TypeError("fetch failed");
+    });
+    const e = await createRebalancer({ xebra: fakeXebra(), fetch, now: () => NOW }).estimate(REQ);
+    expect(e.direct).toMatchObject({ arrives: null, code: "network_error" });
+    expect(e.better).toBe("unknown");
+    expect(e.arrives).toBe("99999.9351");
+  });
+
+  it("says unknown when 1Click is down or rate-limits the direct quote", async () => {
+    for (const status of [503, 429]) {
+      const fetch = directFails(async () => new Response("{}", { status }));
+      const e = await createRebalancer({ xebra: fakeXebra(), fetch, now: () => NOW }).estimate(REQ);
+      expect(e.direct).toMatchObject({ arrives: null, code: "http_error" });
+      expect(e.better).toBe("unknown");
+    }
+  });
+
+  it("throws a bug in the comparison instead of hiding it in direct.reason", async () => {
+    const broken = {
+      status: 200,
+      text: async () => "{}",
+      get ok(): boolean {
+        throw new TypeError("not a Response");
+      },
+    };
+    const fetch = directFails(async () => broken as unknown as Response);
+    await expect(
+      createRebalancer({ xebra: fakeXebra(), fetch, now: () => NOW }).estimate(REQ),
+    ).rejects.toThrow("not a Response");
   });
 
   it("refuses a route Xebra does not run", async () => {
@@ -201,8 +301,50 @@ describe("withdrawal", () => {
   it("needs a partner key and asks for nothing before it has one", async () => {
     const one = fake1Click();
     const rb = createRebalancer({ xebra: fakeXebra(), fetch: one.fetch, now: () => NOW });
-    await expect(rb.startWithdrawal(REQ)).rejects.toBeInstanceOf(OneClickError);
+    const err = await rb.startWithdrawal(REQ).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(OneClickError);
+    expect(err).toMatchObject({ code: "missing_api_key", status: 0, retryable: false });
     expect(one.calls.some((c) => c.path === "/v0/quote")).toBe(false);
+  });
+
+  it("tells a quote without a deposit address from a missing key", async () => {
+    const one = fake1Click();
+    const fetch = (async (url: string | URL | Request, init?: RequestInit) => {
+      const res = await one.fetch(url, init);
+      if (new URL(String(url)).pathname !== "/v0/quote") return res;
+      const { quote } = (await res.json()) as { quote: Record<string, unknown> };
+      const { depositAddress: _, ...rest } = quote;
+      return new Response(JSON.stringify({ quote: rest }), { status: 200 });
+    }) as typeof globalThis.fetch;
+    const rb = createRebalancer({
+      xebra: fakeXebra(),
+      fetch,
+      now: () => NOW,
+      oneClick: { apiKey: "k" },
+    });
+    const err = await rb.startWithdrawal(REQ).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(OneClickError);
+    expect(err).toMatchObject({ code: "no_deposit_address", status: 0 });
+    expect((err as OneClickError).body).toMatchObject({ minAmountOut: "99999997600" });
+    await expect(rb.prepareDeposit(REQ)).rejects.toMatchObject({ code: "no_deposit_address" });
+  });
+
+  it("keeps 1Click's status and whole body on an HTTP error", async () => {
+    const answer = { message: "Invalid API key", correlationId: "c-9" };
+    const fetch = (async () =>
+      new Response(JSON.stringify(answer), { status: 401 })) as typeof globalThis.fetch;
+    const rb = createRebalancer({ xebra: fakeXebra(), fetch, now: () => NOW });
+    const err = await rb.status("0xdep").catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(OneClickError);
+    expect(err).toMatchObject({ code: "http_error", status: 401, retryable: false, body: answer });
+    expect((err as OneClickError).message).toBe("Invalid API key");
+
+    const text = (async () => new Response("bad gateway", { status: 502 })) as typeof fetch;
+    const err2 = await createRebalancer({ xebra: fakeXebra(), fetch: text, now: () => NOW })
+      .status("0xdep")
+      .catch((e: unknown) => e);
+    expect(err2).toMatchObject({ code: "http_error", status: 502, retryable: true });
+    expect((err2 as OneClickError).body).toBe("bad gateway");
   });
 
   it("quotes same asset out to the market maker's own wallet, refund to its own account", async () => {
@@ -292,10 +434,172 @@ describe("prepareDeposit", () => {
   });
 });
 
+describe("a failure after the withdrawal", () => {
+  /** Xebra lists the route for the withdrawal (uncached: `complete: false`), then `then`. */
+  function routesThen(then: () => Promise<Routes>) {
+    const x = fakeXebra();
+    x.routes.mockResolvedValueOnce({ ...ROUTES, complete: false }).mockImplementation(then);
+    return x;
+  }
+
+  async function withdrawThenDeposit(x: ReturnType<typeof fakeXebra>) {
+    const one = fake1Click();
+    const rb = createRebalancer({
+      xebra: x,
+      fetch: one.fetch,
+      now: () => NOW,
+      oneClick: { apiKey: "k" },
+    });
+    const w = await rb.startWithdrawal(REQ);
+    return rb.prepareDeposit(REQ, { amount: w.receives }).catch((e: unknown) => e);
+  }
+
+  it("says the USDC is in the wallet when Xebra cannot be reached for the deposit", async () => {
+    const down = new XebraApiError(0, "network_error", "Could not reach the Xebra API.");
+    const err = await withdrawThenDeposit(routesThen(() => Promise.reject(down)));
+    expect(err).toBeInstanceOf(RebalanceError);
+    expect(err).toMatchObject({ stage: "resolve", code: "network_error", retryable: true });
+    expect((err as RebalanceError).cause).toBe(down);
+    expect((err as Error).message).toContain(`still in ${REQ.fromWallet} on base`);
+    expect((err as Error).message).toContain("safe to call again");
+  });
+
+  it("is not retryable when Xebra stopped running the route", async () => {
+    const err = await withdrawThenDeposit(routesThen(async () => ({ routes: [], complete: true })));
+    expect(err).toBeInstanceOf(RebalanceError);
+    expect(err).toMatchObject({ stage: "resolve", code: "route_unavailable", retryable: false });
+    expect((err as Error).message).toMatch(/does not move USDC.*still in 0x1111/);
+  });
+
+  it("marks a fee cap as deposit_quote and retryable, and a build failure as build", async () => {
+    const one = fake1Click();
+    const capped = await createRebalancer({ xebra: fakeXebra(), fetch: one.fetch, now: () => NOW })
+      .prepareDeposit({ ...REQ, maxTotalFee: "0.01" })
+      .catch((e: unknown) => e);
+    expect(capped).toMatchObject({
+      stage: "deposit_quote",
+      code: "fees_above_cap",
+      retryable: true,
+    });
+
+    const x = fakeXebra();
+    x.createTransfer.mockRejectedValue(new XebraApiError(503, "upstream_unavailable", "Circle"));
+    const built = await createRebalancer({ xebra: x, fetch: one.fetch, now: () => NOW })
+      .prepareDeposit(REQ)
+      .catch((e: unknown) => e);
+    expect(built).toMatchObject({ stage: "build", code: "upstream_unavailable", retryable: true });
+  });
+
+  it("never invites a blind retry of a submitted withdrawal", async () => {
+    const one = fake1Click();
+    const fetch = (async (url: string | URL | Request, init?: RequestInit) =>
+      new URL(String(url)).pathname === "/v0/submit-intent"
+        ? new Response("{}", { status: 503 })
+        : one.fetch(url, init)) as typeof globalThis.fetch;
+    const rb = createRebalancer({
+      xebra: fakeXebra(),
+      fetch,
+      now: () => NOW,
+      oneClick: { apiKey: "k" },
+    });
+    const w = await rb.startWithdrawal(REQ);
+    const err = await rb
+      .submitWithdrawal(w, { public_key: "ed25519:P", signature: "ed25519:S" })
+      .catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(RebalanceError);
+    expect(err).toMatchObject({ stage: "withdraw", retryable: false });
+    expect((err as RebalanceError).cause).toBeInstanceOf(OneClickError);
+    expect((err as Error).message).toContain('check status("dep.intents")');
+  });
+});
+
 describe("waitFor", () => {
   it("returns the settled state", async () => {
     const one = fake1Click();
     const rb = createRebalancer({ xebra: fakeXebra(), fetch: one.fetch, now: () => NOW });
     await expect(rb.waitFor("0xdep", { intervalMs: 1 })).resolves.toBe("SUCCESS");
+  });
+
+  /** fake1Click, except that /v0/status answers with each of `first` in turn before its own. */
+  function statusFirst(...first: (() => Promise<Response>)[]) {
+    const one = fake1Click();
+    let n = 0;
+    const fetch = vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
+      if (new URL(String(url)).pathname !== "/v0/status") return one.fetch(url, init);
+      const next = first[n++];
+      return next ? next() : one.fetch(url, init);
+    });
+    return { fetch: fetch as unknown as typeof globalThis.fetch, polls: () => n };
+  }
+  const answer = (status: number) => async () => new Response("{}", { status });
+
+  it("rides out a dropped connection, a timeout, a 429 and a 503", async () => {
+    const dropped = async () => {
+      throw new TypeError("fetch failed");
+    };
+    const timedOut = async () => {
+      throw new DOMException("The operation timed out.", "TimeoutError");
+    };
+    const f = statusFirst(dropped, timedOut, answer(429), answer(503));
+    const rb = createRebalancer({ xebra: fakeXebra(), fetch: f.fetch, now: () => NOW });
+    await expect(rb.waitFor("0xdep", { intervalMs: 1 })).resolves.toBe("SUCCESS");
+    expect(f.polls()).toBe(5);
+  });
+
+  it("wraps fetch failures as OneClickError network_error or timeout, with the cause", async () => {
+    const cause = new TypeError("fetch failed");
+    const rb = createRebalancer({
+      xebra: fakeXebra(),
+      fetch: (async () => {
+        throw cause;
+      }) as typeof globalThis.fetch,
+      now: () => NOW,
+    });
+    const err = await rb.status("0xdep").catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(OneClickError);
+    expect(err).toMatchObject({ code: "network_error", status: 0, retryable: true, cause });
+
+    const slow = createRebalancer({
+      xebra: fakeXebra(),
+      fetch: (async () => {
+        throw new DOMException("The operation timed out.", "TimeoutError");
+      }) as typeof globalThis.fetch,
+      now: () => NOW,
+    });
+    await expect(slow.status("0xdep")).rejects.toMatchObject({ code: "timeout", retryable: true });
+  });
+
+  it("still throws at once on an answer that will not change, like a 400", async () => {
+    const f = statusFirst(answer(400));
+    const rb = createRebalancer({ xebra: fakeXebra(), fetch: f.fetch, now: () => NOW });
+    await expect(rb.waitFor("0xdep", { intervalMs: 1 })).rejects.toMatchObject({ status: 400 });
+    expect(f.polls()).toBe(1);
+  });
+
+  it("honours its deadline while 1Click is down, and says why", async () => {
+    let t = NOW;
+    const tick = () => {
+      t += 1_000;
+      return t;
+    };
+    const f = statusFirst(...Array.from({ length: 50 }, () => answer(503)));
+    const rb = createRebalancer({ xebra: fakeXebra(), fetch: f.fetch, now: tick });
+    const err = await rb
+      .waitFor("0xdep", { intervalMs: 1, timeoutMs: 5_000 })
+      .catch((e: unknown) => e);
+    expect((err as Error).message).toMatch(/did not settle in time.*check status/);
+    expect((err as Error).cause).toMatchObject({ status: 503 });
+  });
+
+  it("stops at once when aborted during the wait between polls", async () => {
+    const f = statusFirst(async () => new Response(JSON.stringify({ status: "PROCESSING" })));
+    const rb = createRebalancer({ xebra: fakeXebra(), fetch: f.fetch, now: () => NOW });
+    const ctl = new AbortController();
+    const started = Date.now();
+    const waiting = rb.waitFor("0xdep", { intervalMs: 60_000, signal: ctl.signal });
+    setTimeout(() => ctl.abort(new Error("stop")), 20);
+    await expect(waiting).rejects.toThrow("stop");
+    expect(Date.now() - started).toBeLessThan(5_000);
+    expect(f.polls()).toBe(1);
   });
 });
