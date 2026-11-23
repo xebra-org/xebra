@@ -1329,16 +1329,48 @@ export function createService(deps: Deps, now: () => number = Date.now) {
           : refusal
             ? "failed"
             : "needs_claim";
-    return {
+    const status: TransferStatus = {
       state,
       chain: "sui",
       tx: digest,
       deliveryTx: null,
       reason: refusal,
-      // Finished through POST /v1/claims; the Sui page takes no link.
+      // Finished by the relayer, or through POST /v1/claims; the Sui page takes no link.
       claimUrl: null,
       circleState,
     };
+    return state === "needs_claim" ? suiRelayed(status) : status;
+  }
+
+  /**
+   * An attested Sui burn to Stellar that has not been minted: hand it to the relayer, the same one
+   * the `/sui` page calls after the user signs, so a burn built through `/v1` or `@xebra/sdk` is
+   * finished without an extra call from the integrator. Polling is the trigger because integrators
+   * already poll `GET /v1/transfers/sui/{tx}` (and `waitForDelivery` does it for them), and the
+   * relayer is idempotent, so a repeat poll costs a read, never a second mint.
+   *
+   * A relay that is refused, fails, is switched off or cannot be read leaves the transfer at
+   * `needs_claim`, so `POST /v1/claims` still finishes it. It never turns a status read into an
+   * error.
+   */
+  async function suiRelayed(status: TransferStatus): Promise<TransferStatus> {
+    if (!deps.suiRelay) return status;
+    let answer: Record<string, unknown> | null = null;
+    try {
+      answer = await deps.suiRelay(status.tx);
+    } catch {
+      return status;
+    }
+    const word = typeof answer?.status === "string" ? answer.status : "";
+    const hash = typeof answer?.hash === "string" ? answer.hash : null;
+    if (word === "delivered") return { ...status, state: "delivered" };
+    if (word === "submitted") return { ...status, state: "delivering", deliveryTx: hash };
+    if (word === "scheduled" || word === "pending") return { ...status, state: "delivering" };
+    if (word === "refused" && typeof answer?.reason === "string") {
+      // The relayer will not finish it (no trustline, say): the integrator can, and should hear why.
+      return { ...status, reason: answer.reason.slice(0, 200) };
+    }
+    return status;
   }
 
   /**
