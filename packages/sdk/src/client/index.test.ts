@@ -1,4 +1,4 @@
-import { describe, expect, expectTypeOf, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, expectTypeOf, it, vi } from "vitest";
 import {
   type ApiErrorCode,
   CLIENT_ERROR_CODES,
@@ -660,5 +660,439 @@ describe("the error behind an error", () => {
     );
     expect(err).toMatchObject({ code: "wait_timeout", extra: { lastStatus: "pending" } });
     expect(err.cause).toBeUndefined();
+  });
+});
+
+/** A problem answer with headers, as the API sends its 503s. */
+const problemWith = (status: number, code: string, headers: Record<string, string>) =>
+  new Response(
+    JSON.stringify({
+      type: `https://docs.xebra.exchange/errors/${code}`,
+      title: code,
+      status,
+      detail: `a ${code}`,
+      code,
+    }),
+    { status, headers: { "Content-Type": "application/problem+json", ...headers } },
+  );
+
+describe("Retry-After", () => {
+  const NOW = Date.UTC(2026, 10, 23, 12, 0, 0);
+  beforeEach(() => {
+    vi.useFakeTimers();
+    vi.setSystemTime(NOW);
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  const failWith = async (answer: Response): Promise<XebraApiError> => {
+    const client = createXebraClient({ fetch: async () => answer });
+    return (await client.routes().catch((e: unknown) => e)) as XebraApiError;
+  };
+
+  it("is read as seconds into retryAfterMs, on a 503 and on a 429", async () => {
+    const unavailable = await failWith(
+      problemWith(503, "upstream_unavailable", { "Retry-After": "3" }),
+    );
+    expect(unavailable).toBeInstanceOf(XebraApiError);
+    expect(unavailable).toMatchObject({ status: 503, code: "upstream_unavailable" });
+    expect(unavailable.retryAfterMs).toBe(3000);
+
+    const limited = await failWith(problemWith(429, "rate_limited", { "Retry-After": " 10 " }));
+    expect(limited.retryAfterMs).toBe(10_000);
+    expect(
+      (await failWith(problemWith(503, "upstream_unavailable", { "Retry-After": "0" })))
+        .retryAfterMs,
+    ).toBe(0);
+  });
+
+  it("is read as an HTTP date, counted from now", async () => {
+    const at = (offsetMs: number) => new Date(NOW + offsetMs).toUTCString();
+    const later = await failWith(
+      problemWith(503, "upstream_unavailable", { "Retry-After": at(7000) }),
+    );
+    expect(later.retryAfterMs).toBe(7000);
+    // A date that has passed is no wait, not a negative one.
+    const past = await failWith(
+      problemWith(503, "upstream_unavailable", { "Retry-After": at(-60_000) }),
+    );
+    expect(past.retryAfterMs).toBe(0);
+  });
+
+  it("is undefined when the header is missing or is neither seconds nor a date", async () => {
+    expect((await failWith(problem(503, "upstream_unavailable"))).retryAfterMs).toBeUndefined();
+    for (const value of ["soon", "1.5", "-3", "3 seconds", "0x10", ""]) {
+      const err = await failWith(
+        problemWith(503, "upstream_unavailable", { "Retry-After": value }),
+      );
+      expect(err.retryAfterMs, JSON.stringify(value)).toBeUndefined();
+    }
+  });
+
+  it("is kept from an answer that is not a problem, or not JSON at all", async () => {
+    // A gateway's own JSON, which is not a problem document.
+    const gateway = await failWith(
+      new Response(JSON.stringify({ message: "busy" }), {
+        status: 503,
+        headers: { "Content-Type": "application/json", "Retry-After": "4" },
+      }),
+    );
+    expect(gateway).toMatchObject({ status: 503, code: "invalid_response" });
+    expect(gateway.retryAfterMs).toBe(4000);
+
+    const html = await failWith(
+      new Response("<html>busy</html>", {
+        status: 503,
+        headers: { "Content-Type": "text/html", "Retry-After": "5" },
+      }),
+    );
+    expect(html).toMatchObject({ status: 503, code: "invalid_response" });
+    expect(html.retryAfterMs).toBe(5000);
+  });
+
+  it("is not read from an answer that succeeded", async () => {
+    const client = createXebraClient({
+      fetch: async () =>
+        new Response(JSON.stringify({ routes: [], complete: true }), {
+          status: 200,
+          headers: { "Content-Type": "application/json", "Retry-After": "9" },
+        }),
+    });
+    await expect(client.routes()).resolves.toEqual({ routes: [], complete: true });
+  });
+
+  it("is undefined on the client's own errors", async () => {
+    const client = createXebraClient({
+      fetch: async () => {
+        throw new TypeError("fetch failed");
+      },
+    });
+    const err = (await client.routes().catch((e: unknown) => e)) as XebraApiError;
+    expect(err.code).toBe("network_error");
+    expect(err.retryAfterMs).toBeUndefined();
+    expect(new XebraApiError(0, "timeout", "x").retryAfterMs).toBeUndefined();
+  });
+});
+
+describe("opt-in retries", () => {
+  const ROUTES = { routes: [], complete: true };
+  const TRANSFER = {
+    from: "stellar",
+    to: "base",
+    amount: "10",
+    sender: "GSENDER",
+    recipient: "0xrecipient",
+  } as const;
+
+  beforeEach(() => {
+    vi.useFakeTimers();
+  });
+  afterEach(() => {
+    vi.restoreAllMocks();
+    vi.useRealTimers();
+  });
+
+  /** Answers in order, then keeps giving the last one. */
+  const answering = (...answers: Array<() => Response | Promise<Response>>) => {
+    let i = 0;
+    return vi.fn(async () => {
+      const next = answers[Math.min(i, answers.length - 1)] as () => Response | Promise<Response>;
+      i++;
+      return next();
+    });
+  };
+  const unavailable = (retryAfter?: string) => () =>
+    problemWith(
+      503,
+      "upstream_unavailable",
+      retryAfter === undefined ? {} : { "Retry-After": retryAfter },
+    );
+  const ok = () => json(200, ROUTES);
+
+  it("are off unless asked for: a 503 is reported after one request", async () => {
+    const fetch = answering(unavailable("3"), ok);
+    const client = createXebraClient({ fetch });
+    await expect(client.routes()).rejects.toMatchObject({ status: 503, retryAfterMs: 3000 });
+    expect(fetch).toHaveBeenCalledTimes(1);
+  });
+
+  it("wait out a 503 for at least its Retry-After, then answer", async () => {
+    const fetch = answering(unavailable("3"), ok);
+    const client = createXebraClient({ fetch, retry: { attempts: 2, baseMs: 100 } });
+    const result = client.routes();
+    await vi.advanceTimersByTimeAsync(2999);
+    expect(fetch).toHaveBeenCalledTimes(1);
+    await vi.advanceTimersByTimeAsync(1);
+    await expect(result).resolves.toEqual(ROUTES);
+    expect(fetch).toHaveBeenCalledTimes(2);
+  });
+
+  it("back off from baseMs, doubling, when the server names no wait", async () => {
+    // The jitter takes up to half away: with the random part at its lowest the waits are 50, 100, 200.
+    vi.spyOn(Math, "random").mockReturnValue(0);
+    const fetch = answering(unavailable(), unavailable(), unavailable(), ok);
+    const client = createXebraClient({ fetch, retry: { attempts: 3, baseMs: 100 } });
+    const result = client.routes();
+    const calls: number[] = [];
+    for (const step of [49, 1, 99, 1, 199, 1]) {
+      await vi.advanceTimersByTimeAsync(step);
+      calls.push(fetch.mock.calls.length);
+    }
+    expect(calls).toEqual([1, 2, 2, 3, 3, 4]);
+    await expect(result).resolves.toEqual(ROUTES);
+  });
+
+  it("wait the whole doubled baseMs when the random part is at its highest", async () => {
+    vi.spyOn(Math, "random").mockReturnValue(1);
+    const fetch = answering(unavailable(), unavailable(), ok);
+    const client = createXebraClient({ fetch, retry: { attempts: 2, baseMs: 100 } });
+    const result = client.routes();
+    const calls: number[] = [];
+    for (const step of [99, 1, 199, 1]) {
+      await vi.advanceTimersByTimeAsync(step);
+      calls.push(fetch.mock.calls.length);
+    }
+    expect(calls).toEqual([1, 2, 2, 3]);
+    await expect(result).resolves.toEqual(ROUTES);
+  });
+
+  it("take the longer of the backoff and Retry-After", async () => {
+    vi.spyOn(Math, "random").mockReturnValue(1);
+    // The backoff (5 s) is longer than what the server asked for (1 s).
+    const fetch = answering(unavailable("1"), ok);
+    const client = createXebraClient({ fetch, retry: { attempts: 1, baseMs: 5000 } });
+    const result = client.routes();
+    await vi.advanceTimersByTimeAsync(4999);
+    expect(fetch).toHaveBeenCalledTimes(1);
+    await vi.advanceTimersByTimeAsync(1);
+    await expect(result).resolves.toEqual(ROUTES);
+  });
+
+  it("stop after `attempts` more requests and report the last failure", async () => {
+    const fetch = answering(unavailable("1"));
+    const client = createXebraClient({ fetch, retry: { attempts: 2, baseMs: 10 } });
+    const result = client.routes().catch((e: unknown) => e);
+    await vi.advanceTimersByTimeAsync(10_000);
+    expect(await result).toMatchObject({
+      status: 503,
+      code: "upstream_unavailable",
+      retryAfterMs: 1000,
+    });
+    expect(fetch).toHaveBeenCalledTimes(3);
+  });
+
+  it("ask again after a 429 and after a network error", async () => {
+    const limited = answering(() => problemWith(429, "rate_limited", { "Retry-After": "1" }), ok);
+    const a = createXebraClient({ fetch: limited, retry: { attempts: 1, baseMs: 10 } }).routes();
+    await vi.advanceTimersByTimeAsync(1000);
+    await expect(a).resolves.toEqual(ROUTES);
+    expect(limited).toHaveBeenCalledTimes(2);
+
+    const down = answering(() => {
+      throw new TypeError("fetch failed");
+    }, ok);
+    const b = createXebraClient({ fetch: down, retry: { attempts: 1, baseMs: 10 } }).routes();
+    await vi.advanceTimersByTimeAsync(10);
+    await expect(b).resolves.toEqual(ROUTES);
+    expect(down).toHaveBeenCalledTimes(2);
+  });
+
+  it("never send a POST twice", async () => {
+    const fetch = answering(unavailable("1"), () => json(200, {}));
+    const client = createXebraClient({ fetch, retry: { attempts: 3, baseMs: 10 } });
+    const transfer = client.createTransfer(TRANSFER).catch((e: unknown) => e);
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(await transfer).toMatchObject({ status: 503, retryAfterMs: 1000 });
+    expect(fetch).toHaveBeenCalledTimes(1);
+
+    const claimFetch = answering(() => {
+      throw new TypeError("fetch failed");
+    });
+    const claims = createXebraClient({ fetch: claimFetch, retry: { attempts: 3, baseMs: 10 } });
+    const claim = claims
+      .createClaim({ chain: "stellar", tx: "a".repeat(64) } as Parameters<
+        XebraClient["createClaim"]
+      >[0])
+      .catch((e: unknown) => e);
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(await claim).toMatchObject({ code: "network_error" });
+    expect(claimFetch).toHaveBeenCalledTimes(1);
+  });
+
+  it("do not repeat what asking again cannot cure", async () => {
+    for (const [status, code] of [
+      [400, "invalid_request"],
+      [422, "route_unavailable"],
+      [500, "internal_error"],
+    ] as const) {
+      const fetch = answering(() => problem(status, code));
+      const client = createXebraClient({ fetch, retry: { attempts: 3, baseMs: 10 } });
+      const result = client.routes().catch((e: unknown) => e);
+      await vi.advanceTimersByTimeAsync(60_000);
+      expect(await result, code).toMatchObject({ status, code });
+      expect(fetch, code).toHaveBeenCalledTimes(1);
+    }
+  });
+
+  it("do not repeat a request that timed out", async () => {
+    const fetch = vi.fn(
+      (_url: string, init?: RequestInit) =>
+        new Promise<Response>((_resolve, reject) => {
+          init?.signal?.addEventListener("abort", () => reject(init.signal?.reason));
+        }),
+    );
+    const client = createXebraClient({
+      fetch: fetch as unknown as typeof globalThis.fetch,
+      timeoutMs: 50,
+      retry: { attempts: 3, baseMs: 10 },
+    });
+    const result = client.routes().catch((e: unknown) => e);
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(await result).toMatchObject({ code: "timeout" });
+    expect(fetch).toHaveBeenCalledTimes(1);
+  });
+
+  it("give the error back at once when the server asks for more than a minute", async () => {
+    const fetch = answering(unavailable("61"), ok);
+    const client = createXebraClient({ fetch, retry: { attempts: 3, baseMs: 10 } });
+    await expect(client.routes()).rejects.toMatchObject({ status: 503, retryAfterMs: 61_000 });
+    expect(fetch).toHaveBeenCalledTimes(1);
+
+    // Exactly a minute is still waited out.
+    const atLimit = answering(unavailable("60"), ok);
+    const result = createXebraClient({
+      fetch: atLimit,
+      retry: { attempts: 1, baseMs: 10 },
+    }).routes();
+    await vi.advanceTimersByTimeAsync(60_000);
+    await expect(result).resolves.toEqual(ROUTES);
+    expect(atLimit).toHaveBeenCalledTimes(2);
+  });
+
+  it("stop waiting when the caller aborts, with the caller's reason", async () => {
+    const fetch = answering(unavailable("30"), ok);
+    const client = createXebraClient({ fetch, retry: { attempts: 3, baseMs: 10 } });
+    const controller = new AbortController();
+    const result = client.routes({ signal: controller.signal }).catch((e: unknown) => e);
+    await vi.advanceTimersByTimeAsync(1000);
+    const reason = new Error("the user left");
+    controller.abort(reason);
+    expect(await result).toBe(reason);
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(fetch).toHaveBeenCalledTimes(1);
+  });
+
+  it("read anything that is not a count or a duration as no retries", async () => {
+    for (const retry of [
+      { attempts: 0, baseMs: 10 },
+      { attempts: -2, baseMs: 10 },
+      { attempts: Number.NaN, baseMs: 10 },
+    ]) {
+      const fetch = answering(unavailable("1"), ok);
+      const result = createXebraClient({ fetch, retry })
+        .routes()
+        .catch((e: unknown) => e);
+      await vi.advanceTimersByTimeAsync(60_000);
+      expect(await result, JSON.stringify(retry)).toMatchObject({ status: 503 });
+      expect(fetch, JSON.stringify(retry)).toHaveBeenCalledTimes(1);
+    }
+    // A fraction is cut to whole attempts, and a bad baseMs still honours Retry-After.
+    const fetch = answering(unavailable("1"));
+    const result = createXebraClient({ fetch, retry: { attempts: 1.9, baseMs: Number.NaN } })
+      .routes()
+      .catch((e: unknown) => e);
+    await vi.advanceTimersByTimeAsync(999);
+    expect(fetch).toHaveBeenCalledTimes(1);
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(await result).toMatchObject({ status: 503 });
+    expect(fetch).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe("waitForDelivery and Retry-After", () => {
+  const TX = "a".repeat(64);
+  beforeEach(() => {
+    vi.useFakeTimers();
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  const polling = (...answers: Array<() => Response>) => {
+    let i = 0;
+    return vi.fn(async () => {
+      const next = answers[Math.min(i, answers.length - 1)] as () => Response;
+      i++;
+      return next();
+    });
+  };
+  const delivered = () => json(200, STATUS("delivered"));
+
+  it("waits for Retry-After after a 503 when it is longer than the interval", async () => {
+    const fetch = polling(
+      () => problemWith(503, "upstream_unavailable", { "Retry-After": "3" }),
+      delivered,
+    );
+    const client = createXebraClient({ fetch });
+    const result = client.waitForDelivery("stellar", TX, { intervalMs: 1000 });
+    await vi.advanceTimersByTimeAsync(2999);
+    expect(fetch).toHaveBeenCalledTimes(1);
+    await vi.advanceTimersByTimeAsync(1);
+    expect((await result).state).toBe("delivered");
+    expect(fetch).toHaveBeenCalledTimes(2);
+  });
+
+  it("does the same after a 429", async () => {
+    const fetch = polling(
+      () => problemWith(429, "rate_limited", { "Retry-After": "2" }),
+      delivered,
+    );
+    const result = createXebraClient({ fetch }).waitForDelivery("stellar", TX, { intervalMs: 500 });
+    await vi.advanceTimersByTimeAsync(1999);
+    expect(fetch).toHaveBeenCalledTimes(1);
+    await vi.advanceTimersByTimeAsync(1);
+    expect((await result).state).toBe("delivered");
+  });
+
+  it("keeps its interval when Retry-After is shorter, or missing", async () => {
+    for (const headers of [{ "Retry-After": "1" }, {}] as Array<Record<string, string>>) {
+      const fetch = polling(() => problemWith(503, "upstream_unavailable", headers), delivered);
+      const result = createXebraClient({ fetch }).waitForDelivery("stellar", TX, {
+        intervalMs: 5000,
+      });
+      await vi.advanceTimersByTimeAsync(4999);
+      expect(fetch, JSON.stringify(headers)).toHaveBeenCalledTimes(1);
+      await vi.advanceTimersByTimeAsync(1);
+      expect((await result).state).toBe("delivered");
+    }
+  });
+
+  it("goes back to its interval once the API answers again", async () => {
+    const fetch = polling(
+      () => problemWith(503, "upstream_unavailable", { "Retry-After": "3" }),
+      () => json(200, STATUS("pending")),
+      delivered,
+    );
+    const result = createXebraClient({ fetch }).waitForDelivery("stellar", TX, {
+      intervalMs: 1000,
+    });
+    await vi.advanceTimersByTimeAsync(3000);
+    expect(fetch).toHaveBeenCalledTimes(2);
+    await vi.advanceTimersByTimeAsync(999);
+    expect(fetch).toHaveBeenCalledTimes(2);
+    await vi.advanceTimersByTimeAsync(1);
+    expect((await result).state).toBe("delivered");
+  });
+
+  it("gives up at once when the API asks for longer than the wait has left", async () => {
+    const fetch = polling(() => problemWith(503, "upstream_unavailable", { "Retry-After": "120" }));
+    const client = createXebraClient({ fetch });
+    const err = await client
+      .waitForDelivery("stellar", TX, { intervalMs: 1000, timeoutMs: 60_000 })
+      .catch((e: unknown) => e);
+    expect(err).toMatchObject({ code: "wait_timeout" });
+    expect((err as XebraApiError).cause).toMatchObject({ status: 503, retryAfterMs: 120_000 });
+    expect(fetch).toHaveBeenCalledTimes(1);
   });
 });

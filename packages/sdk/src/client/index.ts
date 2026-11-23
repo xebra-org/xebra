@@ -40,6 +40,12 @@ export type XebraApiErrorCode = XebraErrorCode;
 /** A problem the API answered with: `code` is stable, `detail` is written for a person. */
 export class XebraApiError extends XebraError {
   declare readonly code: XebraApiErrorCode;
+  /**
+   * How long the server asked to be left alone, from its `Retry-After` header, in milliseconds
+   * from when the answer arrived. Undefined when the answer carried no such header, or one that
+   * is neither a number of seconds nor a date.
+   */
+  readonly retryAfterMs: number | undefined;
 
   constructor(
     readonly status: number,
@@ -50,13 +56,14 @@ export class XebraApiError extends XebraError {
       Pick<Problem, "minimum" | "maximum" | "have" | "need" | "total" | "limit" | "needs">
     > &
       Record<string, unknown> = {},
-    opts?: { cause?: unknown },
+    opts?: { cause?: unknown; retryAfterMs?: number | undefined },
   ) {
     super(code, detail, {
       retryable: RETRYABLE_API_CODES.has(code),
       ...(opts?.cause !== undefined ? { cause: opts.cause } : {}),
     });
     this.name = "XebraApiError";
+    this.retryAfterMs = opts?.retryAfterMs;
     Object.defineProperty(this, XEBRA_ERROR_BRAND, { value: true });
   }
 }
@@ -89,6 +96,19 @@ export interface XebraClientOptions {
   fetch?: typeof fetch;
   /** Per request. Default 15 s. */
   timeoutMs?: number;
+  /**
+   * Ask again when a GET fails for a reason that asking again can cure. Off unless given.
+   *
+   * A GET that ends in 429, 503 or `network_error` is sent up to `attempts` more times. Before
+   * each, the client waits for `baseMs` doubled per failure, less a random part of up to half so
+   * that clients which failed together do not return together, and never for less than the
+   * `Retry-After` the server sent. When the server asks for more than a minute the client does
+   * not sleep on it: the error is thrown at once, with `retryAfterMs` for the caller to act on.
+   *
+   * A POST is never sent twice: the first one may have been acted on. `timeoutMs` applies to
+   * each request, and a call's `signal` also ends the wait between two of them.
+   */
+  retry?: { attempts: number; baseMs: number };
 }
 
 interface Schema<T> {
@@ -184,8 +204,30 @@ export function createXebraClient(opts: XebraClientOptions = {}) {
   const base = (opts.baseUrl ?? DEFAULT_BASE_URL).replace(/\/+$/, "");
   const doFetch = opts.fetch ?? globalThis.fetch;
   const defaultTimeoutMs = opts.timeoutMs ?? 15_000;
+  // Anything that is not a count or a duration means no retries, as leaving the option out does.
+  const retries = Math.max(0, Math.trunc(opts.retry?.attempts ?? 0)) || 0;
+  const retryBaseMs = Math.max(0, opts.retry?.baseMs ?? 0) || 0;
 
+  /** One call: a request, sent again where the client was asked to and it is safe to. */
   async function call<T>(
+    path: string,
+    schema: Schema<T>,
+    init: { method?: "GET" | "POST"; body?: unknown } & XebraCallOptions = {},
+  ): Promise<T> {
+    const allowed = (init.method ?? "GET") === "GET" ? retries : 0;
+    for (let failed = 0; ; failed++) {
+      try {
+        return await request(path, schema, init);
+      } catch (err) {
+        if (failed >= allowed || !worthAskingAgain(err)) throw err;
+        const wait = retryWait(retryBaseMs, failed, err.retryAfterMs);
+        if (wait > MAX_RETRY_WAIT_MS) throw err;
+        await sleep(wait, init.signal);
+      }
+    }
+  }
+
+  async function request<T>(
     path: string,
     schema: Schema<T>,
     init: { method?: "GET" | "POST"; body?: unknown } & XebraCallOptions = {},
@@ -226,6 +268,8 @@ export function createXebraClient(opts: XebraClientOptions = {}) {
       );
     }
 
+    // Read before the body: a gateway's 503 may carry the header and no JSON at all.
+    const retryAfterMs = res.ok ? undefined : parseRetryAfter(res.headers.get("Retry-After"));
     let body: unknown;
     try {
       body = await res.json();
@@ -246,7 +290,7 @@ export function createXebraClient(opts: XebraClientOptions = {}) {
         "invalid_response",
         `The API answered ${res.status} without JSON.`,
         {},
-        { cause: err },
+        { cause: err, retryAfterMs },
       );
     }
     if (!res.ok) {
@@ -260,11 +304,11 @@ export function createXebraClient(opts: XebraClientOptions = {}) {
           (loose.code ?? "invalid_response") as XebraApiErrorCode,
           loose.detail ?? `The API answered ${res.status}.`,
           { body },
-          { cause: p.error },
+          { cause: p.error, retryAfterMs },
         );
       }
       const { type: _type, title: _title, status, detail, code, ...extra } = p.data;
-      throw new XebraApiError(status, code as ApiErrorCode, detail, extra);
+      throw new XebraApiError(status, code as ApiErrorCode, detail, extra, { retryAfterMs });
     }
     const parsed = schema.safeParse(body);
     if (!parsed.success) {
@@ -353,6 +397,8 @@ export function createXebraClient(opts: XebraClientOptions = {}) {
       // reached should say so, not only that the transfer did not settle.
       let lastFailure: unknown;
       for (;;) {
+        // How long to leave it before the next poll: the interval, unless the API asked for longer.
+        let wait = interval;
         try {
           const status = await getTransfer(chain, tx, o.signal);
           lastStatus = status;
@@ -367,8 +413,11 @@ export function createXebraClient(opts: XebraClientOptions = {}) {
               err.code === "timeout");
           if (!transient) throw err;
           lastFailure = err;
+          if (err.status === 429 || err.status === 503) {
+            wait = Math.max(interval, err.retryAfterMs ?? 0);
+          }
         }
-        if (Date.now() + interval > deadline) {
+        if (Date.now() + wait > deadline) {
           throw new XebraApiError(
             0,
             "wait_timeout",
@@ -377,7 +426,7 @@ export function createXebraClient(opts: XebraClientOptions = {}) {
             { cause: lastFailure },
           );
         }
-        await sleep(interval, o.signal);
+        await sleep(wait, o.signal);
       }
     },
   };
@@ -396,6 +445,43 @@ function looseProblem(body: unknown): { code?: string; detail?: string } {
     ...(typeof code === "string" && CODE_SHAPE.test(code) ? { code } : {}),
     ...(typeof detail === "string" && detail.trim() !== "" ? { detail } : {}),
   };
+}
+
+/**
+ * `Retry-After` in milliseconds from now. The header is a number of seconds or an HTTP date
+ * (RFC 9110, 10.2.3); a date already past is no wait at all. Undefined for a missing header and
+ * for anything else, so that a value this cannot read is not mistaken for "ask at once".
+ */
+function parseRetryAfter(value: string | null): number | undefined {
+  if (value === null) return undefined;
+  const text = value.trim();
+  if (/^\d+$/.test(text)) return Number(text) * 1000;
+  // Only what looks like a date: `Date.parse` would read "1.5" or "-3" as some year.
+  if (!/[a-z]/i.test(text)) return undefined;
+  const at = Date.parse(text);
+  return Number.isNaN(at) ? undefined : Math.max(0, at - Date.now());
+}
+
+/** The failures asking again can cure: the two statuses the API says to wait out, and no answer. */
+function worthAskingAgain(err: unknown): err is XebraApiError {
+  return (
+    err instanceof XebraApiError &&
+    (err.status === 429 || err.status === 503 || err.code === "network_error")
+  );
+}
+
+/** The longest the client sleeps before a retry. A server that asks for more is not obeyed by
+ * holding the caller's promise open: the error goes back to the caller, who can see how long. */
+const MAX_RETRY_WAIT_MS = 60_000;
+
+/**
+ * How long to wait after `failed` earlier failures: `baseMs` doubled for each, then anywhere
+ * from half of that up to all of it, and never less than the server asked for.
+ */
+function retryWait(baseMs: number, failed: number, retryAfterMs: number | undefined): number {
+  const ceiling = baseMs * 2 ** failed;
+  const jittered = ceiling / 2 + Math.random() * (ceiling / 2);
+  return Math.max(Math.round(jittered), retryAfterMs ?? 0);
 }
 
 function sleep(ms: number, signal?: AbortSignal): Promise<void> {
