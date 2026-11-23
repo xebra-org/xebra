@@ -6,8 +6,11 @@ import {
   EVM_CHAINS,
   type EvmChainId,
   type FeePlan,
+  STELLAR_CCTP_DOMAIN,
+  amountForBurn,
   checkAddressOn,
   explorerTxUrl,
+  flatFeeFor,
   formatUsdc6,
   isEvmChainId,
   planEvmFee,
@@ -45,9 +48,9 @@ import { CopyButton, SubmittedNotice } from "./receipt";
  * by our relayer, or by the owner from their own Stellar wallet).
  *
  * The server builds the burn (`/api/solana-source/build`), simulated and co-signed by a one-time
- * event-account key; the wallet adds the only signature it is missing. Xebra takes no fee here:
- * there is no Xebra contract on Solana, so the person pays Circle's delivery fee and Solana's own
- * network costs, and nothing else.
+ * event-account key; the wallet adds the only signature it is missing. Xebra's flat fee (0.10
+ * USDC) rides in the same transaction, out of the amount entered: the burn is the rest. The person
+ * also pays Circle's delivery fee (none into Stellar) and Solana's own network costs.
  *
  * Which destinations exist is the server's `SOLANA_SENDS_TO`, read through `/api/solana-source/config`.
  */
@@ -341,7 +344,12 @@ export function SolanaBridgeForm({
   const plan: FeePlan | null = useMemo(
     () =>
       chain && units !== null && tier
-        ? planEvmFee({ amount: units, tier, destination: chain })
+        ? planEvmFee({
+            amount: units,
+            tier,
+            destination: chain,
+            xebraFee: flatFeeFor(chain.cctpDomainId, units),
+          })
         : null,
     [chain, units, tier],
   );
@@ -352,7 +360,11 @@ export function SolanaBridgeForm({
       ? plan.reason
       : null;
 
-  const stellarMin = parseAmount(config.stellarMinUsdc) ?? 1_000_000n;
+  // What the relayer completes, plus Xebra's fee on top of the burn.
+  const stellarMin = amountForBurn(
+    STELLAR_CCTP_DOMAIN,
+    parseAmount(config.stellarMinUsdc) ?? 1_000_000n,
+  );
   const cap = config.maxUsdc !== null ? parseAmount(config.maxUsdc) : null;
   const amountError =
     amount.trim() === ""
@@ -362,7 +374,7 @@ export function SolanaBridgeForm({
         : cap !== null && units > cap
           ? `The limit is ${config.maxUsdc} USDC per transfer.`
           : to === "stellar" && units < stellarMin
-            ? `Send at least ${config.stellarMinUsdc} USDC to Stellar.`
+            ? `Send at least ${formatUsdc6(stellarMin)} USDC to Stellar.`
             : plan && !plan.ok && plan.kind !== "cap"
               ? plan.reason
               : null;
@@ -599,11 +611,11 @@ export function SolanaBridgeForm({
       {heading}
       <div className="px-5 py-6 sm:px-6">
         {sourcePicker}
-        <Notice tone="info" title="No Xebra fee from Solana" className="mb-6">
-          Xebra has no contract on Solana, so it takes nothing on these transfers.{" "}
+        <Notice tone="info" title="Fees from Solana" className="mb-6">
+          Xebra takes 0.01 USDC plus 0.01% of the amount, paid in the same transaction.{" "}
           {to === "stellar"
-            ? "Circle charges nothing to Stellar either."
-            : "You pay Circle's delivery fee, shown below."}{" "}
+            ? "Circle charges nothing to Stellar."
+            : "You also pay Circle's delivery fee, shown below."}{" "}
           Your wallet also pays Solana&rsquo;s own costs, {SOL_COST}. Check the recipient twice: a
           burn cannot be undone.
         </Notice>
@@ -724,17 +736,20 @@ export function SolanaBridgeForm({
                   value="0 USDC"
                   hint={
                     config.relayer
-                      ? "Circle attests the burn and Xebra completes the mint on Stellar, at no charge."
+                      ? "Circle attests the burn and Xebra completes the mint on Stellar."
                       : "Circle attests the burn; you complete the mint from a Stellar wallet for a few hundredths of an XLM."
                   }
+                />
+                <DataRow
+                  label="Xebra fee"
+                  value={`−${formatUsdc6(flatFeeFor(STELLAR_CCTP_DOMAIN, units))} USDC`}
                 />
                 <div className="pt-3">
                   <StripeRule className="mb-3 opacity-50" />
                   <DataRow
                     label="Recipient gets"
-                    value={`${formatUsdc6(units)} USDC`}
+                    value={`${formatUsdc6(units > flatFeeFor(STELLAR_CCTP_DOMAIN, units) ? units - flatFeeFor(STELLAR_CCTP_DOMAIN, units) : 0n)} USDC`}
                     emphasis
-                    hint="All of it."
                   />
                 </div>
               </dl>

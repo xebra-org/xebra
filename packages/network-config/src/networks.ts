@@ -55,9 +55,18 @@ export const CCTP_DOMAIN = {
   sei: 16,
   xdc: 18,
   hyperevm: 19,
+  linea: 11,
   ink: 21,
+  plume: 22,
   arc: 26,
   stellar: 27,
+  edge: 28,
+  injective: 29,
+  morph: 30,
+  pharos: 31,
+  cronos: 32,
+  plasma: 33,
+  xlayer: 37,
 } as const;
 
 export interface StellarPreset {

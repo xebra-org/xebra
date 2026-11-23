@@ -73,10 +73,26 @@ export interface Deps {
    * empty means Aptos is off.
    */
   aptos?: { destinations: readonly AptosDestination[]; maxUnits: bigint | null };
+  /**
+   * A burn into Stellar from any source the relayer accepts, as `/api/stellar-inbound/status`
+   * answers it. Null if unreadable.
+   */
+  stellarInboundStatus?(tx: string, srcDomain: number): Promise<Record<string, unknown> | null>;
   /** An Aptos burn to Stellar's progress, as `/api/aptos/status` answers it. Null if unreadable. */
   aptosStatus?(tx: string): Promise<Record<string, unknown> | null>;
   /** What building a transaction reads. Absent where nothing is built (the MCP tools). */
   build?: BuildDeps;
+  /**
+   * Xebra's fee addresses, one per source family, where the flat fee is paid on routes without a
+   * Xebra contract. A null entry turns that family's routes off; absent, no flat fee is charged
+   * (tests of the older figures only: production always sets it).
+   */
+  feeAddresses?: {
+    evm: string | null;
+    solana: string | null;
+    sui: string | null;
+    aptos: string | null;
+  };
 }
 
 export interface BuildDeps {
@@ -103,7 +119,13 @@ export interface BuildDeps {
    */
   evmWrapperOn: boolean;
   /** The Sui burn, built against the Sui node. Throws `InsufficientUsdcError` when short. */
-  suiBurn(p: { sender: string; amount: bigint; stellarRecipient: string }): Promise<TransferStep>;
+  suiBurn(p: {
+    sender: string;
+    amount: bigint;
+    stellarRecipient: string;
+    /** Xebra's flat fee, paid in the same transaction. */
+    fee?: { address: string; amount: bigint } | undefined;
+  }): Promise<TransferStep>;
   /**
    * A Sui burn Circle's Forwarding Service delivers (to an EVM chain or Solana), built against the
    * Sui node. Throws `InsufficientUsdcError` when short.
@@ -115,6 +137,7 @@ export interface BuildDeps {
     destinationDomain: number;
     maxFee: bigint;
     destinationName: string;
+    fee?: { address: string; amount: bigint } | undefined;
   }): Promise<TransferStep>;
   /** Circle's message and attestation for a burn, as `/api/attestation` answers it. */
   attestation(tx: string, srcDomain: number): Promise<Record<string, unknown> | null>;
@@ -148,6 +171,8 @@ export interface BuildDeps {
     to: "stellar" | EvmChainId;
     recipient: string;
     maxFee: bigint;
+    /** Xebra's flat fee, to `owner`'s USDC account in the same transaction. */
+    fee?: { owner: string; amount: bigint };
   }): Promise<TransferStep>;
   /** The Stellar mint of a Solana burn into Stellar, with `payer` paying the fee. */
   solanaStellarClaim?(
@@ -169,6 +194,12 @@ export interface BuildDeps {
   aptosClaim?(
     tx: string,
     payer: string,
+  ): Promise<{ ok: true; xdr: string } | { ok: false; reason: string; delivered?: boolean }>;
+  /** The Stellar mint of a burn from an EVM chain into Stellar, with `payer` paying the fee. */
+  stellarInboundClaim?(
+    tx: string,
+    payer: string,
+    srcDomain: number,
   ): Promise<{ ok: true; xdr: string } | { ok: false; reason: string; delivered?: boolean }>;
   /** The Stellar mint of a Sui burn, with `payer` paying the fee. */
   suiClaim(

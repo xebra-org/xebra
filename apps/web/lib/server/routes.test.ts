@@ -26,22 +26,8 @@ describe("readSource", () => {
   it("refuses a chain we do not burn on, and anything that is not a domain", () => {
     // 5 is Solana: a destination here, never a source. 8 (Sui) and 29 are Circle domains we do
     // not burn on.
-    // 0, 11, 22 and 28 (Ethereum, Linea, Plume, EDGE) are Circle chains left out on purpose.
-    for (const bad of [
-      "0",
-      "11",
-      "22",
-      "28",
-      "5",
-      "8",
-      "29",
-      "999",
-      "-1",
-      "0x6",
-      "base",
-      "6;",
-      " 6",
-    ]) {
+    // 25 is Starknet (not EVM); 17 is BNB Chain, which has no USDC on CCTP.
+    for (const bad of ["25", "17", "5", "8", "999", "-1", "0x6", "base", "6;", " 6"]) {
       expect(readSource(bad, STELLAR), bad).toBeNull();
     }
   });
@@ -77,11 +63,13 @@ describe("normaliseTxHash", () => {
 describe("isOfferedRoute", () => {
   it("offers Stellar to Solana and to every EVM chain in the table, and nothing else", () => {
     expect(isOfferedRoute(27, 5, STELLAR)).toBe(true);
-    for (const domain of [1, 2, 3, 6, 7, 10, 12, 13, 14, 15, 16, 18, 19, 21, 26]) {
+    for (const domain of [
+      0, 1, 2, 3, 6, 7, 10, 11, 12, 13, 14, 15, 16, 18, 19, 21, 22, 26, 28, 29, 30, 31, 32, 33, 37,
+    ]) {
       expect(isOfferedRoute(27, domain, STELLAR), String(domain)).toBe(true);
     }
-    // The chains left out on purpose, Stellar itself, and a Circle domain we do not serve (Sui).
-    for (const no of [0, 11, 22, 28, 27, 8]) {
+    // Starknet (not EVM), Stellar itself, and Sui.
+    for (const no of [25, 27, 8]) {
       expect(isOfferedRoute(27, no, STELLAR), String(no)).toBe(false);
     }
   });
@@ -97,7 +85,7 @@ describe("isOfferedRoute", () => {
     // Ink (21) and Sei (16), both directions; the chains left out, neither.
     expect(isOfferedRoute(21, 26, STELLAR)).toBe(true);
     expect(isOfferedRoute(26, 16, STELLAR)).toBe(true);
-    for (const left of [0, 11, 22, 28]) {
+    for (const left of [25, 17]) {
       expect(isOfferedRoute(26, left, STELLAR)).toBe(false);
       expect(isOfferedRoute(left, 26, STELLAR)).toBe(false);
     }
@@ -117,6 +105,22 @@ describe("the EVM mesh", () => {
     expect(isOfferedRoute(6, 5, STELLAR)).toBe(false);
     vi.stubEnv("NEXT_PUBLIC_EVM_MESH", "bsae");
     expect(isOfferedRoute(6, 3, STELLAR)).toBe(false);
+    vi.unstubAllEnvs();
+  });
+});
+
+describe("EVM chains to Solana", () => {
+  it("offers Solana from the EVM chains NEXT_PUBLIC_EVM_TO_SOLANA names, and only Solana", () => {
+    expect(isOfferedRoute(6, 5, STELLAR)).toBe(false);
+    vi.stubEnv("NEXT_PUBLIC_EVM_TO_SOLANA", "base");
+    expect(isOfferedRoute(6, 5, STELLAR)).toBe(true);
+    expect(isOfferedRoute(3, 5, STELLAR)).toBe(false);
+    expect(isOfferedRoute(6, 3, STELLAR)).toBe(false);
+    expect(isOfferedRoute(5, 6, STELLAR)).toBe(false);
+    vi.stubEnv("NEXT_PUBLIC_EVM_TO_SOLANA", "all");
+    expect(isOfferedRoute(3, 5, STELLAR)).toBe(true);
+    vi.stubEnv("NEXT_PUBLIC_EVM_TO_SOLANA", "solana");
+    expect(isOfferedRoute(6, 5, STELLAR)).toBe(false);
     vi.unstubAllEnvs();
   });
 });
@@ -244,11 +248,14 @@ describe("Aptos as a source", () => {
   it("quotes the chains Circle forwards to, never Stellar (nothing forwards into it)", () => {
     vi.stubEnv("APTOS_ENABLED", "true");
     vi.stubEnv("APTOS_SENDS_TO", "all");
-    for (const d of [1, 2, 3, 6, 7, 10, 12, 13, 14, 15, 16, 18, 19, 21, 26, 5]) {
+    for (const d of [
+      0, 1, 2, 3, 6, 7, 10, 11, 12, 13, 14, 15, 16, 18, 19, 21, 22, 26, 28, 32, 33, 37, 5,
+    ]) {
       expect(isOfferedRoute(9, d, STELLAR), String(d)).toBe(true);
     }
-    // Stellar, Sui, Aptos itself, and Circle chains outside the table (Ethereum, Linea).
-    for (const d of [27, 8, 9, 0, 11]) expect(isOfferedRoute(9, d, STELLAR), String(d)).toBe(false);
+    // Stellar, Sui, Aptos itself, and chains Circle does not deliver to (an Aptos burn is forwarded).
+    for (const d of [27, 8, 9, 29, 30])
+      expect(isOfferedRoute(9, d, STELLAR), String(d)).toBe(false);
     vi.stubEnv("APTOS_SENDS_TO", "base, solana, nonsense");
     expect(isOfferedRoute(9, 6, STELLAR)).toBe(true);
     expect(isOfferedRoute(9, 5, STELLAR)).toBe(true);

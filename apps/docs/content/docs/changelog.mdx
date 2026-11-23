@@ -7,6 +7,14 @@ description: What changed in the Xebra API and SDK, newest first.
 
 **API**:
 
+- Every route without a Xebra fee contract carries Xebra's fee: 0.01 USDC plus 0.01% of the
+  amount, whether the transfer arrives by itself (Circle's Forwarding Service, or Xebra's relayer
+  into Stellar) or the recipient claims it. `fees.xebra` shows it; `amount` is what leaves the wallet
+  and the burn is the rest. See [Fees](/docs/concepts/fees).
+- `POST /v1/transfers` returns a `fee` step after the burn from EVM chains (a USDC transfer) and
+  from Aptos (a new `aptos_call` transaction). From Solana and Sui the fee is in the burn's own
+  transaction.
+- Aptos to Stellar needs at least about 1.0102 USDC (1 USDC burned, what the relayer completes).
 - `invalid_request` and `invalid_amount` from checking the input carry `issues`, each field that
   failed as `{ path, message }`, beside the `detail` sentence. `openapi.json` lists it, and in
   `@xebra/sdk` `ProblemSchema` has it as optional and `XebraApiError` carries it on `extra.issues`.
@@ -18,6 +26,9 @@ description: What changed in the Xebra API and SDK, newest first.
 
 **SDK**, `@xebra/sdk`:
 
+- `planEvmFee` takes `xebraFee`; `FeePlan` gains `burn`. `XEBRA_FLAT_FEE`, `flatFeeFor`,
+  `flatFeeKind`, `CLAIM_ONLY_DOMAINS`; `buildEvmFeeStep`, `buildAptosFeeStep`.
+- `TransferStep.id` can be `"fee"`; `UnsignedTx` can be `aptos_call`.
 - `createRebalancer().estimate`: `better` is `"unknown"` when the direct swap could not be priced
   (1Click unreachable, timed out, 429 or 5xx), not `"rebalance"`; `direct` carries the failure's
   `code` next to `reason`. An error that is not 1Click's is thrown instead of becoming `reason`.

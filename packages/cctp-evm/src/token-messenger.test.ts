@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   FINALITY,
   FORWARD_HOOK,
+  NO_FORWARD_EVM_DOMAINS,
   ZERO_BYTES32,
   addressToBytes32,
   encodeDepositForBurnWithHook,
@@ -203,5 +204,39 @@ describe("a burn to Stellar", () => {
         maxFee: 0n,
       }),
     ).toThrow(/forwarder/);
+  });
+});
+
+describe("a burn to a chain Circle does not deliver to", () => {
+  it("is a plain depositForBurn with no hook and no caller, to Injective, Morph and Pharos", () => {
+    for (const domain of NO_FORWARD_EVM_DOMAINS) {
+      const data = encodeDepositForBurnWithHook({
+        amount: 5_000_000n,
+        destinationDomain: domain,
+        recipient: "0x1111111111111111111111111111111111111111",
+        burnToken: "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
+        maxFee: 0n,
+        minFinalityThreshold: 2000,
+      });
+      const { functionName, args } = decodeFunctionData({ abi: tokenMessengerAbi, data });
+      expect(functionName).toBe("depositForBurn");
+      expect(args).toHaveLength(7);
+      expect(args[1]).toBe(domain);
+      expect(args[4]).toBe(ZERO_BYTES32);
+    }
+  });
+
+  it("still asks Circle to forward everywhere else", () => {
+    const data = encodeDepositForBurnWithHook({
+      amount: 5_000_000n,
+      destinationDomain: 6,
+      recipient: "0x1111111111111111111111111111111111111111",
+      burnToken: "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
+      maxFee: 1n,
+      minFinalityThreshold: 2000,
+    });
+    const { functionName, args } = decodeFunctionData({ abi: tokenMessengerAbi, data });
+    expect(functionName).toBe("depositForBurnWithHook");
+    expect(args[7]).toBe(FORWARD_HOOK);
   });
 });

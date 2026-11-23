@@ -42,8 +42,8 @@ describe("which routes get a page", () => {
     const slugs = offeredRoutes(LIVE, PRODUCTION).map((r) => r.slug);
     expect(slugs.slice(0, 2)).toEqual(["stellar-to-solana", "stellar-to-arc"]);
     expect(slugs).not.toContain("stellar-to-base");
-    expect(slugs.filter((s) => s.startsWith("arc-to-"))).toHaveLength(15);
-    expect(slugs).toHaveLength(17);
+    expect(slugs.filter((s) => s.startsWith("arc-to-"))).toHaveLength(25);
+    expect(slugs).toHaveLength(27);
   });
 
   it("adds a Stellar chain once the wrapper commits it, at the committed cap", () => {
@@ -80,7 +80,7 @@ describe("which routes get a page", () => {
     for (const r of offeredRoutes(new Map([...LIVE, [6, cfg(2_500_000n)]]), PRODUCTION)) {
       expect(candidateSlugs()).toContain(r.slug);
     }
-    expect(parseSlug("stellar-to-ethereum")).toBeNull();
+    expect(parseSlug("stellar-to-starknet")).toBeNull();
   });
 });
 
@@ -122,13 +122,25 @@ describe("the written pages", () => {
     }
   });
 
-  it("say there is no Xebra fee from Arc until the wrapper is switched on, and the fee after", () => {
+  it("say Xebra's flat fee from Arc until the wrapper is switched on, and the wrapper's fee after", () => {
     const direct = docs.find((d) => d.path === "/bridge/arc-to-base");
-    expect(direct?.markdown).toContain("None: you pay Circle's delivery fee only");
+    expect(direct?.markdown).toContain("0.01 USDC plus 0.01% of the amount");
+    expect(direct?.markdown).not.toContain("None: you pay Circle's delivery fee only");
     const wrapped = buildDocs(offeredRoutes(LIVE, { ...PRODUCTION, useWrapper: true }), true).find(
       (d) => d.path === "/bridge/arc-to-base",
     );
     expect(wrapped?.markdown).toContain("0.01% of the amount, at least 0.01 USDC");
+  });
+
+  it("describe an EVM chain to Stellar as relayed, with no Circle fee", () => {
+    const routes = offeredRoutes(LIVE, {
+      ...PRODUCTION,
+      evmRoutes: { ...PRODUCTION.evmRoutes, evmToStellar: ["base"] },
+    });
+    const page = buildDocs(routes, false).find((d) => d.path === "/bridge/base-to-stellar");
+    expect(page?.markdown).toContain("Circle does not deliver into Stellar");
+    expect(page?.markdown).toContain("From 1.02 USDC");
+    expect(page?.markdown).toContain("USDC trustline");
   });
 
   it("are all listed in llms.txt, and all in llms-full.txt", () => {

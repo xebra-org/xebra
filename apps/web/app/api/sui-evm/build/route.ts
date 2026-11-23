@@ -19,6 +19,7 @@ import {
   feeDestination,
   routeDestination,
 } from "../../../../lib/route-destination";
+import { FeeAddressMissing, flatFeeOn } from "../../../../lib/server/flat-fee";
 import { irisBaseUrl, irisBudget, irisFetch } from "../../../../lib/server/iris";
 import { suiClient } from "../../../../lib/sui-stellar/client";
 import {
@@ -132,6 +133,17 @@ export async function POST(request: Request): Promise<Response> {
     };
   }
   const destination = feeDestination(chain, opensAccount);
+  // What the person entered leaves the wallet; Xebra's flat fee is paid out of it in the burn's
+  // own transaction, and the burn is the rest.
+  let flat: ReturnType<typeof flatFeeOn>;
+  try {
+    flat = flatFeeOn("sui", chain.cctpDomainId, amount);
+  } catch (err) {
+    if (err instanceof FeeAddressMissing) {
+      return Response.json({ error: err.message }, { status: err.status });
+    }
+    throw err;
+  }
 
   const health = await checkCircle({
     baseUrl: irisBaseUrl(),
@@ -151,7 +163,7 @@ export async function POST(request: Request): Promise<Response> {
       { status: 503 },
     );
   }
-  const plan = planEvmFee({ amount, tier, destination });
+  const plan = planEvmFee({ amount, tier, destination, xebraFee: flat.fee });
   if (!plan.ok) return Response.json({ error: plan.reason }, { status: 422 });
   if (plan.maxFee > shownMaxFee) {
     return Response.json(
@@ -166,13 +178,15 @@ export async function POST(request: Request): Promise<Response> {
   try {
     const { transaction } = await buildForwardedBurn(suiClient(), {
       sender,
-      amount,
+      amount: plan.burn,
       recipient: burnRecipient,
       destinationDomain: chain.cctpDomainId,
       maxFee: plan.maxFee,
+      fee: { address: flat.address, amount: flat.fee },
     });
     return Response.json({
       transaction,
+      xebraFee: flat.fee.toString(),
       maxFee: plan.maxFee.toString(),
       received: plan.received.toString(),
       opensAccount,

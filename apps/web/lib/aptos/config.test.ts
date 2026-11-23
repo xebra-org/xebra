@@ -20,7 +20,7 @@ describe("parseAptosSendsTo", () => {
   });
 
   it("takes EVM ids, solana and stellar, in the page's order, ignoring unknown names", () => {
-    expect(parseAptosSendsTo("solana, BASE ,stellar,ethereum,sui,arc")).toEqual([
+    expect(parseAptosSendsTo("solana, BASE ,stellar,injective,sui,arc")).toEqual([
       "stellar",
       "arc",
       "base",
@@ -31,9 +31,9 @@ describe("parseAptosSendsTo", () => {
   it("`all` is every EVM chain in the table, Arc, Solana and Stellar", () => {
     const all = parseAptosSendsTo("all");
     expect(all).toEqual([...APTOS_ALL_DESTINATIONS]);
-    expect(all).toHaveLength(17);
+    expect(all).toHaveLength(24);
     expect(all.map(aptosDestinationDomain).sort((a, b) => a - b)).toEqual([
-      1, 2, 3, 5, 6, 7, 10, 12, 13, 14, 15, 16, 18, 19, 21, 26, 27,
+      0, 1, 2, 3, 5, 6, 7, 10, 11, 12, 13, 14, 15, 16, 18, 19, 21, 22, 26, 27, 28, 32, 33, 37,
     ]);
   });
 });

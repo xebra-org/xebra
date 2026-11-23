@@ -3,6 +3,7 @@ import { CctpEvmError } from "./errors.js";
 import {
   type BurnRecipient,
   type Finality,
+  NO_FORWARD_EVM_DOMAINS,
   ZERO_BYTES32,
   recipientAndHook,
 } from "./token-messenger.js";
@@ -66,6 +67,9 @@ export function encodeWrapperBridge(args: WrapperBridgeArgs): Hex {
       "invalid_recipient",
       "Xebra's wrapper cannot send to Stellar; burn to Circle directly",
     );
+  }
+  if (NO_FORWARD_EVM_DOMAINS.includes(args.destinationDomain)) {
+    throw new Error("Circle does not deliver to that chain, so the wrapper cannot send there");
   }
   // The same recipient rules as a direct burn; the wrapper builds the hook from the owner itself.
   const { mintRecipient } = recipientAndHook(args.recipient, args.destinationDomain);

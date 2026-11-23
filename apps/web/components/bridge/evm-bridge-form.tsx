@@ -3,6 +3,7 @@
 import type { CircleHealth } from "@xebra/cctp-client";
 import type { BurnRecipient } from "@xebra/cctp-evm";
 import {
+  CLAIM_ONLY_DOMAINS,
   type DeepLink,
   type EnabledRoutes,
   type EvmChain,
@@ -12,7 +13,9 @@ import {
   checkAddressOn,
   checkSolanaAddress,
   evmDestinationsFrom,
+  evmSendsToStellar,
   explorerTxUrl,
+  flatFeeFor,
   formatUsdc6,
   parseUsdc6,
   planEvmFee,
@@ -54,6 +57,7 @@ import { useWallets } from "../wallet/wallet-provider";
 import { BeneficiaryPicker } from "./beneficiary-picker";
 import { ChainPicker, PickerLabel } from "./chain-picker";
 import { EvmQuotePanel } from "./evm-quote-panel";
+import { EvmStellarPanel } from "./evm-stellar-panel";
 import { MaxAmount, QUICK_AMOUNTS, QuickAmount } from "./quick-amount";
 import { type ReceiptRoute, SubmittedNotice } from "./receipt";
 import { ArcRecipientPanel, RecipientPanel, UseMyWallet } from "./recipient-panels";
@@ -145,6 +149,10 @@ export function EvmBridgeForm({
   );
   const [destId, setDestId] = useState<RouteDestinationId>(destinations[0]?.id ?? "arc");
   const dest = useMemo(() => routeDestination(destId), [destId]);
+  // Stellar is offered beside the others but sent by its own panel: no Circle delivery to price,
+  // and Xebra's relayer finishes it.
+  const stellarOffered = evmSendsToStellar(source.id, routes);
+  const [toStellar, setToStellar] = useState(destinations.length === 0 && stellarOffered);
 
   // Xebra's wrapper on this chain, when the build uses it, and its live settings: `undefined` while
   // the first read is out, null when it could not be read. A transfer is never priced without them.
@@ -306,7 +314,13 @@ export function EvmBridgeForm({
     ): FeePlan | null => {
       const feeDest = feeDestination(destination, opening);
       if (!wrapperAddress)
-        return planEvmFee({ amount: value, tier: feeTier, destination: feeDest });
+        // Straight to Circle: Xebra's flat fee comes out of the amount, paid after the burn.
+        return planEvmFee({
+          amount: value,
+          tier: feeTier,
+          destination: feeDest,
+          xebraFee: flatFeeFor(destination.cctpDomainId, value),
+        });
       if (!settings) return null;
       return planWrapperFee({
         amount: value,
@@ -502,7 +516,9 @@ export function EvmBridgeForm({
         createAccountFor: opening ? bytesToHex(recipientCheck.bytes) : undefined,
       };
     }
-    const priceNow = async (): Promise<{ tier: FeeTier; maxFee: bigint; fee: bigint } | string> => {
+    const priceNow = async (): Promise<
+      { tier: FeeTier; maxFee: bigint; fee: bigint; burn: bigint; xebraFee: bigint } | string
+    > => {
       // Through the wrapper its settings are read again too: a pause or a lowered cap is instant.
       const settings = wrapperAddress ? await getWrapperSettings(source.cctpDomainId) : undefined;
       if (wrapperAddress) {
@@ -523,7 +539,13 @@ export function EvmBridgeForm({
       const latest = planFor(amount, freshTier, destination, opening, settings);
       if (!latest) return `We could not read Xebra's contract on ${source.name} just now.`;
       return latest.ok
-        ? { tier: freshTier, maxFee: latest.maxFee, fee: latest.fee }
+        ? {
+            tier: freshTier,
+            maxFee: latest.maxFee,
+            fee: latest.fee,
+            burn: latest.burn,
+            xebraFee: latest.xebraFee,
+          }
         : latest.reason;
     };
 
@@ -553,10 +575,16 @@ export function EvmBridgeForm({
         source,
         destination,
         recipient,
-        amount,
+        // The burn: through the wrapper the whole amount, straight to Circle the amount less
+        // Xebra's flat fee, which is sent next to Xebra's fee address.
+        amount: priced.burn,
         maxFee: priced.maxFee,
         finality: priced.tier.finalityThreshold,
         via: wrapperAddress ? { address: wrapperAddress, maxWrapperFee: priced.fee } : null,
+        xebraFee:
+          !wrapperAddress && priced.xebraFee > 0n && env.feeAddresses.evm
+            ? { address: env.feeAddresses.evm, amount: priced.xebraFee }
+            : null,
         onStep: (s) => setStep(EVM_STEP_LABEL[s](source.name)),
         // An approval can take minutes on a busy chain; the fee is asked for again after it.
         currentMaxFee: async () => {
@@ -632,6 +660,54 @@ export function EvmBridgeForm({
     amount !== null && amount > 0n && health?.tiers?.fast
       ? speedFeeFor(amount, health.tiers.fast.minimumFeePpb)
       : null;
+
+  const pickerOptions: Array<{ id: RouteDestinationId | "stellar"; name: string }> = [
+    ...destinations,
+    ...(stellarOffered ? [{ id: "stellar" as const, name: "Stellar" }] : []),
+  ];
+  const destinationPicker = pickerOptions.length > 1 && (
+    <div className="mt-6">
+      <PickerLabel>Send to</PickerLabel>
+      <ChainPicker
+        legend="Destination chain"
+        name="evm-destination-chain"
+        options={pickerOptions}
+        value={toStellar ? "stellar" : destId}
+        onChange={(id) => {
+          if (id === "stellar") {
+            setToStellar(true);
+          } else {
+            setToStellar(false);
+            chooseDestination(id);
+          }
+        }}
+        disabled={busy}
+      />
+    </div>
+  );
+
+  // Where Circle does not deliver (Stellar, or a chain the recipient claims on), its own panel.
+  const claimedOn =
+    !toStellar && dest.evm && CLAIM_ONLY_DOMAINS.includes(dest.cctpDomainId) ? dest.evm : null;
+  if (toStellar || claimedOn) {
+    return (
+      <>
+        <h2 id="bridge-heading" className="sr-only">
+          Bridge USDC from {source.name} to {claimedOn ? claimedOn.name : "Stellar"}
+        </h2>
+        <div className="px-5 py-6 sm:px-6">
+          {sourcePicker}
+          {destinationPicker}
+          <EvmStellarPanel
+            key={claimedOn?.id ?? "stellar"}
+            source={source}
+            to={claimedOn}
+            {...(onBusyChange ? { onBusyChange } : {})}
+          />
+        </div>
+      </>
+    );
+  }
 
   return (
     <>
@@ -719,19 +795,7 @@ export function EvmBridgeForm({
           </div>
         </Field>
 
-        {destinations.length > 1 && (
-          <div className="mt-6">
-            <PickerLabel>Send to</PickerLabel>
-            <ChainPicker
-              legend="Destination chain"
-              name="evm-destination-chain"
-              options={destinations}
-              value={destId}
-              onChange={chooseDestination}
-              disabled={busy}
-            />
-          </div>
-        )}
+        {destinationPicker}
 
         {fastOffered && (
           <div className="mt-6">

@@ -1,6 +1,7 @@
 import type { SuiGrpcClient } from "@mysten/sui/grpc";
 import { Transaction, coinWithBalance } from "@mysten/sui/transactions";
 import { type BurnRecipient, recipientAndHook } from "@xebra/cctp-evm";
+import { formatUsdc6 } from "../core/amounts.js";
 import {
   STELLAR_DOMAIN,
   burnDestinationCaller,
@@ -88,12 +89,13 @@ function must2<T>(r: readonly T[]): [T, T] {
 /** Sui to Stellar: the serialized burn for the wallet to sign. */
 export async function buildBurn(
   client: SuiGrpcClient,
-  p: { sender: string; amount: bigint; stellarRecipient: string },
+  p: { sender: string; amount: bigint; stellarRecipient: string; fee?: SuiFee | undefined },
 ): Promise<{ transaction: string }> {
   validateBurnInput(p.sender, p.amount);
   return burnTransaction(client, {
     sender: p.sender,
     amount: p.amount,
+    fee: p.fee,
     destinationDomain: STELLAR_DOMAIN,
     mintRecipient: forwarderAsSuiAddress(),
     // destinationCaller = the forwarder, as Circle requires. Zero would let anyone call
@@ -149,6 +151,7 @@ export async function buildForwardedBurn(
     recipient: SuiForwardRecipient;
     destinationDomain: number;
     maxFee: bigint;
+    fee?: SuiFee | undefined;
   },
 ): Promise<{ transaction: string }> {
   validateBurnInput(p.sender, p.amount);
@@ -158,6 +161,7 @@ export async function buildForwardedBurn(
   return burnTransaction(client, {
     sender: p.sender,
     amount: p.amount,
+    fee: p.fee,
     destinationDomain: p.destinationDomain,
     ...forwardBurnArgs(p.recipient, p.destinationDomain),
     maxFee: p.maxFee,
@@ -192,9 +196,19 @@ function hexToBytes(hex: string): Uint8Array {
   return out;
 }
 
+/** Xebra's flat fee, paid in the same transaction as the burn: all of it lands, or none does. */
+export interface SuiFee {
+  /** Xebra's fee address on Sui. */
+  address: string;
+  /** 6-decimal USDC units. */
+  amount: bigint;
+}
+
 export interface BurnArgs {
   sender: string;
+  /** What is burned; the fee, when there is one, is on top. */
   amount: bigint;
+  fee?: SuiFee | undefined;
   destinationDomain: number;
   /** 32 bytes as a Sui address argument. */
   mintRecipient: string;
@@ -212,7 +226,8 @@ async function burnTransaction(
   // draws from either and merges as needed; this check only gives a clear refusal first.
   const { balance } = await client.core.getBalance({ owner: p.sender, coinType: CFG.usdcType });
   const have = BigInt(balance.balance);
-  if (have < p.amount) throw new InsufficientUsdcError(have, p.amount);
+  const need = p.amount + (p.fee?.amount ?? 0n);
+  if (have < need) throw new InsufficientUsdcError(have, need);
 
   const tx = burnMoveCalls(p);
   // Resolved against the node so the wallet gets object versions and a gas budget, not a recipe.
@@ -266,19 +281,27 @@ export function burnMoveCalls(p: BurnArgs): Transaction {
     typeArguments: [CFG.usdcType, `${CFG.handlerPackageId}::handler::Auth`],
   });
 
+  if (p.fee) {
+    if (p.fee.amount <= 0n) throw new Error("The fee must be more than zero.");
+    const fee = tx.add(
+      coinWithBalance({ type: CFG.usdcType, balance: p.fee.amount, useGasCoin: false }),
+    );
+    tx.transferObjects([fee], tx.pure.address(p.fee.address));
+  }
+
   return tx;
 }
 
 /** `buildBurn` as the step a wallet signs. */
 export async function buildSuiBurn(
   client: SuiGrpcClient,
-  p: { sender: string; amount: bigint; stellarRecipient: string },
+  p: { sender: string; amount: bigint; stellarRecipient: string; fee?: SuiFee | undefined },
 ): Promise<TransferStep> {
   const { transaction } = await buildBurn(client, p);
   return {
     id: "burn",
     chain: "sui",
-    description: "Burn USDC on Sui; Circle attests it and it is minted to the Stellar recipient.",
+    description: `Burn USDC on Sui; Circle attests it and it is minted to the Stellar recipient.${feeNote(p.fee)}`,
     tx: { kind: "sui", json: transaction },
     expiresAt: null,
   };
@@ -295,14 +318,19 @@ export async function buildSuiForwardStep(
     maxFee: bigint;
     /** The destination's name, for the description. */
     destinationName: string;
+    fee?: SuiFee | undefined;
   },
 ): Promise<TransferStep> {
   const { transaction } = await buildForwardedBurn(client, p);
   return {
     id: "burn",
     chain: "sui",
-    description: `Burn USDC on Sui; Circle attests it and its Forwarding Service mints it on ${p.destinationName}.`,
+    description: `Burn USDC on Sui; Circle attests it and its Forwarding Service mints it on ${p.destinationName}.${feeNote(p.fee)}`,
     tx: { kind: "sui", json: transaction },
     expiresAt: null,
   };
+}
+
+function feeNote(fee: SuiFee | undefined): string {
+  return fee ? ` The same transaction pays Xebra's fee, ${formatUsdc6(fee.amount)} USDC.` : "";
 }

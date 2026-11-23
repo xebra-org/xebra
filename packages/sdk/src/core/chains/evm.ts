@@ -26,6 +26,16 @@ export type EvmChainId =
   | "xdc"
   | "hyperevm"
   | "ink"
+  | "ethereum"
+  | "linea"
+  | "plume"
+  | "edge"
+  | "cronos"
+  | "plasma"
+  | "xlayer"
+  | "injective"
+  | "morph"
+  | "pharos"
   | "arc";
 
 export interface EvmChain {
@@ -273,6 +283,162 @@ export const EVM_CHAINS: Record<EvmChainId, EvmChain> = {
     claimCost: "a little ETH on Ink for gas",
     standardEta: "about 30 minutes",
   },
+  ethereum: {
+    id: "ethereum",
+    name: "Ethereum",
+    chainId: 1,
+    cctpDomainId: 0,
+    usdcAddress: "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
+    ...CIRCLE,
+    rpcUrl: "https://ethereum-rpc.publicnode.com",
+    explorerUrl: "https://etherscan.io",
+    nativeCurrency: ETH,
+    fast: true,
+    maxForwardFeeUnits: 2_500_000,
+    claimCost: "ETH on Ethereum for gas, often more than a dollar",
+    standardEta: "15 to 20 minutes",
+  },
+  linea: {
+    id: "linea",
+    name: "Linea",
+    chainId: 59144,
+    cctpDomainId: 11,
+    usdcAddress: "0x176211869cA2b568f2A7D4EE941E073a821EE1ff",
+    ...CIRCLE,
+    rpcUrl: "https://rpc.linea.build",
+    explorerUrl: "https://lineascan.build",
+    nativeCurrency: ETH,
+    fast: true,
+    maxForwardFeeUnits: 500_000,
+    claimCost: "a little ETH on Linea for gas",
+    standardEta: "6 to 32 hours (Linea's finality); Fast takes seconds",
+  },
+  plume: {
+    id: "plume",
+    name: "Plume",
+    chainId: 98866,
+    cctpDomainId: 22,
+    usdcAddress: "0x222365EF19F7947e5484218551B56bb3965Aa7aF",
+    ...CIRCLE,
+    rpcUrl: "https://rpc.plume.org",
+    explorerUrl: "https://explorer.plume.org",
+    nativeCurrency: { name: "Plume", symbol: "PLUME", decimals: 18 },
+    fast: true,
+    maxForwardFeeUnits: 500_000,
+    claimCost: "a little PLUME for gas",
+    standardEta: "15 to 20 minutes",
+  },
+  edge: {
+    id: "edge",
+    name: "EDGE",
+    chainId: 3343,
+    cctpDomainId: 28,
+    usdcAddress: "0x98d2919b9A214E6Fa5384AC81E6864bA686Ad74c",
+    // EDGE has its own deployment of Circle's contracts, not the address every other chain shares.
+    tokenMessengerAddress: "0x98706A006bc632Df31CAdFCBD43F38887ce2ca5c",
+    messageTransmitterAddress: "0x5b61381Fc9e58E70EfC13a4A97516997019198ee",
+    tokenMinterAddress: "0x338Dfd607855BeEc17f33e539Ac2479853cC8384",
+    rpcUrl: "https://edge-mainnet.g.alchemy.com/public",
+    explorerUrl: "https://edge-mainnet.explorer.alchemy.com",
+    nativeCurrency: ETH,
+    fast: true,
+    maxForwardFeeUnits: 500_000,
+    claimCost: "a little ETH on EDGE for gas",
+    standardEta: "15 to 20 minutes",
+  },
+  cronos: {
+    id: "cronos",
+    name: "Cronos",
+    chainId: 25,
+    cctpDomainId: 32,
+    usdcAddress: "0x3D7F2C478aAfdB65542BCB44bCeeC05849999d2D",
+    ...CIRCLE,
+    rpcUrl: "https://evm.cronos.org",
+    explorerUrl: "https://explorer.cronos.org",
+    nativeCurrency: { name: "Cronos", symbol: "CRO", decimals: 18 },
+    fast: false,
+    maxForwardFeeUnits: 500_000,
+    claimCost: "a little CRO for gas",
+    standardEta: "under a minute",
+  },
+  plasma: {
+    id: "plasma",
+    name: "Plasma",
+    chainId: 9745,
+    cctpDomainId: 33,
+    usdcAddress: "0x2d661C89D812261039AF9764eceaAee884f5F67F",
+    ...CIRCLE,
+    rpcUrl: "https://rpc.plasma.to",
+    explorerUrl: "https://plasmascan.to",
+    nativeCurrency: { name: "Plasma", symbol: "XPL", decimals: 18 },
+    fast: false,
+    maxForwardFeeUnits: 500_000,
+    claimCost: "a little XPL for gas",
+    standardEta: "under a minute",
+  },
+  xlayer: {
+    id: "xlayer",
+    name: "X Layer",
+    chainId: 196,
+    cctpDomainId: 37,
+    usdcAddress: "0xB6CEceAB302E2E4948951eE7843FC24E92933061",
+    ...CIRCLE,
+    rpcUrl: "https://rpc.xlayer.tech",
+    explorerUrl: "https://www.oklink.com/xlayer",
+    nativeCurrency: { name: "OKB", symbol: "OKB", decimals: 18 },
+    fast: true,
+    maxForwardFeeUnits: 500_000,
+    claimCost: "a little OKB for gas",
+    standardEta: "15 to 20 minutes",
+  },
+  injective: {
+    id: "injective",
+    name: "Injective",
+    chainId: 1776,
+    cctpDomainId: 29,
+    usdcAddress: "0xa00C59fF5a080D2b954d0c75e46E22a0c371235a",
+    ...CIRCLE,
+    rpcUrl: "https://sentry.evm-rpc.injective.network",
+    explorerUrl: "https://blockscout.injective.network",
+    nativeCurrency: { name: "Injective", symbol: "INJ", decimals: 18 },
+    fast: false,
+    // Circle does not deliver here: a transfer in is claimed, so no delivery fee is ever signed.
+    maxForwardFeeUnits: 0,
+    claimCost: "a little INJ for gas, to claim it",
+    standardEta: "under a minute",
+  },
+  morph: {
+    id: "morph",
+    name: "Morph",
+    chainId: 2818,
+    cctpDomainId: 30,
+    usdcAddress: "0xCfb1186F4e93D60E60a8bDd997427D1F33bc372B",
+    ...CIRCLE,
+    rpcUrl: "https://rpc.morph.network",
+    explorerUrl: "https://explorer.morph.network",
+    nativeCurrency: ETH,
+    fast: true,
+    // Circle does not deliver here: a transfer in is claimed, so no delivery fee is ever signed.
+    maxForwardFeeUnits: 0,
+    claimCost: "a little ETH on Morph for gas, to claim it",
+    standardEta: "20 to 30 minutes",
+  },
+  pharos: {
+    id: "pharos",
+    name: "Pharos",
+    chainId: 1672,
+    cctpDomainId: 31,
+    usdcAddress: "0xC879C018dB60520F4355C26eD1a6D572cdAC1815",
+    ...CIRCLE,
+    rpcUrl: "https://rpc.pharos.xyz",
+    explorerUrl: "https://pharosscan.xyz",
+    nativeCurrency: { name: "Pharos", symbol: "PROS", decimals: 18 },
+    fast: false,
+    // Circle does not deliver here: a transfer in is claimed, so no delivery fee is ever signed.
+    maxForwardFeeUnits: 0,
+    claimCost: "a little PROS for gas, to claim it",
+    standardEta: "under a minute",
+  },
   arc: {
     id: "arc",
     name: "Arc",
@@ -362,9 +528,26 @@ export interface EnabledRoutes {
    * (a build from before the mesh) means none.
    */
   evmMesh?: readonly EvmPeerId[];
+  /**
+   * EVM chains other than Arc that send to Solana, delivered by Circle's Forwarding Service to the
+   * recipient's USDC token account, as from Arc. Absent means none.
+   */
+  evmToSolana?: readonly EvmPeerId[];
+  /**
+   * EVM chains, Arc included, that send to Stellar. Circle does not deliver into Stellar: the burn
+   * names Circle's Stellar forwarder, and Xebra's relayer (or the recipient) completes the mint.
+   * Absent means none.
+   */
+  evmToStellar?: readonly EvmChainId[];
 }
 
-export const NO_ROUTES: EnabledRoutes = { arcSendsTo: [], arcReceivesFrom: [], evmMesh: [] };
+export const NO_ROUTES: EnabledRoutes = {
+  arcSendsTo: [],
+  arcReceivesFrom: [],
+  evmMesh: [],
+  evmToSolana: [],
+  evmToStellar: [],
+};
 
 /** The mesh's chains, if there are at least two of them; one chain alone reaches nothing. */
 function meshOf(routes: EnabledRoutes): readonly EvmPeerId[] {
@@ -374,7 +557,11 @@ function meshOf(routes: EnabledRoutes): readonly EvmPeerId[] {
 
 export function hasEvmRoutes(routes: EnabledRoutes): boolean {
   return (
-    routes.arcSendsTo.length > 0 || routes.arcReceivesFrom.length > 0 || meshOf(routes).length > 0
+    routes.arcSendsTo.length > 0 ||
+    routes.arcReceivesFrom.length > 0 ||
+    meshOf(routes).length > 0 ||
+    (routes.evmToSolana?.length ?? 0) > 0 ||
+    (routes.evmToStellar?.length ?? 0) > 0
   );
 }
 
@@ -387,7 +574,8 @@ export function evmDestinationsFrom(
   const toArc: RouteDestinationId[] = routes.arcReceivesFrom.includes(source) ? ["arc"] : [];
   const mesh = meshOf(routes);
   const peers = mesh.includes(source) ? mesh.filter((id) => id !== source) : [];
-  return [...toArc, ...peers];
+  const toSolana: RouteDestinationId[] = routes.evmToSolana?.includes(source) ? ["solana"] : [];
+  return [...toArc, ...peers, ...toSolana];
 }
 
 /**
@@ -397,9 +585,14 @@ export function evmDestinationsFrom(
 export function evmSources(routes: EnabledRoutes): EvmChainId[] {
   const mesh = meshOf(routes);
   const peers = EVM_ARC_PEERS.filter(
-    (id) => routes.arcReceivesFrom.includes(id) || mesh.includes(id),
+    (id) =>
+      routes.arcReceivesFrom.includes(id) ||
+      mesh.includes(id) ||
+      (routes.evmToSolana?.includes(id) ?? false) ||
+      (routes.evmToStellar?.includes(id) ?? false),
   );
-  return routes.arcSendsTo.length > 0 ? [...peers, "arc"] : peers;
+  const arcSends = routes.arcSendsTo.length > 0 || (routes.evmToStellar?.includes("arc") ?? false);
+  return arcSends ? [...peers, "arc"] : peers;
 }
 
 /**
@@ -431,6 +624,27 @@ function parseRouteList<T extends string>(
  */
 export function parseEvmMesh(raw: string | null | undefined): EvmPeerId[] {
   return parseRouteList("mesh list", raw, EVM_ARC_PEERS);
+}
+
+/**
+ * `NEXT_PUBLIC_EVM_TO_SOLANA`: EVM chains other than Arc that send to Solana (Arc has its own
+ * switch, `NEXT_PUBLIC_ARC_SENDS_TO`).
+ */
+export function parseEvmToSolana(raw: string | null | undefined): EvmPeerId[] {
+  return parseRouteList("NEXT_PUBLIC_EVM_TO_SOLANA", raw, EVM_ARC_PEERS);
+}
+
+/**
+ * `NEXT_PUBLIC_EVM_TO_STELLAR`: EVM chains, Arc included, that send to Stellar (completed by Xebra's
+ * relayer). `evmDestinationsFrom` does not list Stellar; callers add it from this list.
+ */
+export function parseEvmToStellar(raw: string | null | undefined): EvmChainId[] {
+  return parseRouteList("NEXT_PUBLIC_EVM_TO_STELLAR", raw, EVM_CHAIN_IDS);
+}
+
+/** Whether `source` may send to Stellar in this build. */
+export function evmSendsToStellar(source: EvmChainId, routes: EnabledRoutes): boolean {
+  return routes.evmToStellar?.includes(source) ?? false;
 }
 
 /** `NEXT_PUBLIC_ARC_SENDS_TO`: where Arc may send. EVM chains and `solana`. */

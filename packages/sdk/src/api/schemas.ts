@@ -117,12 +117,19 @@ export const UnsignedTxSchema = z
       }),
     }),
     z.object({ kind: z.literal("solana"), transaction: z.string() }),
+    z.object({
+      kind: z.literal("aptos_call"),
+      chainId: z.number().int(),
+      function: z.string().regex(/^0x[0-9a-f]{1,64}::[a-z_][a-z0-9_]*::[a-z_][a-z0-9_]*$/),
+      typeArguments: z.array(z.string()),
+      functionArguments: z.array(z.string()),
+    }),
   ])
   .meta({ id: "UnsignedTx", description: "A transaction for the user's wallet to sign." });
 
 export const TransferStepSchema = z
   .object({
-    id: z.enum(["approve", "burn", "open_account", "claim"]),
+    id: z.enum(["approve", "burn", "fee", "open_account", "claim"]),
     chain: ChainIdSchema,
     description: z.string(),
     tx: UnsignedTxSchema,

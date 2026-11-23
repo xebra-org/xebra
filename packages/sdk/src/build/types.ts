@@ -28,11 +28,23 @@ export type UnsignedTx =
    * A legacy Solana transaction, serialized, base64. A claim carries no signatures; a burn from
    * Solana already carries one, its one-time message account's, and needs only the sender's.
    */
-  | { kind: "solana"; transaction: string };
+  | { kind: "solana"; transaction: string }
+  /**
+   * An Aptos entry-function call, for wallets' `signAndSubmitTransaction({ data })`: the function,
+   * its type arguments and its arguments after the signer, as strings.
+   */
+  | {
+      kind: "aptos_call";
+      chainId: number;
+      function: string;
+      typeArguments: string[];
+      functionArguments: string[];
+    };
 
 /** One signature in a transfer, in the order the wallet should be asked. */
 export interface TransferStep {
-  id: "approve" | "burn" | "open_account" | "claim";
+  /** `fee`: Xebra's flat fee, a USDC transfer to Xebra's fee address on the source chain. */
+  id: "approve" | "burn" | "fee" | "open_account" | "claim";
   chain: ChainId;
   /** One sentence a person can read before signing. */
   description: string;

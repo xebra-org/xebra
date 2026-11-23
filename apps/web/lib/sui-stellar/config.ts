@@ -1,3 +1,4 @@
+import { CLAIM_ONLY_DOMAINS } from "@xebra/sdk/core";
 /**
  * Server-side switches for the Sui to Stellar page. All read at request time, so turning the feature
  * on or off, or changing the cap, is a Vercel env change and a redeploy, not a rebuild of the bundle.
@@ -127,12 +128,14 @@ export function notFound(): Response {
 export function parseSuiSendsToEvm(value: string | undefined): EvmChain[] {
   const raw = (value ?? DEFAULT_SUI_EVM).trim().toLowerCase();
   if (raw === "" || raw === "none") return [];
-  if (raw === "all") return Object.values(EVM_CHAINS);
+  // A Sui burn to an EVM chain is always a forwarded one: never to a chain Circle does not deliver to.
+  const forwarded = (c: EvmChain) => !CLAIM_ONLY_DOMAINS.includes(c.cctpDomainId);
+  if (raw === "all") return Object.values(EVM_CHAINS).filter(forwarded);
   const out: EvmChain[] = [];
   for (const name of raw.split(",").map((s) => s.trim())) {
     if (isEvmChainId(name) && !out.some((c) => c.id === name)) out.push(EVM_CHAINS[name]);
   }
-  return out;
+  return out.filter(forwarded);
 }
 
 /** The EVM chains a Sui burn may be sent to. Empty when the Sui page is off. */

@@ -169,6 +169,35 @@ describe("the Sui burn's Move call", () => {
     expect(hex(hook.subarray(1))).toBe(forwardHookWithAccount(OWNER_HEX));
   });
 
+  const FEE_ADDRESS = `0x${"fe".repeat(32)}`;
+  const base = {
+    sender: SENDER,
+    amount: 5_000_000n,
+    destinationDomain: 5,
+    maxFee: 249_659n,
+    ...forwardBurnArgs({ kind: "solana", tokenAccount: ATA_HEX }, 5),
+  };
+
+  it("pays Xebra's fee in the same transaction, after the burn, to Xebra's address", () => {
+    const data = burnMoveCalls({
+      ...base,
+      fee: { address: FEE_ADDRESS, amount: 100_000n },
+    }).getData();
+    const last = data.commands.at(-1);
+    expect(last?.$kind).toBe("TransferObjects");
+    const to = last?.TransferObjects?.address;
+    if (!to || to.$kind !== "Input") throw new Error("fee address is not an input");
+    const input = data.inputs[to.Input];
+    expect(hex(Uint8Array.from(Buffer.from(input?.Pure?.bytes ?? "", "base64")))).toBe(FEE_ADDRESS);
+    // The burn itself is unchanged: still deposit_for_burn first.
+    expect(data.commands.some((c) => c.MoveCall?.function === "deposit_for_burn")).toBe(true);
+  });
+
+  it("adds nothing without a fee", () => {
+    const data = burnMoveCalls(base).getData();
+    expect(data.commands.some((c) => c.$kind === "TransferObjects")).toBe(false);
+  });
+
   it("carries Monad's domain and the left-padded EVM recipient for a Sui to Monad burn (#9)", () => {
     const tx = burnMoveCalls({
       sender: SENDER,

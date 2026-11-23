@@ -41,10 +41,18 @@ export type FeePlan =
       maxFee: bigint;
       deliveryFee: bigint;
       speedFee: bigint;
-      /** What Xebra keeps: zero on a direct route, the wrapper's take through it. */
+      /**
+       * What Xebra keeps: the wrapper's take through it; on a direct route the flat fee, paid as
+       * its own USDC transfer to Xebra's fee address.
+       */
       xebraFee: bigint;
       /** Everything the sender pays besides what the recipient gets. */
       fee: bigint;
+      /**
+       * What goes to Circle: the burn on a direct route (`amount - xebraFee`, the flat fee leaving
+       * the wallet separately), the whole amount through the wrapper (which takes its fee itself).
+       */
+      burn: bigint;
       /** What the recipient is minted. */
       received: bigint;
     }
@@ -73,18 +81,24 @@ function feesFor(amount: bigint, tier: FeeTier): { deliveryFee: bigint; speedFee
   return { deliveryFee: BigInt(tier.high), speedFee: speedFeeFor(amount, tier.minimumFeePpb) };
 }
 
-function withinTenth(amount: bigint, tier: FeeTier): boolean {
-  const { deliveryFee, speedFee } = feesFor(amount, tier);
-  const maxFee = deliveryFee + speedFee;
-  return amount > maxFee && maxFee <= amount / FEE_FRACTION_DENOM;
+/**
+ * Every fee together, Circle's on the burn and Xebra's flat fee, is at most a tenth of `amount`,
+ * what leaves the wallet in all.
+ */
+function withinTenth(amount: bigint, tier: FeeTier, xebraFee = 0n): boolean {
+  const burn = amount - xebraFee;
+  if (burn <= 0n) return false;
+  const { deliveryFee, speedFee } = feesFor(burn, tier);
+  const fees = deliveryFee + speedFee + xebraFee;
+  return amount > fees && fees <= amount / FEE_FRACTION_DENOM;
 }
 
 /**
  * The smallest amount whose fees are at most a tenth of it. Found by search over the exact check,
  * as `minimumForwardedAmount` is, so the figure shown can never disagree with the rule applied.
  */
-export function minimumEvmAmount(tier: FeeTier): bigint {
-  return smallestPassing((amount) => withinTenth(amount, tier));
+export function minimumEvmAmount(tier: FeeTier, xebraFee = 0n): bigint {
+  return smallestPassing((amount) => withinTenth(amount, tier, xebraFee));
 }
 
 /** The smallest amount `passes`, given that every larger one passes too. */
@@ -108,11 +122,16 @@ export function suggestedEvmMinimum(minimum: bigint): bigint {
 }
 
 export function planEvmFee(input: {
+  /** What leaves the wallet in all: the burn plus Xebra's flat fee. */
   amount: bigint;
   tier: FeeTier;
   destination: FeeDestination;
+  /** Xebra's flat fee (`flatFeeFor`), paid as its own transfer. Default 0. */
+  xebraFee?: bigint;
 }): FeePlan {
   const { amount, tier, destination } = input;
+  const xebraFee = input.xebraFee ?? 0n;
+  if (xebraFee < 0n) throw new RangeError("xebraFee must not be negative");
   if (amount <= 0n) return { ok: false, kind: "amount", reason: "Enter an amount to send." };
   if (!Number.isSafeInteger(tier.high) || tier.high <= 0) {
     return {
@@ -122,7 +141,8 @@ export function planEvmFee(input: {
     };
   }
 
-  const { deliveryFee, speedFee } = feesFor(amount, tier);
+  const burn = amount - xebraFee;
+  const { deliveryFee, speedFee } = feesFor(burn > 0n ? burn : 0n, tier);
   const cap = BigInt(destination.maxForwardFeeUnits);
   if (deliveryFee > cap) {
     return {
@@ -133,8 +153,8 @@ export function planEvmFee(input: {
   }
 
   const maxFee = deliveryFee + speedFee;
-  if (!withinTenth(amount, tier)) {
-    const minimum = suggestedEvmMinimum(minimumEvmAmount(tier));
+  if (!withinTenth(amount, tier, xebraFee)) {
+    const minimum = suggestedEvmMinimum(minimumEvmAmount(tier, xebraFee));
     return {
       ok: false,
       kind: "minimum",
@@ -146,9 +166,10 @@ export function planEvmFee(input: {
     maxFee,
     deliveryFee,
     speedFee,
-    xebraFee: 0n,
-    fee: maxFee,
-    received: amount - maxFee,
+    xebraFee,
+    fee: maxFee + xebraFee,
+    burn,
+    received: burn - maxFee,
   };
 }
 
@@ -309,6 +330,7 @@ export function planWrapperFee(input: {
     speedFee,
     xebraFee: split.xebraFee,
     fee: split.fee,
+    burn: amount,
     received: amount - split.fee,
   };
 }

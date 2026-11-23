@@ -11,6 +11,7 @@ import { GET as delivery } from "../../app/api/delivery/route";
 import { GET as evmWrapper } from "../../app/api/evm-wrapper/route";
 import { GET as recipient } from "../../app/api/recipient/route";
 import { GET as solanaStellarStatus } from "../../app/api/solana-source/status/route";
+import { GET as stellarInboundStatus } from "../../app/api/stellar-inbound/status/route";
 import { POST as suiComplete } from "../../app/api/sui-stellar/complete/route";
 import { GET as suiStatus } from "../../app/api/sui-stellar/status/route";
 import { buildAptosTransfer } from "../aptos/build";
@@ -127,8 +128,18 @@ export const liveDeps: Deps = {
       ),
     );
   },
+  async stellarInboundStatus(tx, srcDomain) {
+    return readJsonAnyStatus(
+      await stellarInboundStatus(
+        new Request(
+          `${ORIGIN}/api/stellar-inbound/status?tx=${encodeURIComponent(tx)}&src=${srcDomain}`,
+        ),
+      ),
+    );
+  },
   aptos: { destinations: aptosDestinations(), maxUnits: aptosMaxUsdcBase() },
   evmRoutes: env.evmRoutes,
+  feeAddresses: env.feeAddresses,
   stellarRoutes,
   evmWrapperAddress: (chain) => wrapperFor(chain, env.arcUseWrapper),
   async evmWrapperSettings(chain) {
@@ -260,6 +271,7 @@ export const liveDeps: Deps = {
           amount: p.amount,
           target,
           maxFee: p.maxFee,
+          ...(p.fee ? { fee: p.fee } : {}),
         });
         return {
           id: "burn",
@@ -281,6 +293,7 @@ export const liveDeps: Deps = {
     solanaStellarClaim: (tx, payer) => planClaim(tx, payer, SOLANA_CCTP_DOMAIN),
     aptosBuild: (request) => buildAptosTransfer(request, liveAptosBuildDeps()),
     aptosClaim: (tx, payer) => planClaim(tx, payer, APTOS_CCTP_DOMAIN),
+    stellarInboundClaim: (tx, payer, srcDomain) => planClaim(tx, payer, srcDomain),
   },
 };
 

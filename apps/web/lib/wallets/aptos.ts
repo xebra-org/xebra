@@ -172,16 +172,37 @@ export async function signAndSubmitAptos(
         maxGasAmount: Number(envelope.maxGasAmount),
       }
     : aptosBurnTransaction(args, envelope);
-  const result = approved<{ hash?: unknown }>(
-    await feature.signAndSubmitTransaction(input),
-    "transaction",
-  );
+  return submittedHash(wallet, await feature.signAndSubmitTransaction(input));
+}
+
+function submittedHash(wallet: Wallet, answer: unknown): `0x${string}` {
+  const result = approved<{ hash?: unknown }>(answer, "transaction");
   const raw = typeof result?.hash === "string" ? result.hash.trim().toLowerCase() : "";
   const hash = /^[0-9a-f]{64}$/.test(raw) ? `0x${raw}` : raw;
   if (!/^0x[0-9a-f]{64}$/.test(hash)) {
     throw new Error(`${wallet.name} did not return a transaction hash.`);
   }
   return hash as `0x${string}`;
+}
+
+/**
+ * An entry-function call the server built (Xebra's fee: `primary_fungible_store::transfer`), for
+ * wallets that take a payload (1.1.0 and later). Declining throws.
+ */
+export async function signAndSubmitAptosCall(
+  wallet: Wallet,
+  call: { function: string; typeArguments: string[]; functionArguments: string[] },
+): Promise<`0x${string}`> {
+  const feature = wallet.features[SIGN_AND_SUBMIT] as SignAndSubmitFeature | undefined;
+  if (!feature || !takesPayload(feature.version)) {
+    throw new Error(`${wallet.name} cannot send this transaction.`);
+  }
+  const payload = {
+    function: call.function,
+    typeArguments: call.typeArguments,
+    functionArguments: call.functionArguments,
+  };
+  return submittedHash(wallet, await feature.signAndSubmitTransaction({ payload }));
 }
 
 /**

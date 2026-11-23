@@ -1,6 +1,7 @@
 import { StrKey } from "@stellar/stellar-sdk";
 import { InsufficientUsdcError, SUI_ADDRESS, buildBurn } from "@xebra/sdk/build";
 import { formatUsdcAmount, parseUsdcAmount } from "@xebra/sdk/core";
+import { FeeAddressMissing, flatFeeOn } from "../../../../lib/server/flat-fee";
 import { suiClient } from "../../../../lib/sui-stellar/client";
 import {
   maxUsdcBase,
@@ -17,6 +18,8 @@ import { recipientStatus } from "../../../../lib/sui-stellar/stellar-side";
  * a mistyped recipient, an unfunded or trustline-less Stellar account (the USDC could not land),
  * an amount over the cap, or a Sui balance that cannot cover it.
  */
+const STELLAR_DOMAIN = 27;
+
 export const dynamic = "force-dynamic";
 export const maxDuration = 30;
 
@@ -59,6 +62,16 @@ export async function POST(request: Request): Promise<Response> {
   }
 
   try {
+    // What the person entered leaves the wallet; Xebra's flat fee is paid out of it in the burn's
+    // own transaction (Stellar is delivered by Xebra's relayer: the delivered fee).
+    const flat = flatFeeOn("sui", STELLAR_DOMAIN, amount);
+    const burn = amount - flat.fee;
+    if (burn <= 0n) {
+      return Response.json(
+        { error: `Send more than Xebra's ${formatUsdcAmount(flat.fee)} USDC fee.` },
+        { status: 422 },
+      );
+    }
     const status = await recipientStatus(recipient);
     if (!status.exists) {
       return Response.json(
@@ -78,16 +91,22 @@ export async function POST(request: Request): Promise<Response> {
 
     const { transaction } = await buildBurn(suiClient(), {
       sender,
-      amount,
+      amount: burn,
       stellarRecipient: recipient,
+      fee: { address: flat.address, amount: flat.fee },
     });
     return Response.json({
       transaction,
-      amount: formatUsdcAmount(amount),
+      // What is burned and reaches the recipient; the fee is on top, out of what was entered.
+      amount: formatUsdcAmount(burn),
+      xebraFee: formatUsdcAmount(flat.fee),
       // Tells the page whether anything will finish the transfer for the user.
       relayer: relayerSecret() !== null,
     });
   } catch (err) {
+    if (err instanceof FeeAddressMissing) {
+      return Response.json({ error: err.message }, { status: err.status });
+    }
     if (err instanceof InsufficientUsdcError) {
       return Response.json(
         {
