@@ -35,7 +35,9 @@ import { env, isCctpRailConfigured } from "../../lib/env";
 import { formatError, reportError } from "../../lib/format-error";
 import { unitsToInput } from "../../lib/max-amount";
 import { type RecipientResolution, resolveRecipient } from "../../lib/solana-recipient";
+import { type UserError, describeError, messageError } from "../../lib/user-error";
 import { Button } from "../ui/button";
+import { ErrorNotice } from "../ui/error-notice";
 import { Field, Input } from "../ui/field";
 import { InsetTray } from "../ui/glass-card";
 import { ArrowRight } from "../ui/icons";
@@ -358,7 +360,10 @@ export function StellarBridgeForm({
   const [quoteError, setQuoteError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [step, setStep] = useState<string | null>(null);
-  const [submitError, setSubmitError] = useState<string | null>(null);
+  const [submitError, setSubmitError] = useState<UserError | null>(null);
+  /** One of this form's own reasons for stopping before anything was signed. */
+  const stopWith = (text: string, opts?: { title?: string; steps?: string[] }) =>
+    setSubmitError(messageError(text, opts));
   const [burnReceipt, setBurnReceipt] = useState<StellarBurnReceiptState | null>(null);
   const txHash =
     // An unconfirmed burn may have landed, so it keeps the form locked like a pending one.
@@ -900,16 +905,24 @@ export function StellarBridgeForm({
         latestDomains = await getWrapperDomains(wrapper);
       } catch (err) {
         reportError("reading the wrapper's destinations failed", err);
-        setSubmitError(
+        stopWith(
           "We could not read the bridge contract's settings just now, so nothing was sent.",
+          {
+            title: "We couldn't check the bridge just now",
+            steps: ["Wait a minute, then send again."],
+          },
         );
         return;
       }
       setDomains(latestDomains);
       const latestCfg = latestDomains?.get(dest.domain);
       if (!latestCfg) {
-        setSubmitError(
+        stopWith(
           `The bridge contract does not send to ${dest.name} right now, so nothing was sent.`,
+          {
+            title: `${dest.name} isn't available right now`,
+            steps: ["Choose another destination, or try again later."],
+          },
         );
         return;
       }
@@ -918,14 +931,21 @@ export function StellarBridgeForm({
         const fresh = await getRouteHealth(STELLAR_CCTP_DOMAIN, dest.domain, recipientNeedsAccount);
         setHealthState({ key: healthKey, value: fresh });
         if (fresh?.status === "down") {
-          setSubmitError(
+          stopWith(
             `Circle is not able to deliver to ${dest.name} right now, so nothing was sent. ${fresh.reasons[0] ?? ""}`.trim(),
+            {
+              title: `Circle can't deliver to ${dest.name} right now`,
+              steps: ["Try again later. This page checks every minute."],
+            },
           );
           return;
         }
         // With no relay, a transfer signed without a live delivery fee is one nobody can deliver.
         if (!fresh?.quote) {
-          setSubmitError("We could not get Circle's delivery fee just now, so nothing was sent.");
+          stopWith("We could not get Circle's delivery fee just now, so nothing was sent.", {
+            title: "We couldn't get the delivery fee",
+            steps: ["Wait a minute, then send again."],
+          });
           return;
         }
         choice = chooseMaxFee({
@@ -936,7 +956,7 @@ export function StellarBridgeForm({
         });
       }
       if (!choice.ok) {
-        setSubmitError(choice.reason);
+        stopWith(choice.reason);
         return;
       }
 
@@ -953,13 +973,14 @@ export function StellarBridgeForm({
       const problem = pathProblem(latest.forwarded, dest.claimOnly, dest.name);
       if (problem) {
         setQuote(null);
-        setSubmitError(`${problem} Nothing was sent.`);
+        stopWith(`${problem} Nothing was sent.`);
         return;
       }
       if (latest.fee > quote.fee) {
         setQuote(latest);
-        setSubmitError(
+        stopWith(
           `Circle's delivery fee moved while you were reviewing: the fee is now ${formatUsdc(latest.fee)} USDC, was ${formatUsdc(quote.fee)}. Nothing was sent. Check the new total and confirm again.`,
+          { title: "The fee changed while you were reviewing" },
         );
         return;
       }
@@ -1012,7 +1033,14 @@ export function StellarBridgeForm({
         if (family !== "sui") book.remember(family, destination);
       }
     } catch (err) {
-      setSubmitError(reportError("transfer failed", err));
+      reportError("transfer failed", err);
+      setSubmitError(
+        describeError(err, {
+          wallet: connections.stellar?.walletName,
+          chain: "Stellar",
+          feeToken: "XLM",
+        }),
+      );
     } finally {
       setSubmitting(false);
       setStep(null);
@@ -1259,18 +1287,15 @@ export function StellarBridgeForm({
         )}
 
         {submitError && (
-          <Notice tone="alarm" title="The transfer did not go through" className="mt-5">
-            {/* A Soroban failure's useful part is its diagnostic event log, which is
-                long and multi-line. Rendered as flowing text it collapses into an
-                unreadable run-on, so it gets a scrollable monospace block instead. */}
-            <pre className="max-h-48 overflow-auto whitespace-pre-wrap break-words font-mono text-[0.75rem] leading-relaxed text-bone/60">
-              {submitError}
-            </pre>
-            <p className="mt-2 text-bone/35">
-              No funds have moved unless a transaction hash is shown. Full detail is in the browser
-              console under <code className="font-mono">[xebra]</code>.
-            </p>
-          </Notice>
+          <ErrorNotice
+            error={submitError}
+            className="mt-5"
+            txUrl={
+              submitError.txHash
+                ? stellarExplorerTxUrl(submitError.txHash, env.stellarNetworkPassphrase)
+                : undefined
+            }
+          />
         )}
 
         {!txHash && health?.status === "down" && (

@@ -31,7 +31,6 @@ import { env } from "../../lib/env";
 import {
   ARC_GAS_RESERVE_UNITS,
   EVM_STEP_LABEL,
-  EvmBurnUncertainError,
   getUsdcBalance6,
   spendableUsdc,
   submitEvmBridge,
@@ -47,8 +46,9 @@ import {
   routeDestination,
 } from "../../lib/route-destination";
 import { type RecipientResolution, resolveRecipient } from "../../lib/solana-recipient";
-import { type ClassifiedError, classifyWalletError } from "../../lib/wallet-error";
+import { type UserError, describeError, messageError } from "../../lib/user-error";
 import { Button } from "../ui/button";
+import { ErrorNotice } from "../ui/error-notice";
 import { Field, Input } from "../ui/field";
 import { ArrowRight } from "../ui/icons";
 import { Notice } from "../ui/notice";
@@ -140,6 +140,8 @@ export function EvmBridgeForm({
   const wallet = connections.evm ?? null;
   const address = wallet?.address ?? null;
   const provider = wallet?.provider ?? null;
+  /** How failures name the wallet and network in their messages. */
+  const errorContext = { wallet: wallet?.walletName, chain: source.name };
   // Unknown is not "yes". A wallet that will not say which chain it is on is asked to switch.
   const onSource = wallet?.chainId === source.chainId;
 
@@ -186,7 +188,7 @@ export function EvmBridgeForm({
   const [submitting, setSubmitting] = useState(false);
   const [switching, setSwitching] = useState(false);
   const [step, setStep] = useState<string | null>(null);
-  const [submitError, setSubmitError] = useState<ClassifiedError | null>(null);
+  const [submitError, setSubmitError] = useState<UserError | null>(null);
   const [txHash, setTxHash] = useState<string | null>(null);
   // What the receipt describes, fixed at signing so nothing chosen afterwards can rewrite it.
   const [sent, setSent] = useState<Sent | null>(null);
@@ -473,9 +475,8 @@ export function EvmBridgeForm({
     try {
       await ensureChain(provider, source);
     } catch (err) {
-      const classified = classifyWalletError(err);
-      reportError("network switch failed", classified.raw);
-      setSubmitError(classified);
+      reportError("network switch failed", err);
+      setSubmitError(describeError(err, errorContext));
     } finally {
       // Asked whatever happened: a wallet that switched without announcing it is still on the
       // right chain, and one that announced without switching is not.
@@ -554,7 +555,7 @@ export function EvmBridgeForm({
       // committed, because this is the last moment declining costs nothing.
       const priced = await priceNow();
       if (typeof priced === "string") {
-        setSubmitError(classifyWalletError(`${priced} Nothing was sent.`));
+        setSubmitError(messageError(`${priced} Nothing was sent.`));
         return;
       }
       // Circle's fee drifts by a few percent over minutes. If the total went up, stop and show it
@@ -562,8 +563,9 @@ export function EvmBridgeForm({
       // often absorbed by Xebra's own fee, and then the total, which is what the user saw, holds.
       if (priced.fee > plan.fee) {
         setSubmitError(
-          classifyWalletError(
+          messageError(
             `The fee moved while you were reviewing: it is now ${formatUsdc6(priced.fee)} USDC, was ${formatUsdc6(plan.fee)}. Nothing was sent. Check the new total and confirm again.`,
+            { title: "The fee changed while you were reviewing" },
           ),
         );
         return;
@@ -616,17 +618,8 @@ export function EvmBridgeForm({
         })
         .catch(() => undefined);
     } catch (err) {
-      const classified: ClassifiedError =
-        err instanceof EvmBurnUncertainError
-          ? {
-              kind: "network",
-              message: err.message,
-              maybeSent: true,
-              raw: formatError(err.cause ?? err),
-            }
-          : classifyWalletError(err);
-      reportError("transfer failed", classified.raw);
-      setSubmitError(classified);
+      reportError("transfer failed", err);
+      setSubmitError(describeError(err, errorContext));
     } finally {
       setSubmitting(false);
       setStep(null);
@@ -886,29 +879,7 @@ export function EvmBridgeForm({
           </Notice>
         )}
 
-        {submitError &&
-          (submitError.kind === "declined" || submitError.kind === "popup" ? (
-            <Notice tone="info" title="Wallet request cancelled" className="mt-5">
-              You cancelled in your wallet. Nothing was sent.
-            </Notice>
-          ) : submitError.maybeSent ? (
-            <Notice tone="alarm" title="Could not confirm transfer" className="mt-5">
-              <p>{submitError.message}</p>
-              <p className="mt-2 text-bone/35">
-                Check your wallet&apos;s activity before retrying. Full detail is in the browser
-                console under <code className="font-mono">[xebra]</code>.
-              </p>
-            </Notice>
-          ) : (
-            <Notice tone="alarm" title="The transfer did not go through" className="mt-5">
-              <p>{submitError.message}</p>
-              <p className="mt-2 text-bone/35">
-                Nothing is burned unless a transaction hash is shown below. An approval, if you made
-                one, stays in place and moves no money. Full detail is in the browser console under{" "}
-                <code className="font-mono">[xebra]</code>.
-              </p>
-            </Notice>
-          ))}
+        {submitError && <ErrorNotice error={submitError} className="mt-5" />}
 
         {!txHash && health?.status === "down" && (
           <Notice
