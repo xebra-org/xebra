@@ -270,7 +270,7 @@ describe("transferStatus: Sui", () => {
     expect(err.code).toBe("upstream_unavailable");
   });
 
-  it("reads mint: \"unknown\" as upstream_unavailable (503), not needs_claim", async () => {
+  it('reads mint: "unknown" as upstream_unavailable (503), not needs_claim', async () => {
     // The burn is Stellar's to finish, but the mint check could not say whether it already did:
     // claiming a delivered transfer costs the payer a fee for nothing.
     const err = await refusal(
