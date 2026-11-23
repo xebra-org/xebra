@@ -10,6 +10,7 @@ import type { EvmClaimTarget } from "../../lib/evm-claim";
 import { reportError } from "../../lib/format-error";
 import { waitForSignature } from "../../lib/solana-confirm";
 import { EvmClaim } from "./evm-claim";
+import { SuiClaim, type SuiClaimTarget } from "./sui-claim";
 
 /**
  * Completes a transfer from the user's own wallet, when Circle's forwarding did not.
@@ -36,7 +37,9 @@ import { EvmClaim } from "./evm-claim";
  *
  * # What a Solana claim costs the person clicking
  *
- * (An EVM claim is the destination chain's gas, and nothing else: `evm-claim.tsx`.)
+ * (An EVM claim is the destination chain's gas, and nothing else: `evm-claim.tsx`. A Sui claim is
+ * a little SUI for gas: `sui-claim.tsx`. Circle never delivers to Sui, so every transfer into Sui
+ * ends here.)
  *
  * The transaction fee plus 695,960 lamports of permanent `used_nonce` rent — about 0.0007 SOL —
  * and roughly 0.0015 SOL more if the recipient has no USDC account yet. None of it is recoverable
@@ -75,6 +78,8 @@ type Attestation =
       eventNonce?: string | null;
       /** Present for a message bound for any EVM chain: where to submit the mint. */
       evm?: EvmClaimTarget;
+      /** Present for a message bound for Sui: who receives it and how much. */
+      sui?: SuiClaimTarget;
     }
   | { status: "pending" }
   | { status: "unknown"; reason?: string };
@@ -465,8 +470,18 @@ export function ClaimClient() {
         />
       )}
 
+      {attestation?.status === "complete" && attestation.sui && (
+        <SuiClaim
+          key={attestation.attestation}
+          message={attestation.message}
+          attestation={attestation.attestation}
+          target={attestation.sui}
+        />
+      )}
+
       {attestation?.status === "complete" &&
         !attestation.evm &&
+        !attestation.sui &&
         attestation.destinationDomain !== SOLANA_DOMAIN && (
           <Notice tone="alarm" title="This page cannot claim on that chain">
             Circle attested this transfer for a destination (CCTP domain{" "}

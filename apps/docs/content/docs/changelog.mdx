@@ -57,6 +57,16 @@ description: What changed in the Xebra API and SDK, newest first.
   `stage` (`withdraw`, `resolve`, `deposit_quote`, `build`), `code`, `retryable` and `cause`, and a
   message that says where the market maker's USDC is now. `prepareDeposit` is safe to call again.
   A route Xebra stopped running is `route_unavailable`; fees over `maxTotalFee` are `fees_above_cap`.
+- `buildSuiMint` / `buildSuiMintStep`: mint a transfer bound for Sui (Circle does not deliver there)
+  from any Sui wallet; `readSuiBoundMessage` reads its recipient and amount; a transfer already
+  minted throws `AlreadyMintedError`. `checkSuiAddress`.
+- `stellarDestinations({ sui: true })` adds Sui once the wrapper commits domain 8; `Destination`
+  gains `claimOnly`.
+
+**App**:
+
+- Stellar to Sui, behind `NEXT_PUBLIC_STELLAR_TO_SUI=1` and the wrapper's domain 8. The recipient
+  finishes it at `/claim`, which now mints any transfer bound for Sui.
 
 ## 0.4.0 (2026-11-15)
 

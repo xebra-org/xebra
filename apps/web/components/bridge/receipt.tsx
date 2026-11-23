@@ -29,6 +29,8 @@ export interface ReceiptRoute {
   expires?: boolean;
   /** Said of a transfer that is attested but that Circle has not delivered. */
   claimableLine?: string;
+  /** Replaces the opening sentence, for a route Circle does not deliver on at all. */
+  intro?: string;
 }
 
 export function SubmittedNotice({
@@ -45,10 +47,14 @@ export function SubmittedNotice({
   return (
     <div className="mt-6">
       <Notice tone="signal" title="Burn submitted">
-        Circle attests the transfer, then delivers it to {destination.name}.{" "}
-        {route.eta ?? "This usually takes a few minutes."} If delivery ever fails, your USDC is
-        still yours: anyone holding Circle&rsquo;s attestation can complete the mint, and you can do
-        it yourself.
+        {route.intro ?? (
+          <>
+            Circle attests the transfer, then delivers it to {destination.name}.{" "}
+            {route.eta ?? "This usually takes a few minutes."} If delivery ever fails, your USDC is
+            still yours: anyone holding Circle&rsquo;s attestation can complete the mint, and you
+            can do it yourself.
+          </>
+        )}
       </Notice>
       <InsetTray className="mt-2.5 py-3">
         <div className="flex items-center gap-3">

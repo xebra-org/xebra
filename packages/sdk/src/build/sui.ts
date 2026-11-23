@@ -21,6 +21,8 @@ import type { TransferStep } from "./types.js";
  * Sui key, and the browser never needs a Sui RPC of its own.
  */
 const CFG = {
+  /** MessageTransmitterV2: only the mint (`sui-mint.ts`) calls it directly. */
+  mtV2PackageId: "0x16bcfcfc465f96281663a344641c017de84529370e11aa3879d0dce43ad6db87",
   tmmV2PackageId: "0xeb14978abfe93a37c5d5bf86a0623b923553a5f0e794daac7724f1e2fdbfb830",
   tmmV2StateId: "0x06fb166941cd7bc095edc019d054a753ec3f1e4c25f28f2ecc4a6cfa0a9b1167",
   mtV2StateId: "0x0c067f7d325e5b60e3179712e7783534ba1556cbb3d359d8161497e37689230c",
@@ -30,7 +32,15 @@ const CFG = {
   usdcType: "0xdba34672e30cb065b1f93e3ab55318768fd6fef66c15942c9f7cb846e2f900e7::usdc::USDC",
 } as const;
 
-const DENY_LIST_ID = "0x403";
+/**
+ * Circle's mainnet Sui CCTP V2 IDs, shared with the mint (`sui-mint.ts`).
+ *
+ * @internal
+ */
+export const SUI_CCTP_IDS = CFG;
+
+/** @internal */
+export const DENY_LIST_ID = "0x403";
 /**
  * Standard finality on every route from Sui. Sui finalises in about a second, so Fast buys nothing,
  * and Circle quotes no transfer fee for Standard.

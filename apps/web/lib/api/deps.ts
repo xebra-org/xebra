@@ -1,7 +1,7 @@
 import type { CircleHealth } from "@xebra/cctp-client";
 import type { StellarBuildRpc, SuiForwardRecipient, TransferStep } from "@xebra/sdk/build";
 import type {
-  Destination,
+  DeliveredDestination,
   DomainForwardConfig,
   EnabledRoutes,
   EvmChain,
@@ -18,8 +18,11 @@ import type { WrapperSettings } from "../evm-wrapper";
  */
 
 export interface StellarRoutes {
-  /** What the bridge page would offer for a send from Stellar right now. */
-  destinations: Destination[];
+  /**
+   * What the bridge page would offer for a send from Stellar right now, less Sui: the API only
+   * builds transfers Circle delivers, and Sui is claimed at `/claim`.
+   */
+  destinations: DeliveredDestination[];
   /** The wrapper's committed domains, or null when the contract could not be read. */
   domains: Map<number, DomainForwardConfig> | null;
 }
