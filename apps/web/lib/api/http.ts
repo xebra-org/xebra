@@ -1,5 +1,6 @@
 import { ERROR_TYPE_BASE } from "@xebra/sdk";
 import { logFailure } from "../server/log";
+import type { Gate, Guard } from "./auth";
 import { ApiError } from "./errors";
 import { TITLES } from "./host";
 import { extraToWire } from "./wire";
@@ -23,6 +24,8 @@ export const CORS: Record<string, string> = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
   "Access-Control-Allow-Headers": "Content-Type, Authorization, Idempotency-Key",
+  "Access-Control-Expose-Headers":
+    "RateLimit-Limit, RateLimit-Remaining, RateLimit-Reset, Retry-After",
   "Access-Control-Max-Age": "86400",
 };
 
@@ -158,9 +161,13 @@ export async function handle<I, O>(
     output: Parser<O>;
     /** `Cache-Control` for a success. */
     cache?: string;
+    /** Identify and count the caller before anything is read. Refusals are problems like any other. */
+    guard: Guard;
   },
 ): Promise<Response> {
+  let gate: Gate | null = null;
   try {
+    gate = await opts.guard(req);
     let raw: unknown = {};
     if (opts.from === "query") raw = Object.fromEntries(new URL(req.url).searchParams);
     if (opts.from === "body") raw = await readBody(req);
@@ -180,9 +187,17 @@ export async function handle<I, O>(
       throw new ApiError("internal_error", "The answer failed our own checks. Nothing was sent.");
     }
     return Response.json(checked.data, {
-      headers: { ...CORS, "Cache-Control": opts.cache ?? "no-store" },
+      headers: {
+        ...CORS,
+        ...(gate?.headers ?? {}),
+        "Cache-Control": opts.cache ?? "no-store",
+      },
     });
   } catch (err) {
+    const headers = {
+      ...(gate?.headers ?? {}),
+      ...(err instanceof ApiError ? err.headers : {}),
+    };
     const id = requestId(req);
     const answer =
       err instanceof ApiError
@@ -204,6 +219,6 @@ export async function handle<I, O>(
         req,
       );
     }
-    return problem(answer, {}, id);
+    return problem(answer, headers, id);
   }
 }
