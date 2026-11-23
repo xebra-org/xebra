@@ -285,7 +285,7 @@ export interface SubmitBridgeParams {
 export async function submitBridge(
   kit: StellarWalletsKit,
   params: SubmitBridgeParams,
-): Promise<{ txHash: string }> {
+): Promise<{ txHash: string; maxTimeMs?: number }> {
   const { config, userAddress, ...input } = params;
   if (!config.wrapperContractId) {
     // There is no direct path to fall back to: a burn that skips the wrapper skips the forwarding
@@ -315,9 +315,22 @@ export async function submitBridge(
   });
 
   const signedTx = TransactionBuilder.fromXDR(signedTxXdr, config.networkPassphrase);
-  return submitSigned(server, signedTx, "bridge transaction", userAddress, {
+  const maxTimeMs = txMaxTimeMs(signedTx);
+  const { txHash } = await submitSigned(server, signedTx, "bridge transaction", userAddress, {
     horizonUrl: config.horizonUrl,
   });
+  return maxTimeMs === undefined ? { txHash } : { txHash, maxTimeMs };
+}
+
+/**
+ * The upper time bound of the transaction that was actually signed, in ms since the epoch, or
+ * `undefined` when it has none (`maxTime` 0). After this moment the network can no longer
+ * include it, so it is the only honest deadline for deciding a burn was not sent.
+ */
+export function txMaxTimeMs(tx: ReturnType<typeof TransactionBuilder.fromXDR>): number | undefined {
+  const inner = "innerTransaction" in tx ? tx.innerTransaction : tx;
+  const maxTime = Number(inner.timeBounds?.maxTime ?? 0);
+  return Number.isFinite(maxTime) && maxTime > 0 ? maxTime * 1000 : undefined;
 }
 
 /**
@@ -510,11 +523,19 @@ export async function waitForTx(
 ): Promise<void> {
   const deadline = Date.now() + timeoutMs;
   const url = `${config.horizonUrl.replace(/\/$/, "")}/transactions/${txHash}`;
+  // When Horizon last answered 404, and whether that was its latest answer. Only a 404 is
+  // evidence the transaction is not on chain; a dropped request or a 5xx says nothing.
+  let lastNotFoundAtMs: number | undefined;
+  let lastAnswerWasNotFound = false;
 
   while (Date.now() < deadline) {
     try {
       const res = await fetch(url, { headers: { Accept: "application/json" } });
-      if (res.ok) {
+      if (res.status === 404) {
+        lastNotFoundAtMs = Date.now();
+        lastAnswerWasNotFound = true;
+      } else if (res.ok) {
+        lastAnswerWasNotFound = false;
         const body = (await res.json()) as { successful?: boolean; result_xdr?: string };
         if (body.successful === true) return;
         if (body.successful === false) {
@@ -522,7 +543,7 @@ export async function waitForTx(
             `Transaction ${txHash} was included in a ledger but failed. Nothing has moved.`,
           );
         }
-      } else if (res.status !== 404) {
+      } else {
         // 404 is the expected "not included yet" answer; anything else is worth surfacing
         // rather than silently retrying until the deadline.
         throw new Error(`Horizon returned ${res.status} while checking ${txHash}.`);
@@ -533,13 +554,33 @@ export async function waitForTx(
       if (err instanceof Error && err.message.includes("was included in a ledger but failed")) {
         throw err;
       }
+      lastAnswerWasNotFound = false;
     }
     await new Promise((r) => setTimeout(r, pollIntervalMs));
   }
 
-  throw new Error(
-    `Timed out after ${Math.round(timeoutMs / 1000)}s waiting for ${txHash} to be applied.\n\nCheck the hash on stellar.expert. If it never lands, nothing has moved and it is safe to retry.`,
-  );
+  const message = `Timed out after ${Math.round(timeoutMs / 1000)}s waiting for ${txHash} to be applied.\n\nCheck the hash on stellar.expert. If it never lands, nothing has moved and it is safe to retry.`;
+  if (lastAnswerWasNotFound && lastNotFoundAtMs !== undefined) {
+    throw new StellarTxNotFoundError(message, txHash, lastNotFoundAtMs);
+  }
+  throw new Error(message);
+}
+
+/**
+ * `waitForTx` ran out of time and Horizon's latest answer was a 404: the transaction was not on
+ * chain at `lastNotFoundAtMs`. Distinct from a plain timeout, where Horizon could not be reached
+ * or answered with an error, which proves nothing either way.
+ */
+export class StellarTxNotFoundError extends Error {
+  readonly txHash: string;
+  readonly lastNotFoundAtMs: number;
+
+  constructor(message: string, txHash: string, lastNotFoundAtMs: number) {
+    super(message);
+    this.name = "StellarTxNotFoundError";
+    this.txHash = txHash;
+    this.lastNotFoundAtMs = lastNotFoundAtMs;
+  }
 }
 
 /**
