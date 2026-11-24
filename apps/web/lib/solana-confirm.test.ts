@@ -1,6 +1,11 @@
 import type { Connection } from "@solana/web3.js";
 import { describe, expect, it } from "vitest";
-import { SolanaTransactionError, humanizeSolanaError, waitForSignature } from "./solana-confirm";
+import {
+  SolanaConfirmTimeoutError,
+  SolanaTransactionError,
+  humanizeSolanaError,
+  waitForSignature,
+} from "./solana-confirm";
 
 /** A Connection whose status polls return the given answers in order, then the last one forever. */
 function polling(...answers: Array<unknown | Error>): Connection {
@@ -48,6 +53,12 @@ describe("waitForSignature", () => {
 
   it("gives up with a message that says the transaction may still land", async () => {
     await expect(waitForSignature(polling(null), "sig", fast)).rejects.toThrow(/may still land/);
+  });
+
+  it("gives up with a SolanaConfirmTimeoutError that carries the signature", async () => {
+    const caught = await waitForSignature(polling(null), "sig_slow_1", fast).catch((e) => e);
+    expect(caught).toBeInstanceOf(SolanaConfirmTimeoutError);
+    expect((caught as SolanaConfirmTimeoutError).signature).toBe("sig_slow_1");
   });
 
   describe("mapped on-chain error handling and humanization", () => {

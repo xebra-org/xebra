@@ -7,6 +7,14 @@ HTTP **401**. `type`: `https://docs.xebra.exchange/errors/unauthorized`
 
 ## What it means
 
+The API key sent in `Authorization: Bearer ...` was not accepted: it was never issued, it was
+revoked, or the header is not a Bearer key at all.
+
+## What to do
+
+Check the key against the one you were given. The API answers without a key as well, at a lower
+limit, so you can drop the `Authorization` header to tell a key problem from anything else. A
+revoked key answers 401 within a minute of revocation.
 The API currently does not send this code. It reserves `unauthorized` for a future API-key check, but no
 authentication is enabled today.
 
@@ -15,6 +23,21 @@ authentication is enabled today.
 The API needs no key today. If authentication is added later, check the `Authorization: Bearer ...`
 header and the key's status.
 
-<Callout>API keys are not issued yet. See the [changelog](/docs/changelog).</Callout>
+Every response carries `RateLimit-Limit`, `RateLimit-Remaining` and `RateLimit-Reset` headers, and
+429 responses also include `Retry-After`.
+
+See [API keys](/docs/guides/api-keys) for the format and the limits.
+
+## Example
+
+```json
+{
+  "type": "https://docs.xebra.exchange/errors/unauthorized",
+  "title": "Unauthorized",
+  "status": 401,
+  "detail": "That API key is not one we issued. See https://docs.xebra.exchange/guides/api-keys.",
+  "code": "unauthorized"
+}
+```
 
 Every error has this shape. See [Errors](/docs/errors) for how to handle them.

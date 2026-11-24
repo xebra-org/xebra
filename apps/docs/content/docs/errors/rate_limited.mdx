@@ -7,16 +7,30 @@ HTTP **429**. `type`: `https://docs.xebra.exchange/errors/rate_limited`
 
 ## What it means
 
-Too many requests in a short time.
+Too many requests in a short time. The API allows 60 requests a minute without a key, counted per
+calling address, or 600 a minute with a key, counted per key.
 
 ## What to do
 
-Wait for the number of seconds in the `Retry-After` header, then ask again. The SDK's `waitForDelivery` waits this out on its own.
+Wait for the number of seconds in the `Retry-After` header, then ask again. Every answer also
+carries `RateLimit-Limit`, `RateLimit-Remaining` and `RateLimit-Reset`, so you can pace yourself
+before you are refused. If you need more than 60 a minute, [get an API key](/docs/guides/api-keys).
 
-<Callout>Per-key limits arrive with API keys. See the [changelog](/docs/changelog).</Callout>
+The SDK's `waitForDelivery` waits a 429 out on its own.
 
 ## Example
 
+```json
+{
+  "type": "https://docs.xebra.exchange/errors/rate_limited",
+  "title": "Rate limited",
+  "status": 429,
+  "detail": "Too many requests: 60 a minute without a key. Send an API key for 600 a minute, or try again in 40 seconds.",
+  "code": "rate_limited"
+}
+```
+
+Every error has this shape. See [Errors](/docs/errors) for how to handle them.
 The API does not return `rate_limited` today: no limits are enforced yet, so there is no real
 response to show. When limits arrive, it will have the same shape as every other error. See
 [Errors](/docs/errors) for that shape and how to handle errors.

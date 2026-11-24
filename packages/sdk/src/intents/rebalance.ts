@@ -58,21 +58,33 @@ export interface RebalancerOptions {
 }
 
 export interface RebalanceRequest {
-  /** The market maker's account inside NEAR Intents (the intent `signer_id`), e.g. "mm.near". */
+  /**
+   * The market maker's account inside NEAR Intents (the intent `signer_id`), e.g. "mm.near".
+   * Also where the deposit is credited and a failed withdrawal is refunded.
+   */
   intentsAccount: string;
   /** Chain whose USDC balance is too full, in Xebra's or NEAR Intents' naming ("base", "arb"). */
   from: string;
   /** Chain whose USDC balance needs topping up. */
   to: string;
-  /** Decimal USDC to move, e.g. "100000". */
+  /**
+   * Decimal USDC to move, e.g. "100000". Refused if it has more decimal places than the token
+   * has.
+   */
   amount: string;
   /** The market maker's own wallet on `from`: receives the withdrawal, signs the burn. */
   fromWallet: string;
   /** The market maker's own wallet on `to`: where 1Click refunds a deposit that comes too late. */
   toWallet: string;
-  /** Refuse to build the burn if Xebra's and Circle's fees together exceed this decimal amount. */
+  /**
+   * Refuse to build the burn if Xebra's and Circle's fees together exceed this decimal amount.
+   * See [the fee cap](/docs/sdk/intents#step-2-building-the-burn).
+   */
   maxTotalFee?: string;
-  /** CCTP speed. Default "standard". */
+  /**
+   * CCTP speed for the burn.
+   * @defaultValue "standard"
+   */
   speed?: "standard" | "fast";
 }
 
