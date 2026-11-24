@@ -1,5 +1,5 @@
 import { CCTP_DOMAIN, evmChainForDomain, isArcToSolana, isEvmRoute } from "@xebra/network-config";
-import { parseEvmMesh } from "@xebra/sdk/core";
+import { parseEvmMesh, parseEvmToSolana } from "@xebra/sdk/core";
 import { APTOS_CCTP_DOMAIN, aptosEnabled, aptosSendsToDomain } from "../aptos/config";
 import {
   SOLANA_CCTP_DOMAIN,
@@ -120,8 +120,21 @@ export function isOfferedRoute(
   return (
     isEvmRoute(source, destination) ||
     isArcToSolana(source, destination) ||
-    inEvmMesh(source, destination)
+    inEvmMesh(source, destination) ||
+    evmToSolana(source, destination)
   );
+}
+
+/** An EVM chain other than Arc that `NEXT_PUBLIC_EVM_TO_SOLANA` lets send to Solana. Read on each call. */
+function evmToSolana(source: number, destination: number): boolean {
+  if (destination !== CCTP_DOMAIN.solana) return false;
+  const a = evmChainForDomain(source);
+  if (!a) return false;
+  try {
+    return parseEvmToSolana(process.env.NEXT_PUBLIC_EVM_TO_SOLANA).includes(a.id as never);
+  } catch {
+    return false;
+  }
 }
 
 /**

@@ -1,3 +1,4 @@
+import { request } from "../evm-rpc";
 import type { Connection, Eip1193Provider, WalletEntry } from "./types";
 
 /**
@@ -112,16 +113,14 @@ export async function connectEvm(
   entry: WalletEntry,
   provider: Eip1193Provider,
 ): Promise<Connection> {
-  const accounts = (await provider.request({ method: "eth_requestAccounts" })) as unknown;
+  const accounts = (await request(provider, "eth_requestAccounts")) as unknown;
   const first = Array.isArray(accounts) ? accounts[0] : undefined;
   if (typeof first !== "string" || !ADDRESS.test(first)) {
     throw new Error("The wallet did not return an address.");
   }
   // Not knowing the network is survivable (it is asked again before anything is sent), so a
   // wallet that will not answer still connects.
-  const chainId = parseChainId(
-    await provider.request({ method: "eth_chainId" }).catch(() => undefined),
-  );
+  const chainId = parseChainId(await request(provider, "eth_chainId").catch(() => undefined));
   return {
     family: "evm",
     walletKey: entry.key,

@@ -13,15 +13,21 @@ served as `application/problem+json`:
   "status": 422,
   "detail": "Fees would take more than a tenth of this transfer. Send at least 2.4 USDC to Base.",
   "code": "amount_below_minimum",
-  "minimum": "2.4"
+  "minimum": "2.4",
+  "instance": "urn:xebra:request:iad1::7zdhm-1700000000000-0a1b2c3d4e5f"
 }
 ```
 
 - `code` is stable. Branch on it, not on `title` or `detail`.
 - `detail` is a sentence written for a person. You can show it to your user as it is.
 - `type` is the page for that code, on this site.
+- `instance` names this one answer. The part after `urn:xebra:request:` is also in the
+  `X-Request-Id` response header. Quote either when you report a problem: for a `5xx` it is on the
+  line Xebra logged. The API host's own `not_found` and method errors carry no `instance`.
 - Some codes add fields, such as `minimum`, `maximum`, `have`, `need`, `total`, `limit` and `needs`.
   Amounts are decimal strings of USDC, like everywhere else in the API.
+- `invalid_request` and `invalid_amount` from checking the input add `issues`: each field that
+  failed, as `{ "path": ["amount"], "message": "..." }`, so a form can mark it.
 
 The SDK throws these as `XebraApiError`, with the extra fields on `err.extra`:
 
@@ -33,17 +39,23 @@ try {
   await xebra.quote({ from: "stellar", to: "base", amount: "0.5" });
 } catch (err) {
   if (err instanceof XebraApiError && err.code === "amount_below_minimum") {
-    console.log(`Send at least ${String(err.extra.minimum)} USDC.`);
+    console.log(`Send at least ${err.extra.minimum} USDC.`);
   }
 }
 ```
 
-The SDK adds three codes of its own, rather than coming from an API problem response:
+The SDK adds codes of its own, rather than coming from an API problem response. They are
+`CLIENT_ERROR_CODES`, and `XebraErrorCode` is the type of every code `err.code` can be:
 
 - `network_error` (`status` 0): the request did not reach the API.
 - `timeout` (`status` 0): no answer within `timeoutMs`, or `waitForDelivery` ran out of time.
 - `invalid_response` (carries the real HTTP status, such as 502): the API answered with something
-  that is not JSON or does not match the problem schema.
+  that is not JSON or does not match the problem schema. A JSON body, such as a gateway's own error,
+  is on `err.extra.body`.
+
+A code newer than your SDK is not turned into `invalid_response`: `err.code` is the code the API
+sent, `err.detail` its `detail`, and the whole problem is on `err.extra.body`. Treat a code you do
+not know by its `status`.
 
 ## All codes
 
@@ -68,3 +80,4 @@ The SDK adds three codes of its own, rather than coming from an API problem resp
 | `network_error` | 0 | Network error | yes, with backoff | client | unknown, check the transfer |
 | `timeout` | 0 | Timeout | yes, with backoff | client | unknown, check the transfer |
 | `invalid_response` | 502 | Invalid response | yes, with backoff | client | no |
+| `wait_timeout` | 0 | Wait timed out | later, with `getTransfer` | `waitForDelivery` | the burn did, check the transfer |

@@ -37,12 +37,28 @@ describe("EVM_CHAINS", () => {
       ["xdc", 50, 18, "0xfA2958CB79b0491CC627c1557F441eF849Ca8eb1"],
       ["hyperevm", 999, 19, "0xb88339CB7199b77E23DB6E890353E22632Ba630f"],
       ["ink", 57073, 21, "0x2D270e6886d130D724215A266106e6832161EAEd"],
+      ["ethereum", 1, 0, "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48"],
+      ["linea", 59144, 11, "0x176211869cA2b568f2A7D4EE941E073a821EE1ff"],
+      ["plume", 98866, 22, "0x222365EF19F7947e5484218551B56bb3965Aa7aF"],
+      ["edge", 3343, 28, "0x98d2919b9A214E6Fa5384AC81E6864bA686Ad74c"],
+      ["cronos", 25, 32, "0x3D7F2C478aAfdB65542BCB44bCeeC05849999d2D"],
+      ["plasma", 9745, 33, "0x2d661C89D812261039AF9764eceaAee884f5F67F"],
+      ["xlayer", 196, 37, "0xB6CEceAB302E2E4948951eE7843FC24E92933061"],
+      ["injective", 1776, 29, "0xa00C59fF5a080D2b954d0c75e46E22a0c371235a"],
+      ["morph", 2818, 30, "0xCfb1186F4e93D60E60a8bDd997427D1F33bc372B"],
+      ["pharos", 1672, 31, "0xC879C018dB60520F4355C26eD1a6D572cdAC1815"],
       ["arc", 5042, 26, "0x3600000000000000000000000000000000000000"],
     ]);
   });
 
-  it("uses Circle's one set of contract addresses on every chain", () => {
-    for (const chain of Object.values(EVM_CHAINS)) {
+  it("uses Circle's one set of contract addresses on every chain but EDGE", () => {
+    // EDGE has its own deployment (Circle's contract addresses page, 2026-11-15).
+    expect(EVM_CHAINS.edge).toMatchObject({
+      tokenMessengerAddress: "0x98706A006bc632Df31CAdFCBD43F38887ce2ca5c",
+      messageTransmitterAddress: "0x5b61381Fc9e58E70EfC13a4A97516997019198ee",
+      tokenMinterAddress: "0x338Dfd607855BeEc17f33e539Ac2479853cC8384",
+    });
+    for (const chain of Object.values(EVM_CHAINS).filter((c) => c.id !== "edge")) {
       expect(chain.tokenMessengerAddress).toBe("0x28b5a0e9C621a5BadaA536219b3a228C8168cf5d");
       expect(chain.messageTransmitterAddress).toBe("0x81D40F21F12A8F0E3252Bccb954D722d4c464B64");
       expect(chain.tokenMinterAddress).toBe("0xfd78EE919681417d192449715b2594ab58f5D002");
@@ -81,6 +97,13 @@ describe("EVM_CHAINS", () => {
       "codex",
       "worldchain",
       "ink",
+      // Circle's list, 2026-11-15: Fast as a source on these too.
+      "ethereum",
+      "linea",
+      "plume",
+      "edge",
+      "xlayer",
+      "morph",
     ]);
   });
 
@@ -135,16 +158,14 @@ describe("XEBRA_WRAPPERS", () => {
 
 describe("EVM_ROUTES", () => {
   it("is each peer to Arc and Arc to each peer, and nothing else", () => {
-    // Every EVM domain Circle forwards to from Arc (Iris, 2026-10-14) but Ethereum (0), Linea (11),
-    // Plume (22) and EDGE (28), which are left out on purpose.
+    // Every EVM domain Circle forwards to (Iris, 2026-11-15). Ethereum, Linea, Plume and EDGE were
+    // left out until 2026-11-15, when the owner asked for every route CCTP supports.
     expect(EVM_ARC_PEERS.map((id) => EVM_CHAINS[id].cctpDomainId)).toEqual([
-      1, 2, 3, 6, 7, 10, 12, 13, 14, 15, 16, 18, 19, 21,
+      1, 2, 3, 6, 7, 10, 12, 13, 14, 15, 16, 18, 19, 21, 0, 11, 22, 28, 32, 33, 37, 29, 30, 31,
     ]);
-    expect(EVM_ROUTES).toHaveLength(28);
-    for (const left of [0, 11, 22, 28]) {
-      expect(isEvmRoute(26, left)).toBe(false);
-      expect(isEvmRoute(left, 26)).toBe(false);
-    }
+    expect(EVM_ROUTES).toHaveLength(48);
+    expect(isEvmRoute(26, 0)).toBe(true);
+    expect(isEvmRoute(37, 26)).toBe(true);
     for (const route of EVM_ROUTES) {
       expect([route.from, route.to].filter((id) => id === "arc")).toHaveLength(1);
     }

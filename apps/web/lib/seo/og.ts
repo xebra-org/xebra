@@ -29,7 +29,7 @@ export const OG_PAGES: Record<string, OgText> & { home: OgText } = {
   routes: {
     eyebrow: "Routes",
     title: "Every route, one page each.",
-    sub: "Stellar, Solana, Arc and fourteen EVM chains.",
+    sub: "Stellar, Solana, Sui, Aptos, Arc and twenty-one EVM chains.",
   },
   security: {
     eyebrow: "Security",

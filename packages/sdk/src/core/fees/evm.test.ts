@@ -1,8 +1,10 @@
 import { describe, expect, it } from "vitest";
+import { formatUsdc6 } from "../amounts.js";
 import {
   type FeeTier,
   type WrapperTerms,
   minimumEvmAmount,
+  minimumWrapperAmount,
   planEvmFee,
   planWrapperFee,
   speedFeeFor,
@@ -45,8 +47,48 @@ describe("planEvmFee", () => {
       // No contract of ours on a direct route: Circle's fee is the whole fee.
       xebraFee: 0n,
       fee: 16_778n,
+      burn: 5_000_000n,
       received: 4_983_222n,
     });
+  });
+
+  it("takes Xebra's flat fee out of the amount: the burn is the rest, paid separately", () => {
+    expect(
+      planEvmFee({ amount: 5_000_000n, tier: STANDARD, destination: ARC, xebraFee: 100_000n }),
+    ).toEqual({
+      ok: true,
+      maxFee: 16_778n,
+      deliveryFee: 16_778n,
+      speedFee: 0n,
+      xebraFee: 100_000n,
+      fee: 116_778n,
+      burn: 4_900_000n,
+      received: 4_883_222n,
+    });
+  });
+
+  it("counts the flat fee in the one-tenth rule, and its minimum agrees with the plan", () => {
+    const min = minimumEvmAmount(STANDARD, 100_000n);
+    expect(min).toBeGreaterThan(minimumEvmAmount(STANDARD));
+    expect(
+      planEvmFee({ amount: min, tier: STANDARD, destination: ARC, xebraFee: 100_000n }).ok,
+    ).toBe(true);
+    const below = planEvmFee({
+      amount: min - 1n,
+      tier: STANDARD,
+      destination: ARC,
+      xebraFee: 100_000n,
+    });
+    expect(below).toMatchObject({ ok: false, kind: "minimum" });
+  });
+
+  it("refuses an amount the flat fee alone would swallow", () => {
+    expect(
+      planEvmFee({ amount: 100_000n, tier: STANDARD, destination: ARC, xebraFee: 100_000n }).ok,
+    ).toBe(false);
+    expect(() =>
+      planEvmFee({ amount: 1n, tier: STANDARD, destination: ARC, xebraFee: -1n }),
+    ).toThrow();
   });
 
   it("adds the speed fee for Fast", () => {
@@ -174,6 +216,8 @@ describe("planWrapperFee", () => {
       speedFee: 0n,
       xebraFee: 245_901n,
       fee: 300_000n,
+      // The wrapper takes the whole amount and its fee itself.
+      burn: 2_000_000n,
       received: 1_700_000n,
     });
   });
@@ -204,6 +248,19 @@ describe("planWrapperFee", () => {
     const named = BigInt(Math.round(Number(figure) * 1e6));
     expect(named).toBeGreaterThan(0n);
     expect(plan(named, 54_099).ok).toBe(true);
+  });
+
+  it("names the minimum minimumWrapperAmount finds, and nothing below it fits", () => {
+    for (const high of [54_099, 280_000]) {
+      const min = minimumWrapperAmount(standard(high), terms);
+      expect(min).toBeGreaterThanOrEqual(terms.minTransfer);
+      expect(plan(min, high).ok).toBe(true);
+      expect(plan(min - 1n, high)).toMatchObject({ ok: false, kind: "minimum" });
+      const shown = suggestedEvmMinimum(min);
+      expect((plan(min - 1n, high) as { reason: string }).reason).toContain(
+        `least ${formatUsdc6(shown)} USDC`,
+      );
+    }
   });
 
   it("allows Fast its speed fee on top of the destination's cap", () => {

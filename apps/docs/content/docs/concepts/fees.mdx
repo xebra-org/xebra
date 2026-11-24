@@ -8,7 +8,7 @@ The recipient gets `amount` minus `fees.total`, and nothing else is charged in U
 
 | Field | Who is paid | When it is non-zero |
 |---|---|---|
-| `fees.xebra` | Xebra | Transfers through a Xebra fee contract (out of Stellar today) |
+| `fees.xebra` | Xebra | Every transfer: through Xebra's contract on Stellar and Arc, or a flat fee everywhere else |
 | `fees.circle` | Circle, for Fast Transfer | Fast transfers only |
 | `fees.delivery` | Circle's Forwarding Service, for minting on the destination | Every route Circle forwards |
 | `fees.total` | | The sum of the three |
@@ -26,9 +26,10 @@ minute after it was made.
 ## Out of Stellar
 
 Transfers out of Stellar go through Xebra's fee contract on Stellar. Its rule, as set on the
-contract on 2026-11-13 (it was 0.10%, at least 0.30 USDC, from 2026-09-24):
+contract on 2026-11-22 (it was 0.05%, at least 0.10 USDC, from 2026-11-13, and 0.10%, at least
+0.30 USDC, from 2026-09-24):
 
-- Xebra's base fee is **0.05% of the amount, at least 0.10 USDC**.
+- Xebra's base fee is **0.01% of the amount, at least 0.01 USDC**.
 - Circle's delivery fee is paid **out of** that base fee, not added to it.
 - If Circle's delivery fee is larger than the base fee, the sender pays Circle's fee and Xebra keeps
   nothing on that transfer.
@@ -36,15 +37,15 @@ contract on 2026-11-13 (it was 0.10%, at least 0.30 USDC, from 2026-09-24):
 In the quote's terms:
 
 ```text
-total    = max(0.05% × amount, 0.10, delivery)
+total    = max(0.01% × amount, 0.01, delivery)
 xebra    = total − delivery
 received = amount − total
 ```
 
 For example, with a delivery fee of 0.0538 USDC (Circle's quote for Base on 2026-11-13): 10 USDC
-costs 0.10 in total, of which Xebra keeps 0.0462, and 9.90 arrives. 1,000 USDC would cost 0.50 in
-total, but see the limits below. Where Circle's delivery fee is above 0.10 (Solana, about 0.13), the
-sender pays only that and Xebra keeps nothing.
+costs 0.0538 in total, all of it Circle's, and 9.9462 arrives. 1,000 USDC costs 0.10 in total, of
+which Xebra keeps 0.0462. Below about 540 USDC to Base, Circle's fee is the larger one, so the sender
+pays only that and Xebra keeps nothing.
 
 Stellar USDC has seven decimal places and CCTP has six. A transfer never burns a fraction of the
 seventh place: anything below one six-decimal unit stays in the sender's wallet, and Xebra's share
@@ -52,33 +53,45 @@ is shown rounded up to six places.
 
 ### Limits
 
-The contract takes **1 to 100 USDC per transfer** (as of 2026-11-12). Those limits stay low while
-the contracts have had no external audit. The quote reports the live limits as `minimum` and
-`maximum`; an amount outside them is refused with `amount_below_minimum` or `amount_above_maximum`.
+The Stellar contract takes **1 to 10,000,000 USDC per transfer** (as of 2026-11-16); the Arc contract
+takes **1 to 100 USDC per transfer** (as of 2026-11-16). The contracts have had no external audit.
+The quote reports the live limits as `minimum` and `maximum`; an amount outside them is refused with
+`amount_below_minimum` or `amount_above_maximum`.
 
 The effective minimum can be higher than the contract's: Circle's delivery fee may be at most a
 tenth of the amount (see below), so a route with a larger delivery fee needs a larger transfer. A new
 Solana recipient, whose USDC account Circle opens, costs the most. `minimum` in the quote already
 includes this, with a small margin for the fee moving.
 
-## Out of EVM chains
+## Every other route
 
-Transfers out of an EVM chain, as the API builds them today, call Circle's `TokenMessengerV2`
-directly. There is **no Xebra fee** (`fees.xebra` is `"0"`). The sender pays:
+Where a transfer does not go through a Xebra contract (out of EVM chains other than Arc's wrapper,
+Solana, Sui and Aptos), Xebra takes **0.01 USDC plus 0.01% of the amount** (since 2026-11-22; it
+was a flat 0.10 USDC, or 0.05 where the recipient claims, before), on top of Circle's fees and gas.
+The same wherever the transfer goes, whether it arrives by itself or the recipient claims it.
 
-- `fees.delivery`: Circle's delivery fee for the destination.
-- `fees.circle`: Circle's Fast Transfer fee, a small fraction of the amount, on Fast transfers only.
+The fee comes **out of the amount**: `amount` is what leaves the wallet, Xebra's fee is paid to
+Xebra's fee address on the source chain, and the rest is burned. Circle's fees come out of the burn.
 
-Xebra has a fee contract on Arc that applies the same rule as Stellar's. While it is switched on
-for the site, the API does not build transfers out of EVM chains, and
-[`POST /v1/transfers`](/docs/api/transfers/create-transfer) answers `route_unavailable` for them,
-so that a transaction from the API never carries a different fee from the one the site shows.
+```text
+xebra    = 0.01 + 0.01% × amount
+burn     = amount − xebra
+received = burn − delivery − circle
+```
 
-## Out of Sui
+How the fee is paid depends on the chain:
 
-Sui to Stellar has no fee from Xebra or from Circle as of 2026-11-12: every fee field is `"0"` and
-the recipient gets the whole amount. The Stellar fee for the mint is paid by Xebra's relayer, or by
-whoever claims it.
+- **Solana and Sui**: in the same transaction as the burn, so both land or neither does.
+- **EVM chains**: a USDC transfer, `steps[].id` `"fee"`, signed right after the burn.
+- **Aptos**: an `aptos_call` transaction, `steps[].id` `"fee"`, signed right after the burn
+  (Circle's Aptos burn is a fixed script that cannot carry it).
+
+Fees together, Xebra's and Circle's, may be at most a tenth of the amount; `minimum` in the quote
+includes this. Into Stellar the burn must be at least 1 USDC, what the relayer completes, so the
+smallest amount is about 1.0102.
+
+Out of Arc, while Xebra's fee contract there is switched on for the site, the contract's own rule
+applies, the same as Stellar's above, and there is no flat fee.
 
 ## Circle's delivery fee
 

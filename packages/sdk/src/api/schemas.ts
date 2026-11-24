@@ -117,12 +117,19 @@ export const UnsignedTxSchema = z
       }),
     }),
     z.object({ kind: z.literal("solana"), transaction: z.string() }),
+    z.object({
+      kind: z.literal("aptos_call"),
+      chainId: z.number().int(),
+      function: z.string().regex(/^0x[0-9a-f]{1,64}::[a-z_][a-z0-9_]*::[a-z_][a-z0-9_]*$/),
+      typeArguments: z.array(z.string()),
+      functionArguments: z.array(z.string()),
+    }),
   ])
   .meta({ id: "UnsignedTx", description: "A transaction for the user's wallet to sign." });
 
 export const TransferStepSchema = z
   .object({
-    id: z.enum(["approve", "burn", "open_account", "claim"]),
+    id: z.enum(["approve", "burn", "fee", "open_account", "claim"]),
     chain: ChainIdSchema,
     description: z.string(),
     tx: UnsignedTxSchema,
@@ -205,6 +212,11 @@ export const ProblemSchema = z
     title: z.string(),
     status: z.number().int(),
     detail: z.string(),
+    instance: z.string().optional().meta({
+      description:
+        "A URI for this one occurrence: `urn:xebra:request:<id>`. Quote it when you report a problem. The same id is in the `X-Request-Id` response header and in Xebra's logs.",
+      example: "urn:xebra:request:iad1::7zdhm-1700000000000-0a1b2c3d4e5f",
+    }),
     code: z.enum(ERROR_CODES as [string, ...string[]]),
     minimum: AmountOutSchema.optional(),
     maximum: AmountOutSchema.optional(),
@@ -213,6 +225,20 @@ export const ProblemSchema = z
     total: AmountOutSchema.optional(),
     limit: AmountOutSchema.optional(),
     needs: z.string().optional(),
+    issues: z
+      .array(
+        z.object({
+          path: z.array(z.string()).meta({
+            description: 'Where the problem is, such as `["amount"]`. Empty for the whole input.',
+          }),
+          message: z.string(),
+        }),
+      )
+      .optional()
+      .meta({
+        description:
+          "On `invalid_request` and `invalid_amount` from checking the input: each field that failed, and why.",
+      }),
   })
   .meta({ id: "Problem", description: "An RFC 9457 problem. `detail` is written for a person." });
 

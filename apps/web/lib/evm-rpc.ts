@@ -139,7 +139,7 @@ export function walletSentence(err: unknown): string | null {
   return null;
 }
 
-async function request(
+export async function request(
   provider: Eip1193Provider,
   method: string,
   params?: unknown[],

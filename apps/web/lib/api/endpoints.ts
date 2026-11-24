@@ -46,7 +46,17 @@ function source(chain: string): SourceId {
   return chain;
 }
 
-export function endpoints(service: Service) {
+/**
+ * What the handlers ask of the service. Narrower than `Service` so that `lib/api/instance.ts` can
+ * pass one that builds the live service on first use: every member here is an async call, which a
+ * wrapper can defer, and the rest of `Service` is not.
+ */
+export type EndpointService = Pick<
+  Service,
+  "routes" | "solanaOpensAccount" | "quote" | "buildTransfer" | "transferStatus" | "buildClaim"
+>;
+
+export function endpoints(service: EndpointService) {
   return {
     routes: (req: Request) =>
       handle(req, {

@@ -39,6 +39,29 @@ describe("stellarDestinations", () => {
     ]);
   });
 
+  it("offers Sui only when asked for and committed, last, and as claim-only", () => {
+    const withSui = new Set([...LIVE, 8]);
+    const base = { arcEnabled: true, sendsTo: [] as const };
+    expect(ids(stellarDestinations({ ...base, committed: withSui }))).toEqual(["solana", "arc"]);
+    expect(ids(stellarDestinations({ ...base, committed: LIVE, sui: true }))).toEqual([
+      "solana",
+      "arc",
+    ]);
+    expect(ids(stellarDestinations({ ...base, committed: null, sui: true }))).toEqual([
+      "solana",
+      "arc",
+    ]);
+    const list = stellarDestinations({ ...base, committed: withSui, sui: true });
+    expect(ids(list)).toEqual(["solana", "arc", "sui"]);
+    const sui = list[2];
+    expect(sui?.domain).toBe(8);
+    expect(sui?.claimOnly).toBe(true);
+    expect(sui?.evm).toBeNull();
+    expect(sui?.needsAccountResolution).toBe(false);
+    expect(stellarDestination("solana").claimOnly).toBe(false);
+    expect(stellarDestination("base").claimOnly).toBe(false);
+  });
+
   it("lists the chains in the table's order", () => {
     const all = new Set(Object.values(EVM_CHAINS).map((c) => c.cctpDomainId));
     expect(

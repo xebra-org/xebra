@@ -11,6 +11,7 @@
  * chain dependencies.
  */
 
+export * from "./errors.js";
 export * from "./receive-message.js";
 export * from "./token-messenger.js";
 export * from "./erc20.js";

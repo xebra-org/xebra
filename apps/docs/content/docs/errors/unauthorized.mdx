@@ -7,24 +7,14 @@ HTTP **401**. `type`: `https://docs.xebra.exchange/errors/unauthorized`
 
 ## What it means
 
-The API key sent in `Authorization: Bearer ...` was not accepted.
+The API currently does not send this code. It reserves `unauthorized` for a future API-key check, but no
+authentication is enabled today.
 
 ## What to do
 
-Check the key. Today the API needs no key at all, so you only see this if keys are switched on and yours is wrong or revoked.
+The API needs no key today. If authentication is added later, check the `Authorization: Bearer ...`
+header and the key's status.
 
 <Callout>API keys are not issued yet. See the [changelog](/docs/changelog).</Callout>
-
-## Example
-
-```json
-{
-  "type": "https://docs.xebra.exchange/errors/unauthorized",
-  "title": "Unauthorized",
-  "status": 401,
-  "detail": "…",
-  "code": "unauthorized"
-}
-```
 
 Every error has this shape. See [Errors](/docs/errors) for how to handle them.

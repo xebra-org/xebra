@@ -1,19 +1,22 @@
-import type { ApiErrorCode } from "../api/errors.js";
+import type { ApiErrorCode, XebraErrorCode } from "../api/errors.js";
 import {
   type ClaimBuild,
   ClaimBuildSchema,
   type ClaimRequest,
   type Health,
   HealthSchema,
+  type Problem,
   ProblemSchema,
   type Quote,
   type QuoteRequest,
+  QuoteRequestSchema,
   QuoteSchema,
   type Routes,
   RoutesSchema,
   type TransferBuild,
   TransferBuildSchema,
   type TransferRequest,
+  TransferRequestSchema,
   type TransferStatus,
   TransferStatusSchema,
 } from "../api/schemas.js";
@@ -31,12 +34,8 @@ const RETRYABLE_API_CODES = new Set<string>([
   "internal_error",
 ]);
 
-export type XebraApiErrorCode =
-  | ApiErrorCode
-  | "network_error"
-  | "timeout"
-  | "invalid_response"
-  | "wait_timeout";
+/** The same as `XebraErrorCode`, by the name it had first. */
+export type XebraApiErrorCode = XebraErrorCode;
 
 /** A problem the API answered with: `code` is stable, `detail` is written for a person. */
 export class XebraApiError extends XebraError {
@@ -47,7 +46,10 @@ export class XebraApiError extends XebraError {
     code: XebraApiErrorCode,
     readonly detail: string,
     /** The problem's other fields, such as `minimum`, `maximum`, `have` and `need`. */
-    readonly extra: Record<string, unknown> = {},
+    readonly extra: Partial<
+      Pick<Problem, "minimum" | "maximum" | "have" | "need" | "total" | "limit" | "needs">
+    > &
+      Record<string, unknown> = {},
     opts?: { cause?: unknown },
   ) {
     super(code, detail, {
@@ -55,7 +57,26 @@ export class XebraApiError extends XebraError {
       ...(opts?.cause !== undefined ? { cause: opts.cause } : {}),
     });
     this.name = "XebraApiError";
+    Object.defineProperty(this, XEBRA_ERROR_BRAND, { value: true });
   }
+}
+
+/** Shared by every copy of the SDK in one process, where the class itself is not. */
+const XEBRA_ERROR_BRAND = Symbol.for("xebra.error");
+
+/**
+ * Whether `e` is an `XebraApiError`, from this copy of the SDK or any other. `instanceof` is not
+ * enough where two copies are installed, as in a monorepo or a framework that bundles its server
+ * and client builds apart: an error from one copy is not an instance of the other's class.
+ */
+export function isXebraApiError(e: unknown): e is XebraApiError {
+  if (e instanceof XebraApiError) return true;
+  return (
+    typeof e === "object" &&
+    e !== null &&
+    (e as { [XEBRA_ERROR_BRAND]?: unknown })[XEBRA_ERROR_BRAND] === true &&
+    (e as { name?: unknown }).name === "XebraApiError"
+  );
 }
 
 export interface XebraClientOptions {
@@ -71,7 +92,7 @@ export interface XebraClientOptions {
 }
 
 interface Schema<T> {
-  safeParse(v: unknown): { success: true; data: T } | { success: false };
+  safeParse(v: unknown): { success: true; data: T } | { success: false; error?: unknown };
 }
 
 /** States after which a transfer will not change without someone acting. */
@@ -102,6 +123,59 @@ function combineSignals(caller: AbortSignal, timeout: AbortSignal): AbortSignal 
   return controller.signal;
 }
 
+/** What any one call may be given, as its last argument. */
+export interface XebraCallOptions {
+  /**
+   * Stops the call. It rejects with the signal's reason, not with an `XebraApiError`. The timeout
+   * still applies: whichever comes first ends the request.
+   */
+  signal?: AbortSignal;
+  /** How long this call may take, in place of the client's `timeoutMs`. */
+  timeoutMs?: number;
+}
+
+/** `getTransfer` took a bare signal before it took options; it still takes either. */
+function isAbortSignal(value: XebraCallOptions | AbortSignal | undefined): value is AbortSignal {
+  return typeof (value as AbortSignal | undefined)?.addEventListener === "function";
+}
+
+/** Fields whose problems are about the amount, which the API answers as `invalid_amount`. */
+const AMOUNT_FIELDS = new Set(["amount", "maxTotalFee"]);
+
+/**
+ * Checks a request against the schema the API checks it with, and throws what the API would have
+ * answered (`invalid_amount` or `invalid_request`) with status 0, so bad input costs no round trip.
+ * The issues are on `extra.issues`, as `{ path, message }`.
+ */
+function checkInput(
+  schema: {
+    safeParse(
+      v: unknown,
+    ):
+      | { success: true }
+      | { success: false; error: { issues: Array<{ path: PropertyKey[]; message: string }> } };
+  },
+  input: unknown,
+): void {
+  const parsed = schema.safeParse(input);
+  if (parsed.success) return;
+  const issues = parsed.error.issues.map((i) => ({
+    path: i.path.map(String),
+    message: i.message,
+  }));
+  const amount = issues.find((i) => AMOUNT_FIELDS.has(i.path[0] ?? ""));
+  if (amount) {
+    throw new XebraApiError(0, "invalid_amount", `${amount.path[0]}: ${amount.message}.`, {
+      issues,
+    });
+  }
+  const detail = issues
+    .slice(0, 5)
+    .map((i) => (i.path.length > 0 ? `${i.path.join(".")}: ${i.message}` : i.message))
+    .join("; ");
+  throw new XebraApiError(0, "invalid_request", `${detail}.`, { issues });
+}
+
 /**
  * A client for the Xebra API. It prices transfers and builds unsigned transactions; your user's
  * wallet signs them. It never needs or accepts a private key.
@@ -109,13 +183,15 @@ function combineSignals(caller: AbortSignal, timeout: AbortSignal): AbortSignal 
 export function createXebraClient(opts: XebraClientOptions = {}) {
   const base = (opts.baseUrl ?? DEFAULT_BASE_URL).replace(/\/+$/, "");
   const doFetch = opts.fetch ?? globalThis.fetch;
-  const timeoutMs = opts.timeoutMs ?? 15_000;
+  const defaultTimeoutMs = opts.timeoutMs ?? 15_000;
 
   async function call<T>(
     path: string,
     schema: Schema<T>,
-    init: { method?: "GET" | "POST"; body?: unknown; signal?: AbortSignal } = {},
+    init: { method?: "GET" | "POST"; body?: unknown } & XebraCallOptions = {},
   ): Promise<T> {
+    // Named as the client's own was, so every message below reports the limit that applied.
+    const timeoutMs = init.timeoutMs ?? defaultTimeoutMs;
     const timeout = AbortSignal.timeout(timeoutMs);
     const signal = init.signal ? combineSignals(init.signal, timeout) : timeout;
     let res: Response;
@@ -154,6 +230,17 @@ export function createXebraClient(opts: XebraClientOptions = {}) {
     try {
       body = await res.json();
     } catch (err) {
+      // The headers have arrived but the body has not, so either signal can still end the read.
+      // An abort is not an answer: report it as what it is, not as a 200 that was not JSON.
+      if (init.signal?.aborted) throw init.signal.reason;
+      if (timeout.aborted)
+        throw new XebraApiError(
+          0,
+          "timeout",
+          `No answer within ${timeoutMs} ms.`,
+          {},
+          { cause: err },
+        );
       throw new XebraApiError(
         res.status,
         "invalid_response",
@@ -165,7 +252,16 @@ export function createXebraClient(opts: XebraClientOptions = {}) {
     if (!res.ok) {
       const p = ProblemSchema.safeParse(body);
       if (!p.success) {
-        throw new XebraApiError(res.status, "invalid_response", `The API answered ${res.status}.`);
+        // A code newer than this SDK, or a gateway's own JSON: keep what can be read, and the
+        // body itself, rather than only the status. An unknown code is the server's, as it sent it.
+        const loose = looseProblem(body);
+        throw new XebraApiError(
+          res.status,
+          (loose.code ?? "invalid_response") as XebraApiErrorCode,
+          loose.detail ?? `The API answered ${res.status}.`,
+          { body },
+          { cause: p.error },
+        );
       }
       const { type: _type, title: _title, status, detail, code, ...extra } = p.data;
       throw new XebraApiError(status, code as ApiErrorCode, detail, extra);
@@ -176,6 +272,8 @@ export function createXebraClient(opts: XebraClientOptions = {}) {
         res.status,
         "invalid_response",
         "The API's answer did not match this SDK's schema.",
+        {},
+        { cause: parsed.error },
       );
     }
     return parsed.data;
@@ -186,36 +284,58 @@ export function createXebraClient(opts: XebraClientOptions = {}) {
       Object.entries(q).filter((e): e is [string, string] => e[1] !== undefined),
     ).toString();
 
-  const getTransfer = (chain: ChainId, tx: string, signal?: AbortSignal): Promise<TransferStatus> =>
+  /** The part of a request that the caller's options decide. Absent options add nothing. */
+  const passed = (o?: XebraCallOptions): XebraCallOptions => ({
+    ...(o?.signal ? { signal: o.signal } : {}),
+    ...(o?.timeoutMs !== undefined ? { timeoutMs: o.timeoutMs } : {}),
+  });
+
+  const getTransfer = (
+    chain: ChainId,
+    tx: string,
+    /** Options, or only a signal, which is what this argument used to be. */
+    o?: XebraCallOptions | AbortSignal,
+  ): Promise<TransferStatus> =>
     call(
       `/v1/transfers/${encodeURIComponent(chain)}/${encodeURIComponent(tx)}`,
       TransferStatusSchema,
-      signal ? { signal } : {},
+      passed(isAbortSignal(o) ? { signal: o } : o),
     );
 
   return {
     /** Every route Xebra sends on right now. */
-    routes: (): Promise<Routes> => call("/v1/routes", RoutesSchema),
+    routes: (o?: XebraCallOptions): Promise<Routes> => call("/v1/routes", RoutesSchema, passed(o)),
 
-    /** What a transfer costs and what the recipient gets. Read-only. */
-    quote: (q: QuoteRequest): Promise<Quote> =>
-      call(
+    /**
+     * What a transfer costs and what the recipient gets. Read-only. Input the API would refuse is
+     * refused here first, with status 0, without a request.
+     */
+    quote: async (q: QuoteRequest, o?: XebraCallOptions): Promise<Quote> => {
+      checkInput(QuoteRequestSchema, q);
+      return call(
         `/v1/quote?${query({ from: q.from, to: q.to, amount: q.amount, speed: q.speed, recipient: q.recipient })}`,
         QuoteSchema,
-      ),
+        passed(o),
+      );
+    },
 
-    /** The unsigned transactions for a transfer, in signing order, and its price. */
-    createTransfer: (r: TransferRequest): Promise<TransferBuild> =>
-      call("/v1/transfers", TransferBuildSchema, { method: "POST", body: r }),
+    /**
+     * The unsigned transactions for a transfer, in signing order, and its price. Input the API
+     * would refuse is refused here first, with status 0, without a request.
+     */
+    createTransfer: async (r: TransferRequest, o?: XebraCallOptions): Promise<TransferBuild> => {
+      checkInput(TransferRequestSchema, r);
+      return call("/v1/transfers", TransferBuildSchema, { method: "POST", body: r, ...passed(o) });
+    },
 
     /** Where a transfer is, by the burn's transaction hash (or Sui digest). */
     getTransfer,
 
     /** The unsigned mint for a transfer whose delivery did not complete on its own. */
-    createClaim: (r: ClaimRequest): Promise<ClaimBuild> =>
-      call("/v1/claims", ClaimBuildSchema, { method: "POST", body: r }),
+    createClaim: (r: ClaimRequest, o?: XebraCallOptions): Promise<ClaimBuild> =>
+      call("/v1/claims", ClaimBuildSchema, { method: "POST", body: r, ...passed(o) }),
 
-    health: (): Promise<Health> => call("/v1/health", HealthSchema),
+    health: (o?: XebraCallOptions): Promise<Health> => call("/v1/health", HealthSchema, passed(o)),
 
     /**
      * Polls until the transfer is delivered, needs a claim, or failed. A moment where Circle
@@ -229,10 +349,14 @@ export function createXebraClient(opts: XebraClientOptions = {}) {
       const interval = o.intervalMs ?? 5_000;
       const deadline = Date.now() + (o.timeoutMs ?? 30 * 60_000);
       let lastStatus: TransferStatus | null = null;
+      // What the last poll failed with, if it failed: a wait that ends while the API cannot be
+      // reached should say so, not only that the transfer did not settle.
+      let lastFailure: unknown;
       for (;;) {
         try {
           const status = await getTransfer(chain, tx, o.signal);
           lastStatus = status;
+          lastFailure = undefined;
           if (SETTLED.has(status.state)) return status;
         } catch (err) {
           const transient =
@@ -242,6 +366,7 @@ export function createXebraClient(opts: XebraClientOptions = {}) {
               err.code === "network_error" ||
               err.code === "timeout");
           if (!transient) throw err;
+          lastFailure = err;
         }
         if (Date.now() + interval > deadline) {
           throw new XebraApiError(
@@ -249,6 +374,7 @@ export function createXebraClient(opts: XebraClientOptions = {}) {
             "wait_timeout",
             "The transfer did not settle in time; it may still. Ask again later.",
             lastStatus ? { lastStatus: lastStatus.state } : {},
+            { cause: lastFailure },
           );
         }
         await sleep(interval, o.signal);
@@ -258,6 +384,19 @@ export function createXebraClient(opts: XebraClientOptions = {}) {
 }
 
 export type XebraClient = ReturnType<typeof createXebraClient>;
+
+/** What the API's codes look like. A gateway's `"code": "FUNCTION_INVOCATION_FAILED"` is not one. */
+const CODE_SHAPE = /^[a-z][a-z0-9_]{0,63}$/;
+
+/** The `code` and `detail` of an error body that failed `ProblemSchema`, where they are usable. */
+function looseProblem(body: unknown): { code?: string; detail?: string } {
+  if (typeof body !== "object" || body === null) return {};
+  const { code, detail } = body as Record<string, unknown>;
+  return {
+    ...(typeof code === "string" && CODE_SHAPE.test(code) ? { code } : {}),
+    ...(typeof detail === "string" && detail.trim() !== "" ? { detail } : {}),
+  };
+}
 
 function sleep(ms: number, signal?: AbortSignal): Promise<void> {
   return new Promise((resolve, reject) => {

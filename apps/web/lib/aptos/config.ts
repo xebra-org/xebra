@@ -1,3 +1,4 @@
+import { CLAIM_ONLY_DOMAINS } from "@xebra/sdk/core";
 /**
  * Server-side switches for Aptos as a source chain. Read at request time, like the Sui switches in
  * `lib/sui-stellar/config.ts`, so turning a route on or off is an env change and a redeploy, not a
@@ -30,7 +31,10 @@ export type AptosDestination = EvmChainId | "solana" | "stellar";
 export const APTOS_ALL_DESTINATIONS: readonly AptosDestination[] = [
   "stellar",
   "arc",
-  ...EVM_CHAIN_IDS.filter((id) => id !== "arc"),
+  // Not the chains Circle does not deliver to: an Aptos burn is always a forwarded one.
+  ...EVM_CHAIN_IDS.filter(
+    (id) => id !== "arc" && !CLAIM_ONLY_DOMAINS.includes(EVM_CHAINS[id].cctpDomainId),
+  ),
   "solana",
 ];
 
@@ -94,6 +98,13 @@ export function aptosApiKey(): string | null {
   return v ? v : null;
 }
 
+/**
+ * What a route answers while its switch is off: the same answer as the Sui routes give
+ * (`lib/sui-stellar/config.ts`), a 404 that says it is a switch and is never cached.
+ */
 export function notFound(): Response {
-  return Response.json({ error: "not available" }, { status: 404 });
+  return Response.json(
+    { error: "This route is switched off on this deployment.", code: "feature_disabled" },
+    { status: 404, headers: { "cache-control": "no-store" } },
+  );
 }

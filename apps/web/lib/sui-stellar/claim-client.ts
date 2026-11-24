@@ -2,6 +2,7 @@ import type { StellarWalletsKit } from "@creit.tech/stellar-wallets-kit";
 import { TransactionBuilder, rpc } from "@stellar/stellar-sdk";
 import { describeRejectedTransaction } from "../cctp-bridge";
 import { env } from "../env";
+import { readJson } from "../read-json";
 
 /**
  * Finish a transfer into Stellar (from Sui, Solana or Aptos) from the user's own Stellar wallet. The server prepares the
@@ -25,9 +26,22 @@ export async function claimOnStellar(
     headers: { "content-type": "application/json" },
     body: JSON.stringify({ [via.key]: digest, payer }),
   });
-  const body = (await res.json()) as { xdr?: string; error?: string; delivered?: boolean };
-  if (body.delivered) return { hash: "", delivered: true };
-  if (!res.ok || !body.xdr) throw new Error(body.error ?? "Could not prepare the mint.");
+  const parsed = await readJson<{ xdr?: string; error?: string; delivered?: boolean }>(res);
+  const reply =
+    parsed.body && typeof parsed.body === "object"
+      ? (parsed.body as { xdr?: unknown; error?: unknown; delivered?: unknown })
+      : undefined;
+  // An already-finished transfer comes back as 409 with `delivered: true`: that is success.
+  if (reply?.delivered === true) return { hash: "", delivered: true };
+  if (!parsed.ok) {
+    throw new Error(
+      typeof reply?.error === "string"
+        ? reply.error
+        : "Xebra's server did not answer properly. Nothing was sent; try again in a minute.",
+    );
+  }
+  const body = parsed.body;
+  if (!body.xdr) throw new Error(body.error ?? "Could not prepare the mint.");
 
   const { signedTxXdr } = await kit.signTransaction(body.xdr, {
     networkPassphrase: env.stellarNetworkPassphrase,

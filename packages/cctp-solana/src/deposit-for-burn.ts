@@ -237,6 +237,11 @@ export async function buildSolanaBurnTransaction(
     owner: PublicKey;
     params: DepositForBurnWithHookParams;
     usdcMint?: PublicKey;
+    /**
+     * Xebra's flat fee, paid in the same transaction as the burn (all of it lands, or none does):
+     * USDC moved to `owner`'s USDC token account, which must already exist.
+     */
+    fee?: { owner: PublicKey; amount: bigint };
     /** Skip the simulation. Tests only. */
     simulate?: boolean;
   },
@@ -245,7 +250,8 @@ export async function buildSolanaBurnTransaction(
   const source = associatedTokenAddress(p.owner, mint);
   const info = await connection.getAccountInfo(source);
   const have = info?.owner.equals(TOKEN_PROGRAM) ? tokenBalance(info.data) : 0n;
-  if (have < p.params.amount) throw new InsufficientSolanaUsdcError(have, p.params.amount);
+  const need = p.params.amount + (p.fee?.amount ?? 0n);
+  if (have < need) throw new InsufficientSolanaUsdcError(have, need);
 
   const event = Keypair.generate();
   const burn = buildDepositForBurnWithHookInstruction(
@@ -263,6 +269,17 @@ export async function buildSolanaBurnTransaction(
     ComputeBudgetProgram.setComputeUnitPrice({ microLamports: BURN_PRIORITY_MICRO_LAMPORTS }),
     burn,
   );
+  if (p.fee) {
+    tx.add(
+      usdcTransferInstruction({
+        source,
+        mint,
+        destination: associatedTokenAddress(p.fee.owner, mint),
+        owner: p.owner,
+        amount: p.fee.amount,
+      }),
+    );
+  }
 
   if (p.simulate !== false) {
     const sim = await connection.simulateTransaction(
@@ -290,6 +307,34 @@ export async function buildSolanaBurnTransaction(
     eventAccount: event.publicKey.toBase58(),
     lastValidBlockHeight,
   };
+}
+
+/**
+ * SPL Token `TransferChecked` (instruction 12) of 6-decimal USDC: amount as u64 little-endian, then
+ * the decimals, so a wrong mint fails instead of moving the wrong token.
+ */
+export function usdcTransferInstruction(p: {
+  source: PublicKey;
+  mint: PublicKey;
+  destination: PublicKey;
+  owner: PublicKey;
+  amount: bigint;
+}): TransactionInstruction {
+  if (p.amount <= 0n || p.amount >= 1n << 64n) throw new RangeError("Bad transfer amount.");
+  const data = Buffer.alloc(10);
+  data.writeUInt8(12, 0);
+  data.writeBigUInt64LE(p.amount, 1);
+  data.writeUInt8(6, 9);
+  return new TransactionInstruction({
+    programId: TOKEN_PROGRAM,
+    keys: [
+      { pubkey: p.source, isSigner: false, isWritable: true },
+      { pubkey: p.mint, isSigner: false, isWritable: false },
+      { pubkey: p.destination, isSigner: false, isWritable: true },
+      { pubkey: p.owner, isSigner: true, isWritable: false },
+    ],
+    data,
+  });
 }
 
 /** A person-readable reason from a failed simulation; the raw logs travel with the error. */

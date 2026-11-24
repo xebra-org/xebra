@@ -1,5 +1,5 @@
 import { type Operation, StrKey, TransactionBuilder, rpc } from "@stellar/stellar-sdk";
-import { submitSigned } from "../../../../lib/cctp-bridge";
+import { UncertainSubmitError, submitSigned } from "../../../../lib/cctp-bridge";
 import { env } from "../../../../lib/env";
 
 /**
@@ -16,6 +16,10 @@ import { env } from "../../../../lib/env";
 export const dynamic = "force-dynamic";
 
 const ATTEMPTS = 3;
+const RPC_TIMEOUT_MS = 10_000;
+const RETRY_AFTER_SECONDS = 10;
+const UNREACHABLE = /network error|timeout|ECONN|ETIMEDOUT|ENETUNREACH|socket|fetch failed/i;
+const BUSY = /TRY_AGAIN_LATER/;
 
 export async function POST(req: Request): Promise<Response> {
   const wrapper = env.cctpWrapperContractId;
@@ -63,7 +67,7 @@ export async function POST(req: Request): Promise<Response> {
     );
   }
 
-  const server = new rpc.Server(env.sorobanRpcUrl);
+  const server = new rpc.Server(env.sorobanRpcUrl, { timeout: RPC_TIMEOUT_MS });
   let last: unknown = null;
   for (let i = 0; i < ATTEMPTS; i++) {
     try {
@@ -71,21 +75,25 @@ export async function POST(req: Request): Promise<Response> {
       return Response.json({ txHash });
     } catch (err) {
       last = err;
-      // A refusal from the network (bad sequence, expired, insufficient fee) will not change on a
-      // resend; only a failure to reach the network is worth another try.
       const message = err instanceof Error ? err.message : String(err);
+      // A refusal from the network (bad sequence, expired, insufficient balance) will not change
+      // on a resend, and the user has to act on it: say what it was rather than look like an outage.
       if (
-        !/network error|timeout|ECONN|ETIMEDOUT|ENETUNREACH|socket|fetch failed|TRY_AGAIN_LATER/i.test(
-          message,
-        )
+        !(err instanceof UncertainSubmitError) &&
+        !UNREACHABLE.test(message) &&
+        !BUSY.test(message)
       ) {
-        break;
+        return Response.json({ error: message }, { status: 422 });
       }
-      await new Promise((r) => setTimeout(r, 1500 * (i + 1)));
+      if (i < ATTEMPTS - 1) await new Promise((r) => setTimeout(r, 1500 * (i + 1)));
     }
   }
-  return Response.json(
-    { error: last instanceof Error ? last.message : "Stellar's network could not be reached." },
-    { status: 502 },
-  );
+  const message = last instanceof Error ? last.message : "Stellar's network could not be reached.";
+  if (BUSY.test(message)) {
+    return Response.json(
+      { error: message },
+      { status: 503, headers: { "Retry-After": String(RETRY_AFTER_SECONDS) } },
+    );
+  }
+  return Response.json({ error: message }, { status: 502 });
 }

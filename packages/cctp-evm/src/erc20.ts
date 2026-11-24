@@ -1,4 +1,5 @@
 import { type Hex, encodeFunctionData, getAddress, parseAbi } from "viem";
+import { CctpEvmError } from "./errors.js";
 
 /**
  * The three ERC-20 calls a burn needs: what the sender holds, what Circle's messenger may already
@@ -31,7 +32,7 @@ export function encodeAllowance(owner: string, spender: string): Hex {
  * for, and one sized to the transfer is spent by it.
  */
 export function encodeApprove(spender: string, amount: bigint): Hex {
-  if (amount <= 0n) throw new Error("amount must be positive");
+  if (amount <= 0n) throw new CctpEvmError("invalid_amount", "amount must be positive");
   return encodeFunctionData({
     abi: erc20Abi,
     functionName: "approve",
@@ -48,7 +49,7 @@ export function encodeApprove(spender: string, amount: bigint): Hex {
  */
 export function decodeUint256(result: unknown): bigint {
   if (typeof result !== "string" || !/^0x[0-9a-fA-F]{64}$/.test(result)) {
-    throw new Error("the chain returned no value for a token read");
+    throw new CctpEvmError("invalid_request", "the chain returned no value for a token read");
   }
   return BigInt(result);
 }

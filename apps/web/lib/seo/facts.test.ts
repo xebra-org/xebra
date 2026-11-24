@@ -26,10 +26,12 @@ describe("what the pages say about fees and contracts", () => {
     // 7-decimal stroops on Stellar.
     expect(usdc(Number(p.min_fee) / 10)).toBe(FEES.minFeeUsdc);
     expect(usdc(Number(p.min_transfer) / 10)).toBe(FEES.minTransferUsdc);
-    expect(usdc(Number(p.max_transfer) / 10)).toBe(FEES.maxTransferUsdc);
+    expect(Number(usdc(Number(p.max_transfer) / 10)).toLocaleString("en-US")).toBe(
+      FEES.stellarMaxTransferUsdc,
+    );
   });
 
-  it("states the Arc wrapper's deployed parameters, the same schedule", () => {
+  it("states the Arc wrapper's deployed parameters", () => {
     // (feeBps, minFee, minTransfer, maxTransfer, maxFastFeeBps) in 6-decimal units.
     const [bps, minFee, minTransfer, maxTransfer] = record.arcWrapper.params
       .replace(/[()]/g, "")
@@ -38,7 +40,7 @@ describe("what the pages say about fees and contracts", () => {
     expect(bps).toBe(FEES.bps);
     expect(usdc(minFee as number)).toBe(FEES.minFeeUsdc);
     expect(usdc(minTransfer as number)).toBe(FEES.minTransferUsdc);
-    expect(usdc(maxTransfer as number)).toBe(FEES.maxTransferUsdc);
+    expect(usdc(maxTransfer as number)).toBe(FEES.arcMaxTransferUsdc);
   });
 
   it("names the deployed contracts", () => {

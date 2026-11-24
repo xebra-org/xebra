@@ -6,8 +6,11 @@ import {
   EVM_CHAINS,
   type EvmChainId,
   type FeePlan,
+  STELLAR_CCTP_DOMAIN,
+  amountForBurn,
   checkAddressOn,
   explorerTxUrl,
+  flatFeeFor,
   formatUsdc6,
   isEvmChainId,
   planEvmFee,
@@ -17,6 +20,12 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { type Attest, type Delivery, Progress } from "../../app/sui/sui-client";
 import { type DeliveryView, getDelivery, getRouteHealth } from "../../lib/circle-status";
 import { reportError } from "../../lib/format-error";
+import {
+  BUILD_TIMED_OUT,
+  fetchBeforeSigning,
+  nextPollDelay,
+  shouldShowPollNotice,
+} from "../../lib/poll-backoff";
 import { waitForSignature } from "../../lib/solana-confirm";
 import { claimOnStellar } from "../../lib/sui-stellar/claim-client";
 import { type ClassifiedError, classifyWalletError } from "../../lib/wallet-error";
@@ -39,9 +48,9 @@ import { CopyButton, SubmittedNotice } from "./receipt";
  * by our relayer, or by the owner from their own Stellar wallet).
  *
  * The server builds the burn (`/api/solana-source/build`), simulated and co-signed by a one-time
- * event-account key; the wallet adds the only signature it is missing. Xebra takes no fee here:
- * there is no Xebra contract on Solana, so the person pays Circle's delivery fee and Solana's own
- * network costs, and nothing else.
+ * event-account key; the wallet adds the only signature it is missing. Xebra's flat fee (0.10
+ * USDC) rides in the same transaction, out of the amount entered: the burn is the rest. The person
+ * also pays Circle's delivery fee (none into Stellar) and Solana's own network costs.
  *
  * Which destinations exist is the server's `SOLANA_SENDS_TO`, read through `/api/solana-source/config`.
  */
@@ -180,6 +189,7 @@ export function SolanaBridgeForm({
   const [claiming, setClaiming] = useState(false);
   const [claimError, setClaimError] = useState<string | null>(null);
   const [saved, setSaved] = useState(true);
+  const [pollError, setPollError] = useState(false);
 
   // A transfer this browser was following comes back on screen.
   useEffect(() => {
@@ -250,12 +260,16 @@ export function SolanaBridgeForm({
     if (isStellarTerminal) return;
     let cancelled = false;
     let timer: ReturnType<typeof setTimeout>;
+    let consecutiveFailures = 0;
     const tx = sent.tx;
     async function tick() {
       try {
         const s = await fetch(`/api/solana-source/status?tx=${encodeURIComponent(tx)}`, {
           cache: "no-store",
         });
+        if (!s.ok) {
+          throw new Error(`Status service answered ${s.status}`);
+        }
         const body = (await s.json()) as {
           state?: Attest;
           delivered?: boolean;
@@ -263,6 +277,8 @@ export function SolanaBridgeForm({
           refusal?: string;
         };
         if (cancelled) return;
+        consecutiveFailures = 0;
+        setPollError(false);
         const state: Attest = body.state ?? "unknown";
         setAttest(state);
         if (body.recipient) setRecipientSeen(body.recipient);
@@ -305,9 +321,16 @@ export function SolanaBridgeForm({
         }
       } catch {
         completing.current = false;
-        // A dropped request is not a failed transfer; the next tick asks again.
+        if (cancelled) return;
+        consecutiveFailures += 1;
+        if (shouldShowPollNotice(consecutiveFailures)) {
+          setPollError(true);
+        }
       }
-      if (!cancelled) timer = setTimeout(tick, POLL_MS);
+      if (!cancelled) {
+        const delay = nextPollDelay(consecutiveFailures);
+        timer = setTimeout(tick, delay);
+      }
     }
     void tick();
     return () => {
@@ -321,7 +344,12 @@ export function SolanaBridgeForm({
   const plan: FeePlan | null = useMemo(
     () =>
       chain && units !== null && tier
-        ? planEvmFee({ amount: units, tier, destination: chain })
+        ? planEvmFee({
+            amount: units,
+            tier,
+            destination: chain,
+            xebraFee: flatFeeFor(chain.cctpDomainId, units),
+          })
         : null,
     [chain, units, tier],
   );
@@ -332,7 +360,11 @@ export function SolanaBridgeForm({
       ? plan.reason
       : null;
 
-  const stellarMin = parseAmount(config.stellarMinUsdc) ?? 1_000_000n;
+  // What the relayer completes, plus Xebra's fee on top of the burn.
+  const stellarMin = amountForBurn(
+    STELLAR_CCTP_DOMAIN,
+    parseAmount(config.stellarMinUsdc) ?? 1_000_000n,
+  );
   const cap = config.maxUsdc !== null ? parseAmount(config.maxUsdc) : null;
   const amountError =
     amount.trim() === ""
@@ -342,7 +374,7 @@ export function SolanaBridgeForm({
         : cap !== null && units > cap
           ? `The limit is ${config.maxUsdc} USDC per transfer.`
           : to === "stellar" && units < stellarMin
-            ? `Send at least ${config.stellarMinUsdc} USDC to Stellar.`
+            ? `Send at least ${formatUsdc6(stellarMin)} USDC to Stellar.`
             : plan && !plan.ok && plan.kind !== "cap"
               ? plan.reason
               : null;
@@ -375,20 +407,25 @@ export function SolanaBridgeForm({
     setError(null);
     setStep("preparing");
     try {
-      const res = await fetch("/api/solana-source/build", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({
+      // Only this request, before anything is signed, may time out as "nothing was sent".
+      const built = await fetchBeforeSigning<{ transaction?: string; error?: string }>(
+        "/api/solana-source/build",
+        {
           sender: solana.address,
           amount: amount.trim(),
           recipient: recipient.trim(),
           chain: to,
           maxFee: plan?.ok ? plan.maxFee.toString() : "0",
-        }),
-      });
-      const body = (await res.json()) as { transaction?: string; error?: string };
-      if (!res.ok || !body.transaction) {
-        const classified = classifyWalletError(body.error ?? "Could not prepare the transfer.");
+        },
+      );
+      if (built.timedOut) {
+        reportError("solana prepare timed out", BUILD_TIMED_OUT.raw);
+        setError(BUILD_TIMED_OUT);
+        return;
+      }
+      const { res, body } = built;
+      if (!res.ok || !body?.transaction) {
+        const classified = classifyWalletError(body?.error ?? "Could not prepare the transfer.");
         reportError("solana prepare failed", classified.raw);
         setError(classified);
         // A fee that moved is shown again from a fresh quote before anything is signed.
@@ -440,6 +477,7 @@ export function SolanaBridgeForm({
     setClaimError(null);
     setError(null);
     setAmount("");
+    setPollError(false);
   }
 
   async function claim() {
@@ -475,6 +513,13 @@ export function SolanaBridgeForm({
           {heading}
           <div className="px-5 py-6 sm:px-6">
             {sourcePicker}
+            {pollError && (
+              <div className="mb-5">
+                <Notice tone="info" title="We can't reach the status service right now">
+                  Your transfer is safe on chain; this page keeps trying.
+                </Notice>
+              </div>
+            )}
             <Progress
               digest={sent.tx}
               sourceName="Solana"
@@ -566,11 +611,11 @@ export function SolanaBridgeForm({
       {heading}
       <div className="px-5 py-6 sm:px-6">
         {sourcePicker}
-        <Notice tone="info" title="No Xebra fee from Solana" className="mb-6">
-          Xebra has no contract on Solana, so it takes nothing on these transfers.{" "}
+        <Notice tone="info" title="Fees from Solana" className="mb-6">
+          Xebra takes 0.01 USDC plus 0.01% of the amount, paid in the same transaction.{" "}
           {to === "stellar"
-            ? "Circle charges nothing to Stellar either."
-            : "You pay Circle's delivery fee, shown below."}{" "}
+            ? "Circle charges nothing to Stellar."
+            : "You also pay Circle's delivery fee, shown below."}{" "}
           Your wallet also pays Solana&rsquo;s own costs, {SOL_COST}. Check the recipient twice: a
           burn cannot be undone.
         </Notice>
@@ -691,17 +736,20 @@ export function SolanaBridgeForm({
                   value="0 USDC"
                   hint={
                     config.relayer
-                      ? "Circle attests the burn and Xebra completes the mint on Stellar, at no charge."
+                      ? "Circle attests the burn and Xebra completes the mint on Stellar."
                       : "Circle attests the burn; you complete the mint from a Stellar wallet for a few hundredths of an XLM."
                   }
+                />
+                <DataRow
+                  label="Xebra fee"
+                  value={`−${formatUsdc6(flatFeeFor(STELLAR_CCTP_DOMAIN, units))} USDC`}
                 />
                 <div className="pt-3">
                   <StripeRule className="mb-3 opacity-50" />
                   <DataRow
                     label="Recipient gets"
-                    value={`${formatUsdc6(units)} USDC`}
+                    value={`${formatUsdc6(units > flatFeeFor(STELLAR_CCTP_DOMAIN, units) ? units - flatFeeFor(STELLAR_CCTP_DOMAIN, units) : 0n)} USDC`}
                     emphasis
-                    hint="All of it."
                   />
                 </div>
               </dl>

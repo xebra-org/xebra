@@ -3,7 +3,8 @@ import { describe, expect, it, vi } from "vitest";
 process.env.NEXT_PUBLIC_NETWORK = "mainnet";
 
 import type { Delivery } from "../../app/sui/sui-client";
-import { nextDelivery } from "./aptos-bridge-form";
+import { classifyWalletError } from "../../lib/wallet-error";
+import { afterWalletError, nextDelivery } from "./aptos-bridge-form";
 
 // Stub client components/hooks if needed for vitest environment
 vi.mock("../wallet/wallet-provider", () => ({
@@ -64,5 +65,48 @@ describe("nextDelivery", () => {
     expect(nextDelivery(current, undefined)).toEqual({ kind: "idle" });
     expect(nextDelivery(current, { status: "pending" })).toEqual({ kind: "idle" });
     expect(nextDelivery(current, { status: "submitted" })).toEqual({ kind: "idle" });
+  });
+});
+
+describe("afterWalletError", () => {
+  const seq = 7n;
+
+  it("keeps a decline as you cancelled, without reading the sequence number", () => {
+    const declined = classifyWalletError({ code: 4001, message: "User rejected the request" });
+    const r = afterWalletError(declined, null, seq);
+    expect(r.kind).toBe("declined");
+    expect(r.maybeSent).toBe(false);
+  });
+
+  it("says it may have been sent when the sequence number moved past the burn", () => {
+    const r = afterWalletError(classifyWalletError("Request timed out"), 8n, seq);
+    expect(r.maybeSent).toBe(true);
+    expect(r.message).toBe(
+      "This transfer may have been sent. Check your wallet before trying again.",
+    );
+    expect(r.message).not.toMatch(/nothing was sent/i);
+  });
+
+  it("says nothing was sent when the sequence number did not move", () => {
+    const timedOut = afterWalletError(classifyWalletError("Request timed out"), 7n, seq);
+    expect(timedOut.maybeSent).toBe(false);
+    expect(timedOut.message).toBe("The transfer did not go out. Nothing was sent.");
+
+    const funds = afterWalletError(classifyWalletError("insufficient balance"), 7n, seq);
+    expect(funds.message).toBe(
+      "Your wallet does not have enough funds or gas to complete this transfer. Nothing was sent.",
+    );
+  });
+
+  it("keeps the classifier's maybe-sent wording when the sequence number is unknown", () => {
+    const r = afterWalletError(classifyWalletError("Failed to fetch"), null, seq);
+    expect(r.kind).toBe("network");
+    expect(r.maybeSent).toBe(true);
+    expect(r.message).not.toMatch(/nothing was sent/i);
+  });
+
+  it("does not repeat nothing was sent", () => {
+    const onchain = afterWalletError(classifyWalletError("Move abort 0x1::coin"), 7n, seq);
+    expect(onchain.message).toBe("The transaction failed on-chain. Nothing was sent.");
   });
 });

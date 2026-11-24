@@ -1,4 +1,5 @@
 import { type Hex, encodeFunctionData, getAddress, isAddress, parseAbi } from "viem";
+import { CctpEvmError } from "./errors.js";
 
 /**
  * CCTP V2 `TokenMessengerV2.depositForBurnWithHook`, the one call that starts a transfer from an
@@ -21,7 +22,15 @@ import { type Hex, encodeFunctionData, getAddress, isAddress, parseAbi } from "v
  */
 export const tokenMessengerAbi = parseAbi([
   "function depositForBurnWithHook(uint256 amount, uint32 destinationDomain, bytes32 mintRecipient, address burnToken, bytes32 destinationCaller, uint256 maxFee, uint32 minFinalityThreshold, bytes hookData)",
+  "function depositForBurn(uint256 amount, uint32 destinationDomain, bytes32 mintRecipient, address burnToken, bytes32 destinationCaller, uint256 maxFee, uint32 minFinalityThreshold)",
 ]);
+
+/**
+ * EVM domains Circle's Forwarding Service does not deliver to (Injective, Morph, Pharos; Circle's
+ * list, 2026-11-15). A burn there carries no forwarding hook, so it is a plain `depositForBurn`
+ * (the hook variant refuses an empty hook), and the recipient claims the mint on arrival.
+ */
+export const NO_FORWARD_EVM_DOMAINS: readonly number[] = [29, 30, 31];
 
 /**
  * `"cctp-forward"` right-padded to 32 bytes: magic (24), version 0 (4), payload length 0 (4).
@@ -50,7 +59,10 @@ const BYTES32 = /^0x[0-9a-fA-F]{64}$/;
  */
 export function forwardHookWithAccount(owner: Hex): Hex {
   if (!BYTES32.test(owner) || owner === ZERO_BYTES32) {
-    throw new Error("the account owner must be a non-zero 32-byte Solana public key");
+    throw new CctpEvmError(
+      "invalid_recipient",
+      "the account owner must be a non-zero 32-byte Solana public key",
+    );
   }
   const magic = FORWARD_HOOK.slice(2, 2 + 48);
   const version = "00000000";
@@ -79,7 +91,9 @@ export type Finality = (typeof FINALITY)[keyof typeof FINALITY];
 
 /** An EVM address as CCTP carries it: left-padded to 32 bytes. */
 export function addressToBytes32(address: string): Hex {
-  if (!isAddress(address, { strict: false })) throw new Error(`not an EVM address: ${address}`);
+  if (!isAddress(address, { strict: false })) {
+    throw new CctpEvmError("invalid_recipient", `not an EVM address: ${address}`);
+  }
   return `0x${"00".repeat(12)}${address.slice(2).toLowerCase()}`;
 }
 
@@ -97,21 +111,39 @@ export interface BurnWithHookArgs {
 }
 
 export function encodeDepositForBurnWithHook(args: BurnWithHookArgs): Hex {
-  if (args.amount <= 0n) throw new Error("amount must be positive");
+  if (args.amount <= 0n) throw new CctpEvmError("invalid_amount", "amount must be positive");
   // Circle's contract reverts unless the fee is strictly less than the amount; saying so here
   // means a wallet is never asked to sign a transaction that cannot succeed.
   if (args.maxFee < 0n || args.maxFee >= args.amount) {
-    throw new Error("maxFee must be less than the amount");
+    throw new CctpEvmError("invalid_amount", "maxFee must be less than the amount");
   }
   if (args.minFinalityThreshold !== 1000 && args.minFinalityThreshold !== 2000) {
-    throw new Error("minFinalityThreshold must be 1000 (Fast) or 2000 (Standard)");
+    throw new CctpEvmError(
+      "invalid_request",
+      "minFinalityThreshold must be 1000 (Fast) or 2000 (Standard)",
+    );
   }
   const { mintRecipient, hookData, destinationCaller } = recipientAndHook(
     args.recipient,
     args.destinationDomain,
   );
   if (!isAddress(args.burnToken, { strict: false })) {
-    throw new Error(`not an EVM address: ${args.burnToken}`);
+    throw new CctpEvmError("invalid_request", `not an EVM address: ${args.burnToken}`);
+  }
+  if (hookData === "0x") {
+    return encodeFunctionData({
+      abi: tokenMessengerAbi,
+      functionName: "depositForBurn",
+      args: [
+        args.amount,
+        args.destinationDomain,
+        mintRecipient,
+        getAddress(args.burnToken),
+        destinationCaller,
+        args.maxFee,
+        args.minFinalityThreshold,
+      ],
+    });
   }
   return encodeFunctionData({
     abi: tokenMessengerAbi,
@@ -142,11 +174,17 @@ export function recipientAndHook(
   // Circle's docs say such funds are stuck for good.
   if (typeof recipient !== "string" && recipient.kind === "stellar") {
     if (destinationDomain !== STELLAR_DOMAIN) {
-      throw new Error("a Stellar recipient can only receive a burn to Stellar");
+      throw new CctpEvmError(
+        "invalid_recipient",
+        "a Stellar recipient can only receive a burn to Stellar",
+      );
     }
     const forwarder = recipient.forwarder.toLowerCase() as Hex;
     if (!BYTES32.test(forwarder) || forwarder === ZERO_BYTES32) {
-      throw new Error("the Stellar forwarder must be a non-zero 32-byte contract id");
+      throw new CctpEvmError(
+        "invalid_recipient",
+        "the Stellar forwarder must be a non-zero 32-byte contract id",
+      );
     }
     checkStellarHook(recipient.hookData);
     // The forwarder is also the only caller, as Circle requires: with a zero caller anyone could
@@ -158,23 +196,39 @@ export function recipientAndHook(
     };
   }
   if (destinationDomain === STELLAR_DOMAIN) {
-    throw new Error("a burn to Stellar must go to Circle's forwarder with a Stellar recipient");
+    throw new CctpEvmError(
+      "invalid_recipient",
+      "a burn to Stellar must go to Circle's forwarder with a Stellar recipient",
+    );
   }
   if (typeof recipient === "string") {
     // An EVM address left-padded is a perfectly valid-looking Solana account that nobody owns.
     if (destinationDomain === SOLANA_DOMAIN) {
-      throw new Error("a Solana destination needs the recipient's USDC token account");
+      throw new CctpEvmError(
+        "invalid_recipient",
+        "a Solana destination needs the recipient's USDC token account",
+      );
     }
     const mintRecipient = addressToBytes32(recipient);
-    if (mintRecipient === ZERO_BYTES32) throw new Error("the recipient is the zero address");
-    return { mintRecipient, hookData: FORWARD_HOOK, destinationCaller: ZERO_BYTES32 };
+    if (mintRecipient === ZERO_BYTES32) {
+      throw new CctpEvmError("invalid_recipient", "the recipient is the zero address");
+    }
+    // Asking Circle to forward where it does not deliver would be refused; no hook, claimed instead.
+    const hookData = NO_FORWARD_EVM_DOMAINS.includes(destinationDomain) ? "0x" : FORWARD_HOOK;
+    return { mintRecipient, hookData, destinationCaller: ZERO_BYTES32 };
   }
   if (destinationDomain !== SOLANA_DOMAIN) {
-    throw new Error("a Solana token account can only be the recipient of a burn to Solana");
+    throw new CctpEvmError(
+      "invalid_recipient",
+      "a Solana token account can only be the recipient of a burn to Solana",
+    );
   }
   const tokenAccount = recipient.tokenAccount.toLowerCase() as Hex;
   if (!BYTES32.test(tokenAccount) || tokenAccount === ZERO_BYTES32) {
-    throw new Error("the Solana token account must be a non-zero 32-byte key");
+    throw new CctpEvmError(
+      "invalid_recipient",
+      "the Solana token account must be a non-zero 32-byte key",
+    );
   }
   const owner = recipient.createAccountFor?.toLowerCase() as Hex | undefined;
   if (owner === undefined) {
@@ -182,7 +236,10 @@ export function recipientAndHook(
   }
   // The wrapper's rule: the wallet can never be confused with the token account it owns.
   if (owner === tokenAccount) {
-    throw new Error("the account owner and the token account must differ");
+    throw new CctpEvmError(
+      "invalid_recipient",
+      "the account owner and the token account must differ",
+    );
   }
   return {
     mintRecipient: tokenAccount,
@@ -199,13 +256,18 @@ export function recipientAndHook(
  */
 function checkStellarHook(hook: Hex): void {
   if (!/^0x[0-9a-fA-F]*$/.test(hook) || hook.length % 2 !== 0) {
-    throw new Error("the Stellar hook is not hex");
+    throw new CctpEvmError("invalid_recipient", "the Stellar hook is not hex");
   }
   const bytes = Buffer.from(hook.slice(2), "hex");
   if (bytes.length !== 32 + 56)
-    throw new Error("the Stellar hook must carry one 56-character address");
-  if (bytes.readUInt32BE(28) !== 56) throw new Error("the Stellar hook's length field is wrong");
+    throw new CctpEvmError(
+      "invalid_recipient",
+      "the Stellar hook must carry one 56-character address",
+    );
+  if (bytes.readUInt32BE(28) !== 56) {
+    throw new CctpEvmError("invalid_recipient", "the Stellar hook's length field is wrong");
+  }
   const text = bytes.subarray(32).toString("ascii");
   if (!/^[GC][A-Z2-7]{55}$/.test(text))
-    throw new Error("the Stellar hook does not name an address");
+    throw new CctpEvmError("invalid_recipient", "the Stellar hook does not name an address");
 }

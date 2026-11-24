@@ -11,7 +11,7 @@ import {
   useRef,
   useState,
 } from "react";
-import { formatError } from "../../lib/format-error";
+import { reportError } from "../../lib/format-error";
 import { createStellarWalletKit, probeStellarWallet } from "../../lib/stellar-wallet";
 import {
   aptosEntries,
@@ -273,7 +273,7 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
           clearTimeout(connectTimeout.current);
           connectTimeout.current = null;
         }
-        setError(formatError(err));
+        setError(reportError("wallet connect failed", err));
       } finally {
         if (connectAttempt.current === id) {
           if (connectTimeout.current) {

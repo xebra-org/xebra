@@ -20,9 +20,12 @@ Read `detail`, which carries the chain's reason in plain words. Nothing was sent
   "type": "https://docs.xebra.exchange/errors/transaction_rejected",
   "title": "Transaction would be rejected",
   "status": 422,
-  "detail": "…",
+  "detail": "Circle's signature on this Fast transfer has expired. Open the claim page to have it signed again.",
   "code": "transaction_rejected"
 }
 ```
+
+`detail` varies. When a simulation fails, it names the chain and passes on the chain's reason, for
+example `Stellar would reject this transfer: <reason>` or `<chain> would reject this mint: <reason>`.
 
 Every error has this shape. See [Errors](/docs/errors) for how to handle them.

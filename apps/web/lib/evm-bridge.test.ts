@@ -6,6 +6,7 @@ import {
   ARC_GAS_RESERVE_UNITS,
   type EvmBridgeRequest,
   type EvmBridgeStep,
+  EvmBurnUncertainError,
   getUsdcBalance6,
   spendableUsdc,
   submitEvmBridge,
@@ -16,6 +17,8 @@ const FROM = "0x1111111111111111111111111111111111111111";
 const RECIPIENT = "0x2222222222222222222222222222222222222222";
 const APPROVAL_HASH = `0x${"a1".repeat(32)}`;
 const BURN_HASH = `0x${"b2".repeat(32)}`;
+const FEE_HASH = `0x${"fe".repeat(32)}`;
+const FEE_ADDRESS = "0x32e95718A4D9B60F2e4Fb1d371189ac5DD28211A";
 
 /** The latest block's timestamp in this scripted chain. */
 const CHAIN_NOW = 1_800_000_000n;
@@ -34,6 +37,7 @@ function chain(
     chainId: number;
     balance: bigint;
     allowance: bigint;
+    nonce: bigint;
     /** What an approval actually sets, when the user lowers it in the wallet. */
     approvalSets: bigint;
     approvalStatus: string;
@@ -41,14 +45,22 @@ function chain(
     chainAfterApproval: number;
     simulation: () => string;
     emptyReads: boolean;
+    declineFee: boolean;
+    onBurnSend: (state: { nonce: bigint }) => unknown;
+    /** The chain's own coin, in wei. */
+    native: bigint;
+    gasPrice: bigint;
   }> = {},
 ) {
   const state = {
     chainId: base.chainId,
     balance: 100_000_000n,
     allowance: 0n,
+    nonce: 0n,
     approvalStatus: "0x1",
     simulation: () => "0x",
+    native: 10n ** 16n,
+    gasPrice: 1_000_000_000n,
     ...over,
   };
   const calls: Call[] = [];
@@ -70,17 +82,30 @@ function chain(
           if (selector === "0x779b432d" || selector === "0x132519fe") return state.simulation();
           throw new Error(`unexpected eth_call ${selector}`);
         }
+        case "eth_getTransactionCount":
+          return `0x${state.nonce.toString(16)}`;
         case "eth_sendTransaction": {
+          if (state.declineFee && arg?.data?.startsWith("0xa9059cbb")) {
+            throw Object.assign(new Error("User rejected the request."), { code: 4001 });
+          }
           sent.push(arg as never);
+          if (arg?.data?.startsWith("0xa9059cbb")) return FEE_HASH;
           if (arg?.data?.startsWith("0x095ea7b3")) {
             state.allowance = state.approvalSets ?? BigInt(`0x${arg.data.slice(-64)}`);
             if (state.chainAfterApproval) state.chainId = state.chainAfterApproval;
             return APPROVAL_HASH;
           }
+          if (over.onBurnSend) {
+            return over.onBurnSend(state);
+          }
           return BURN_HASH;
         }
         case "eth_getTransactionReceipt":
           return { status: state.approvalStatus };
+        case "eth_getBalance":
+          return `0x${state.native.toString(16)}`;
+        case "eth_gasPrice":
+          return `0x${state.gasPrice.toString(16)}`;
         case "eth_getBlockByNumber":
           return { timestamp: `0x${CHAIN_NOW.toString(16)}` };
         default:
@@ -121,7 +146,7 @@ describe("submitEvmBridge through Xebra's wrapper", () => {
         via: { address: WRAPPER, maxWrapperFee: 300_000n },
       }),
     );
-    expect(result).toEqual({ txHash: BURN_HASH, approvalTxHash: APPROVAL_HASH });
+    expect(result).toEqual({ txHash: BURN_HASH, approvalTxHash: APPROVAL_HASH, feeTxHash: null });
 
     const [approval, burn] = c.sent;
     expect(approval?.to).toBe(arc.usdcAddress);
@@ -141,6 +166,43 @@ describe("submitEvmBridge through Xebra's wrapper", () => {
     expect(req.maxWrapperFee).toBe(300_000n);
     // Ten minutes from the chain's own clock, not the computer's.
     expect(req.deadline).toBe(CHAIN_NOW + 600n);
+  });
+
+  it.each([
+    ["two hours ahead of", 2],
+    ["two hours behind", -2],
+  ])("sends when this computer's clock is %s the chain's", async (_, hours) => {
+    vi.setSystemTime(Number(CHAIN_NOW) * 1000 + hours * 3_600_000);
+    const c = chain({ chainId: arc.chainId });
+    const result = await submitEvmBridge(
+      request(c, {
+        source: arc,
+        destination: base,
+        maxFee: 54_099n,
+        via: { address: WRAPPER, maxWrapperFee: 300_000n },
+      }),
+    );
+    expect(result).toEqual({ txHash: BURN_HASH, approvalTxHash: APPROVAL_HASH, feeTxHash: null });
+    const { args } = decodeFunctionData({
+      abi: xebraWrapperAbi,
+      data: c.sent[1]?.data as `0x${string}`,
+    });
+    expect((args as unknown as [{ deadline: bigint }])[0].deadline).toBe(CHAIN_NOW + 600n);
+  });
+
+  it("refuses an argument the wrapper would revert before touching the wallet", async () => {
+    const c = chain({ chainId: arc.chainId });
+    await expect(
+      submitEvmBridge(
+        request(c, {
+          source: arc,
+          destination: base,
+          maxFee: 5_000_000n,
+          via: { address: WRAPPER, maxWrapperFee: 300_000n },
+        }),
+      ),
+    ).rejects.toThrow(/maxFee/);
+    expect(c.calls).toHaveLength(0);
   });
 
   it("simulates the wrapper's bridge before asking for the burn", async () => {
@@ -170,7 +232,7 @@ describe("submitEvmBridge", () => {
     const steps: EvmBridgeStep[] = [];
     const result = await submitEvmBridge(request(c, { onStep: (s) => steps.push(s) }));
 
-    expect(result).toEqual({ txHash: BURN_HASH, approvalTxHash: APPROVAL_HASH });
+    expect(result).toEqual({ txHash: BURN_HASH, approvalTxHash: APPROVAL_HASH, feeTxHash: null });
     expect(steps).toEqual(["switching", "checking", "approving", "confirming-approval", "burning"]);
     expect(c.sent).toHaveLength(2);
 
@@ -190,6 +252,42 @@ describe("submitEvmBridge", () => {
       base.usdcAddress,
     ]);
     expect(decoded.args[5]).toBe(16_778n);
+  });
+
+  it("pays Xebra's flat fee right after the burn, and counts it in the balance check", async () => {
+    const c = chain();
+    const steps: EvmBridgeStep[] = [];
+    const result = await submitEvmBridge(
+      request(c, {
+        onStep: (s) => steps.push(s),
+        xebraFee: { address: FEE_ADDRESS, amount: 100_000n },
+      }),
+    );
+    expect(result.feeTxHash).toBe(FEE_HASH);
+    expect(steps.at(-1)).toBe("paying-fee");
+    const fee = c.sent.at(-1);
+    expect(fee?.to).toBe(base.usdcAddress);
+    expect(fee?.data.slice(0, 10)).toBe("0xa9059cbb");
+    expect(fee?.data).toContain(FEE_ADDRESS.slice(2).toLowerCase());
+    expect(BigInt(`0x${fee?.data.slice(-64)}`)).toBe(100_000n);
+
+    // 5 to burn and 0.10 to Xebra: a wallet holding exactly 5 is short.
+    await expect(
+      submitEvmBridge(
+        request(chain({ balance: 5_000_000n }), {
+          xebraFee: { address: FEE_ADDRESS, amount: 100_000n },
+        }),
+      ),
+    ).rejects.toThrow(/needs 5.1/);
+  });
+
+  it("keeps the transfer when the wallet declines the fee: the burn is already out", async () => {
+    const c = chain({ declineFee: true });
+    const result = await submitEvmBridge(
+      request(c, { xebraFee: { address: FEE_ADDRESS, amount: 100_000n } }),
+    );
+    expect(result.txHash).toBe(BURN_HASH);
+    expect(result.feeTxHash).toBeNull();
   });
 
   it("skips the approval when Circle's messenger may already pull the amount", async () => {
@@ -226,6 +324,28 @@ describe("submitEvmBridge", () => {
     const c = chain({ emptyReads: true });
     await expect(submitEvmBridge(request(c))).rejects.toThrow("returned no value");
     expect(c.sent).toHaveLength(0);
+  });
+
+  it("stops before any prompt when the wallet has no gas", async () => {
+    const c = chain({ native: 0n });
+    await expect(submitEvmBridge(request(c))).rejects.toThrow(
+      "You need some ETH on Base to pay the network fee. Nothing was sent.",
+    );
+    expect(c.sent).toHaveLength(0);
+    expect(c.calls.find((x) => x.method === "eth_getBalance")?.params).toEqual([FROM, "latest"]);
+  });
+
+  it("stops when the gas held is below a rough approve-and-burn estimate", async () => {
+    // 310k gas at 1 gwei is 0.00031 ETH; this wallet holds 0.0001.
+    const c = chain({ native: 10n ** 14n });
+    await expect(submitEvmBridge(request(c))).rejects.toThrow("You need some ETH on Base");
+    expect(c.sent).toHaveLength(0);
+  });
+
+  it("does not ask Arc for a native balance, since its gas is the USDC kept back", async () => {
+    const c = chain({ chainId: arc.chainId, native: 0n, balance: 10_000_000n });
+    await submitEvmBridge(request(c, { source: arc, destination: base, maxFee: 54_454n }));
+    expect(c.calls.filter((x) => x.method === "eth_getBalance")).toHaveLength(0);
   });
 
   it("stops when the approval was lowered in the wallet", async () => {
@@ -375,5 +495,73 @@ describe("getUsdcBalance6", () => {
     const c = chain({ balance: 42_000_000n });
     expect(await getUsdcBalance6(c.provider, base, FROM)).toBe(42_000_000n);
     expect(c.calls[0]?.params?.[0]).toMatchObject({ to: base.usdcAddress });
+  });
+});
+
+describe("submitEvmBridge", () => {
+  it("reports uncertain burn when sendTransaction throws and pending nonce moved", async () => {
+    const c = chain({
+      allowance: 5_000_000n,
+      nonce: 4n,
+      onBurnSend: (state) => {
+        state.nonce = 5n;
+        throw new Error("WalletConnect relay dropped");
+      },
+    });
+
+    let caught: unknown;
+    try {
+      await submitEvmBridge(request(c, { nonceCheck: { attempts: 3, intervalMs: 1 } }));
+    } catch (err) {
+      caught = err;
+    }
+
+    expect(caught).toBeInstanceOf(EvmBurnUncertainError);
+    expect((caught as Error).message).toMatch(/may have been sent/i);
+    expect((caught as Error).message).toMatch(/check your wallet's activity before trying again/i);
+    expect((caught as Error).message).not.toMatch(/nothing was burned/i);
+    expect(c.calls.filter((x) => x.method === "eth_getTransactionCount")).toHaveLength(2);
+  });
+
+  it("rethrows the send error without uncertain warning when pending nonce stays unchanged", async () => {
+    const c = chain({
+      allowance: 5_000_000n,
+      nonce: 4n,
+      onBurnSend: () => {
+        throw new Error("relay timeout before broadcast");
+      },
+    });
+
+    let caught: unknown;
+    try {
+      await submitEvmBridge(request(c, { nonceCheck: { attempts: 3, intervalMs: 1 } }));
+    } catch (err) {
+      caught = err;
+    }
+
+    expect(caught).not.toBeInstanceOf(EvmBurnUncertainError);
+    expect((caught as Error).message).toBe("relay timeout before broadcast");
+    expect(c.calls.filter((x) => x.method === "eth_getTransactionCount")).toHaveLength(4);
+  });
+
+  it("stops immediately without polling nonce on a 4001 user decline", async () => {
+    const c = chain({
+      allowance: 5_000_000n,
+      nonce: 4n,
+      onBurnSend: () => {
+        throw { code: 4001, message: "User rejected the request." };
+      },
+    });
+
+    let caught: unknown;
+    try {
+      await submitEvmBridge(request(c, { nonceCheck: { attempts: 3, intervalMs: 1 } }));
+    } catch (err) {
+      caught = err;
+    }
+
+    expect(caught).not.toBeInstanceOf(EvmBurnUncertainError);
+    expect((caught as Error).message).toBe("You declined the request in your wallet.");
+    expect(c.calls.filter((x) => x.method === "eth_getTransactionCount")).toHaveLength(1);
   });
 });

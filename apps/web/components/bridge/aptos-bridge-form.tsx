@@ -6,8 +6,11 @@ import {
   EVM_CHAINS,
   type EvmChainId,
   type FeePlan,
+  STELLAR_CCTP_DOMAIN,
   checkAddressOn,
   checkSolanaAddress,
+  flatFeeFor,
+  formatUsdc6,
   isEvmChainId,
   planEvmFee,
 } from "@xebra/sdk/core";
@@ -16,15 +19,27 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { type Attest, type Delivery, Progress } from "../../app/sui/sui-client";
 import { type DeliveryView, getDelivery, getRouteHealth } from "../../lib/circle-status";
 import { reportError } from "../../lib/format-error";
+import {
+  BUILD_TIMED_OUT,
+  fetchBeforeSigning,
+  nextPollDelay,
+  shouldShowPollNotice,
+} from "../../lib/poll-backoff";
 import { feeDestination, routeDestination } from "../../lib/route-destination";
 import { type RecipientResolution, resolveRecipient } from "../../lib/solana-recipient";
 import { claimOnStellar } from "../../lib/sui-stellar/claim-client";
+import {
+  type ClassifiedError,
+  type WalletErrorKind,
+  classifyWalletError,
+} from "../../lib/wallet-error";
 import {
   aptosWalletOnMainnet,
   currentAptosAccount,
   findAptosWallet,
   readAptosSequenceNumber,
   signAndSubmitAptos,
+  signAndSubmitAptosCall,
 } from "../../lib/wallets/aptos";
 import { Button } from "../ui/button";
 import { Field, Input } from "../ui/field";
@@ -46,7 +61,9 @@ import { CopyButton, SubmittedNotice } from "./receipt";
  *   - To Stellar nothing forwards: the relayer completes the mint, or the sender claims it from a
  *     Stellar wallet and pays a few hundredths of an XLM. Circle is paid nothing.
  *
- * No Xebra fee on these routes yet. The burn's hash is kept in this browser so closing the tab
+ * Xebra's flat fee (0.10 delivered, 0.05 claimed) comes out of the amount entered: the server
+ * burns the rest and returns the fee as its own transaction, asked for right after the burn (Circle's
+ * Aptos burn is a fixed script). The burn's hash is kept in this browser so closing the tab
  * does not lose a transfer on its way.
  */
 
@@ -113,7 +130,45 @@ function parseAmount(input: string): bigint | null {
   return v > 0n ? v : null;
 }
 
-const DECLINED = /reject|declin|den(y|ied)|cancel|closed|dismiss/i;
+/** A message the form words itself, before the wallet was asked to sign: nothing was sent. */
+function notSent(message: string, kind: WalletErrorKind = "unknown"): ClassifiedError {
+  return { kind, message, maybeSent: false, raw: message };
+}
+
+function withNothingSent(message: string): string {
+  if (/nothing was sent/i.test(message)) return message;
+  const base = message.trim();
+  const sentence = base ? (base.endsWith(".") ? base : `${base}.`) : "";
+  return sentence ? `${sentence} Nothing was sent.` : "Nothing was sent.";
+}
+
+/**
+ * What to say once the wallet had the transaction and threw. A decline stands as it is; anything
+ * else is checked against the account's sequence number (null when it could not be read): moved
+ * past the burn's means it may have gone out, still at or below it means nothing was sent.
+ */
+export function afterWalletError(
+  classified: ClassifiedError,
+  nextSeq: bigint | null,
+  sequenceNumber: bigint,
+): ClassifiedError {
+  if (classified.kind === "declined" || classified.kind === "popup") return classified;
+  if (nextSeq === null) return classified;
+  if (nextSeq > sequenceNumber) {
+    return {
+      ...classified,
+      message: "This transfer may have been sent. Check your wallet before trying again.",
+      maybeSent: true,
+    };
+  }
+  return {
+    ...classified,
+    message: classified.maybeSent
+      ? "The transfer did not go out. Nothing was sent."
+      : withNothingSent(classified.message),
+    maybeSent: false,
+  };
+}
 
 export function AptosBridgeForm({
   source,
@@ -132,7 +187,7 @@ export function AptosBridgeForm({
   const [amount, setAmount] = useState("");
   const [recipient, setRecipient] = useState("");
   const [step, setStep] = useState<"idle" | "preparing" | "signing">("idle");
-  const [error, setError] = useState<{ text: string; declined: boolean } | null>(null);
+  const [error, setError] = useState<ClassifiedError | null>(null);
   const [sent, setSent] = useState<Remembered | null>(null);
   const [saved, setSaved] = useState(true);
 
@@ -213,10 +268,12 @@ export function AptosBridgeForm({
   const tier = health?.tiers.standard ?? null;
   const plan: FeePlan | null = useMemo(() => {
     if (to === "stellar" || units === null || !tier) return null;
+    const dest = routeDestination(to);
     return planEvmFee({
       amount: units,
       tier,
-      destination: feeDestination(routeDestination(to), opensAccount),
+      destination: feeDestination(dest, opensAccount),
+      xebraFee: flatFeeFor(dest.cctpDomainId, units),
     });
   }, [units, tier, to, opensAccount]);
   const routeDown =
@@ -247,44 +304,52 @@ export function AptosBridgeForm({
     setError(null);
     const wallet = findAptosWallet(aptos.walletKey);
     if (!wallet) {
-      setError({
-        text: "Your Aptos wallet is no longer available. Connect it again.",
-        declined: false,
-      });
+      setError(notSent("Your Aptos wallet is no longer available. Connect it again."));
       return;
     }
     setStep("preparing");
     let senderAddress: string | undefined;
     let envelope: AptosTxEnvelope | undefined;
+    // Set once the wallet has the transaction: only errors after that are the wallet's.
+    let handedOff = false;
     try {
       if ((await aptosWalletOnMainnet(wallet)) === false) {
-        setError({
-          text: `${wallet.name} is not on Aptos mainnet. Switch it to mainnet, then send again.`,
-          declined: false,
-        });
+        setError(
+          notSent(
+            `${wallet.name} is not on Aptos mainnet. Switch it to mainnet, then send again.`,
+            "wrong_network",
+          ),
+        );
         return;
       }
       // The account the wallet will sign with now, which may not be the one it connected with.
       const sender = (await currentAptosAccount(wallet)) ?? aptos.address;
       senderAddress = sender;
-      const res = await fetch("/api/aptos/build", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({
-          sender,
-          amount: amount.trim(),
-          to,
-          recipient: recipient.trim(),
-          ...(plan?.ok ? { maxFee: plan.maxFee.toString() } : {}),
-        }),
-      });
-      const body = (await res.json().catch(() => ({}))) as {
+      // Only this request, before anything is signed, may time out as "nothing was sent".
+      const built = await fetchBeforeSigning<{
         error?: string;
         transaction?: { arguments: Parameters<typeof aptosBurnArgsFromJson>[0] };
+        feeTransaction?: { function: string; typeArguments: string[]; functionArguments: string[] };
         envelope?: Record<keyof Omit<AptosTxEnvelope, "sender" | "chainId">, string>;
-      };
+      }>("/api/aptos/build", {
+        sender,
+        amount: amount.trim(),
+        to,
+        recipient: recipient.trim(),
+        ...(plan?.ok ? { maxFee: plan.maxFee.toString() } : {}),
+      });
+      if (built.timedOut) {
+        reportError("aptos prepare timed out", BUILD_TIMED_OUT.raw);
+        setError(BUILD_TIMED_OUT);
+        return;
+      }
+      const { res } = built;
+      const body: NonNullable<typeof built.body> = built.body ?? {};
       if (!res.ok || !body.transaction || !body.envelope) {
-        setError({ text: body.error ?? "Could not prepare the transfer.", declined: false });
+        // The server's words, not the wallet's: never read as "you cancelled".
+        const message = body.error ?? "Could not prepare the transfer.";
+        reportError("aptos prepare failed", message);
+        setError(notSent(message));
         // A fee that moved is shown again from a fresh quote before anything is signed.
         if (res.status === 409 && to !== "stellar") {
           const domain = routeDestination(to).cctpDomainId;
@@ -304,36 +369,38 @@ export function AptosBridgeForm({
         chainId: 1,
       };
       setStep("signing");
+      handedOff = true;
       const tx = await signAndSubmitAptos(wallet, args, envelope);
+      // The burn is out; Xebra's fee is asked for next. Declining it does not undo the transfer.
+      if (body.feeTransaction) {
+        try {
+          await signAndSubmitAptosCall(wallet, body.feeTransaction);
+        } catch (err) {
+          console.warn("xebra fee not sent", err);
+        }
+      }
       const r = { tx, to, at: Date.now() };
       const savedOk = remember(r);
       setSaved(savedOk);
       setSent(r);
     } catch (err) {
-      const text = reportError("aptos burn failed", err);
-      const declined = DECLINED.test(text);
-      if (declined) {
-        setError({ text, declined: true });
-      } else if (senderAddress && envelope) {
-        const nextSeq = await readAptosSequenceNumber(senderAddress).catch(() => null);
-        if (nextSeq !== null && nextSeq > envelope.sequenceNumber) {
-          setError({
-            text: "This transfer may have been sent. Check your wallet before trying again.",
-            declined: false,
-          });
-        } else if (nextSeq !== null && nextSeq <= envelope.sequenceNumber) {
-          const base = text.trim();
-          const sentence = base ? (base.endsWith(".") ? base : `${base}.`) : "";
-          setError({
-            text: sentence ? `${sentence} Nothing was sent.` : "Nothing was sent.",
-            declined: false,
-          });
-        } else {
-          setError({ text, declined: false });
-        }
-      } else {
-        setError({ text, declined: false });
+      if (!handedOff) {
+        // Nothing reached the wallet, so nothing was sent; the raw text goes to the console only.
+        reportError("aptos prepare failed", err);
+        setError(notSent("Could not prepare the transfer. Nothing was sent. Try again."));
+        return;
       }
+      const classified = classifyWalletError(err);
+      reportError("aptos burn failed", classified.raw);
+      if (!senderAddress || !envelope) {
+        setError(classified);
+        return;
+      }
+      const nextSeq =
+        classified.kind === "declined" || classified.kind === "popup"
+          ? null
+          : await readAptosSequenceNumber(senderAddress).catch(() => null);
+      setError(afterWalletError(classified, nextSeq, envelope.sequenceNumber));
     } finally {
       setStep("idle");
     }
@@ -478,10 +545,17 @@ export function AptosBridgeForm({
         {toStellar
           ? units !== null && (
               <Notice tone="info" title="No delivery fee to Stellar" className="-mt-2">
-                Circle does not forward into Stellar, so it is paid nothing and the recipient gets
-                the full amount.{" "}
+                Circle does not forward into Stellar, so it is paid nothing. Xebra takes{" "}
+                {formatUsdc6(flatFeeFor(STELLAR_CCTP_DOMAIN, units))} USDC (0.01 plus 0.01% of the
+                amount), a second wallet request after the burn, and the recipient gets{" "}
+                {formatUsdc6(
+                  units > flatFeeFor(STELLAR_CCTP_DOMAIN, units)
+                    ? units - flatFeeFor(STELLAR_CCTP_DOMAIN, units)
+                    : 0n,
+                )}{" "}
+                USDC.{" "}
                 {source.relayer
-                  ? "Xebra completes the mint on Stellar for transfers of 1 USDC or more; for less, you finish it from a Stellar wallet for a few hundredths of an XLM."
+                  ? "Xebra completes the mint on Stellar for transfers of 1.02 USDC or more; for less, you finish it from a Stellar wallet for a few hundredths of an XLM."
                   : "You finish the mint from a Stellar wallet once Circle attests the burn, for a few hundredths of an XLM."}
               </Notice>
             )
@@ -498,14 +572,17 @@ export function AptosBridgeForm({
             )}
 
         {error &&
-          (error.declined ? (
+          (error.kind === "declined" || error.kind === "popup" ? (
             <Notice tone="info" title="Wallet request cancelled">
-              The wallet reported: {error.text} If you did not cancel it yourself, the wallet window
-              may have been blocked or closed. Allow pop-ups for this site, then try again.
+              You cancelled in your wallet. Nothing was sent.
+            </Notice>
+          ) : error.maybeSent ? (
+            <Notice tone="alarm" title="Could not confirm transfer">
+              {error.message}
             </Notice>
           ) : (
             <Notice tone="alarm" title="Could not send">
-              {error.text}
+              {error.message}
             </Notice>
           ))}
 
@@ -680,6 +757,7 @@ function ToStellar({
   const [recipient, setRecipient] = useState<string | null>(null);
   const [claiming, setClaiming] = useState(false);
   const [claimError, setClaimError] = useState<string | null>(null);
+  const [pollError, setPollError] = useState(false);
   const completing = useRef(false);
   const isTerminal = delivery.kind === "done" || delivery.kind === "stuck";
   const deliveryRef = useRef(delivery);
@@ -689,10 +767,14 @@ function ToStellar({
     if (isTerminal) return;
     let cancelled = false;
     let timer: ReturnType<typeof setTimeout>;
+    let consecutiveFailures = 0;
 
     async function tick() {
       try {
         const s = await fetch(`/api/aptos/status?tx=${tx}`, { cache: "no-store" });
+        if (!s.ok) {
+          throw new Error(`Status service answered ${s.status}`);
+        }
         const body = (await s.json()) as {
           state?: Attest;
           delivered?: boolean;
@@ -701,6 +783,8 @@ function ToStellar({
         };
         const state: Attest = body.state ?? "unknown";
         if (cancelled) return;
+        consecutiveFailures = 0;
+        setPollError(false);
         setAttest(state);
         if (body.recipient) setRecipient(body.recipient);
 
@@ -743,9 +827,16 @@ function ToStellar({
         }
       } catch {
         completing.current = false;
-        // A dropped request is not a failed transfer; the next tick asks again.
+        if (cancelled) return;
+        consecutiveFailures += 1;
+        if (shouldShowPollNotice(consecutiveFailures)) {
+          setPollError(true);
+        }
       }
-      if (!cancelled) timer = setTimeout(tick, POLL_MS);
+      if (!cancelled) {
+        const delay = nextPollDelay(consecutiveFailures, POLL_MS);
+        timer = setTimeout(tick, delay);
+      }
     }
 
     void tick();
@@ -771,21 +862,28 @@ function ToStellar({
   }
 
   return (
-    <Progress
-      digest={tx}
-      attest={attest}
-      delivery={delivery}
-      relayerEnabled={relayerEnabled}
-      recipient={recipient}
-      stellarAddress={stellarAddress}
-      claiming={claiming}
-      claimError={claimError}
-      onClaim={onClaim}
-      onConnectStellar={onConnectStellar}
-      onRetry={() => setDelivery({ kind: "idle" })}
-      onReset={onReset}
-      sourceName="Aptos"
-      burnUrl={explorer(tx)}
-    />
+    <div className="flex flex-col gap-5">
+      {pollError && (
+        <Notice tone="info" title="We can't reach the status service right now">
+          Your transfer is safe on chain; this page keeps trying.
+        </Notice>
+      )}
+      <Progress
+        digest={tx}
+        attest={attest}
+        delivery={delivery}
+        relayerEnabled={relayerEnabled}
+        recipient={recipient}
+        stellarAddress={stellarAddress}
+        claiming={claiming}
+        claimError={claimError}
+        onClaim={onClaim}
+        onConnectStellar={onConnectStellar}
+        onRetry={() => setDelivery({ kind: "idle" })}
+        onReset={onReset}
+        sourceName="Aptos"
+        burnUrl={explorer(tx)}
+      />
+    </div>
   );
 }

@@ -5,6 +5,7 @@ import {
   readDestinationDomain,
 } from "@xebra/cctp-client";
 import { irisBaseUrl, irisFetch, stellarDomainId } from "../../../lib/server/iris";
+import { logFailure } from "../../../lib/server/log";
 import { normaliseTxHash, readSource, txHashHint } from "../../../lib/server/routes";
 import { createTtlCache } from "../../../lib/server/ttl-cache";
 
@@ -78,6 +79,8 @@ export async function GET(request: Request): Promise<Response> {
         destinationDomain: destinationOf(body),
       };
     } catch (err) {
+      // The page is only told "unknown". Why is kept here, where a report can be matched to it.
+      logFailure("/api/delivery", err, { src: source.domain, tx }, request);
       if (err instanceof IrisUnavailable) {
         return { status: "unknown", reason: "status lookups are paused for a moment" };
       }

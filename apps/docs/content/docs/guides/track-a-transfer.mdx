@@ -11,6 +11,8 @@ on the source chain. Xebra reads its progress from Circle.
 | Stellar | `stellar` | The transaction hash: 64 hex characters, without `0x` |
 | An EVM chain | Its id, such as `arc` | The transaction hash: `0x` and 64 hex characters |
 | Sui | `sui` | The transaction digest (base58) |
+| Solana | `solana` | The transaction signature (base58) |
+| Aptos | `aptos` | The transaction hash: `0x` and 64 hex characters |
 
 Over HTTP this is [`GET /v1/transfers/{chain}/{tx}`](/docs/api/transfers/get-transfer).
 

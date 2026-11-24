@@ -11,7 +11,7 @@ Something went wrong on Xebra's side. Nothing was sent and nothing was signed.
 
 ## What to do
 
-Try again. If it repeats, [open an issue](https://github.com/xebra-org/xebra/issues) with the request and the time.
+Try again. If it repeats, [open an issue](https://github.com/xebra-org/xebra/issues) with the `instance` from the answer (or its `X-Request-Id` header), the request and the time. The `instance` is what the failure is logged under.
 
 ## Example
 
@@ -20,9 +20,11 @@ Try again. If it repeats, [open an issue](https://github.com/xebra-org/xebra/iss
   "type": "https://docs.xebra.exchange/errors/internal_error",
   "title": "Internal error",
   "status": 500,
-  "detail": "…",
+  "detail": "Something went wrong on our side. Nothing was sent.",
   "code": "internal_error"
 }
 ```
+
+`detail` varies. A response that failed Xebra's own checks says `The answer failed our own checks. Nothing was sent.`
 
 Every error has this shape. See [Errors](/docs/errors) for how to handle them.

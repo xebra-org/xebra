@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import {
   DOCS_API_URL,
@@ -94,5 +95,17 @@ describe("problems", () => {
       detail: "This endpoint does not accept GET.",
       code: "invalid_request",
     });
+  });
+});
+
+describe("what the middleware loads", () => {
+  it("imports nothing at run time, so the SDK stays out of the middleware's bundle", () => {
+    const source = readFileSync(new URL("./host.ts", import.meta.url), "utf8");
+    const imports = source
+      .split(/\r?\n/)
+      .filter((line) => /^(import|export)\b.*\bfrom\b/.test(line));
+    // The titles are typed against the SDK's codes; a type import is erased before bundling.
+    expect(imports).toEqual(['import type { ApiErrorCode } from "@xebra/sdk";']);
+    expect(source).not.toMatch(/\brequire\(|\bimport\(/);
   });
 });
