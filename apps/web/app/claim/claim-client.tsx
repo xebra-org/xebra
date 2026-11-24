@@ -502,6 +502,7 @@ export function ClaimClient() {
           message={attestation.message}
           attestation={attestation.attestation}
           target={attestation.sui}
+          stellarTx={source === STELLAR ? txHash.trim().toLowerCase() : undefined}
         />
       )}
 
