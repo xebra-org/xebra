@@ -12,6 +12,7 @@ import {
   sendClaim,
   waitForClaim,
 } from "../../lib/evm-claim";
+import { ReceiptTimeoutError } from "../../lib/evm-rpc";
 import { reportError } from "../../lib/format-error";
 import type { ClassifiedError } from "../../lib/wallet-error";
 import { classifyClaimError } from "./claim-error";
@@ -126,8 +127,7 @@ export function EvmClaim({
         if (outcome !== "success") throw new Error(`the transaction ${sentHash} reverted on chain`);
         setHash(sentHash);
       } catch (waitErr) {
-        const message = waitErr instanceof Error ? waitErr.message : String(waitErr);
-        if (/no receipt|timeout/i.test(message)) {
+        if (waitErr instanceof ReceiptTimeoutError) {
           setConfirming(true);
         } else {
           throw waitErr;

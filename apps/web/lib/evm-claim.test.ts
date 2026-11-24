@@ -142,7 +142,7 @@ describe("waitForClaim", () => {
 
   it("gives up, naming the hash, when no receipt ever comes", async () => {
     const w = wallet(() => null);
-    await expect(waitForClaim(w, HASH, 1)).rejects.toThrow(`no receipt for ${HASH}`);
+    await expect(waitForClaim(w, HASH, 1)).rejects.toThrow(HASH);
   });
 });
 

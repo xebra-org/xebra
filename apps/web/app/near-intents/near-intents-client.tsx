@@ -20,7 +20,13 @@ import { Notice } from "../../components/ui/notice";
 import { Skeleton } from "../../components/ui/skeleton";
 import { useWallets } from "../../components/wallet/wallet-provider";
 import { env } from "../../lib/env";
-import { ensureChain, readChainId, sendTransaction, waitForReceipt } from "../../lib/evm-rpc";
+import {
+  ReceiptTimeoutError,
+  ensureChain,
+  readChainId,
+  sendTransaction,
+  waitForReceipt,
+} from "../../lib/evm-rpc";
 import { reportError } from "../../lib/format-error";
 import { type ClassifiedError, classifyWalletError } from "../../lib/wallet-error";
 
@@ -419,7 +425,7 @@ export function NearIntentsClient() {
         }
         setStep("submitting");
         try {
-          const result = await waitForReceipt(provider, hash, { timeoutMs: 180_000 });
+          const result = await waitForReceipt(provider, hash, { chain, timeoutMs: 180_000 });
           if (result !== "success") {
             if (s.id === "burn") {
               remember(null);
@@ -430,8 +436,7 @@ export function NearIntentsClient() {
             );
           }
         } catch (waitErr) {
-          const message = waitErr instanceof Error ? waitErr.message : String(waitErr);
-          if (s.id === "burn" && /no receipt|timeout/i.test(message)) {
+          if (s.id === "burn" && waitErr instanceof ReceiptTimeoutError) {
             // A receipt timeout is "still confirming", not a failure: keep tracking.
             console.warn(
               "[xebra] near-intents: burn receipt wait timed out, still confirming",
