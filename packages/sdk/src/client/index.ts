@@ -39,6 +39,10 @@ export type XebraApiErrorCode = XebraErrorCode;
 
 /** A problem the API answered with: `code` is stable, `detail` is written for a person. */
 export class XebraApiError extends XebraError {
+  /**
+   * Stable: an `ApiErrorCode` or one of `CLIENT_ERROR_CODES`. The API codes are listed on
+   * [Errors](/docs/errors).
+   */
   declare readonly code: XebraApiErrorCode;
   /**
    * How long the server asked to be left alone, from its `Retry-After` header, in milliseconds
@@ -48,10 +52,15 @@ export class XebraApiError extends XebraError {
   readonly retryAfterMs: number | undefined;
 
   constructor(
+    /** The HTTP status, or 0 when no answer came back. */
     readonly status: number,
     code: XebraApiErrorCode,
+    /** A sentence for a person. */
     readonly detail: string,
-    /** The problem's other fields, such as `minimum`, `maximum`, `have` and `need`. */
+    /**
+     * The problem's other fields, such as `minimum`, `maximum`, `have` and `need`. The amounts
+     * and `needs` are typed as strings.
+     */
     readonly extra: Partial<
       Pick<Problem, "minimum" | "maximum" | "have" | "need" | "total" | "limit" | "needs">
     > &
@@ -87,14 +96,25 @@ export function isXebraApiError(e: unknown): e is XebraApiError {
 }
 
 export interface XebraClientOptions {
+  /**
+   * Where the API answers.
+   * @defaultValue "https://api.xebra.exchange"
+   */
   baseUrl?: string;
   /**
    * Sent as `Authorization: Bearer <apiKey>`. Optional: without one the API answers at a lower
    * rate limit. See https://docs.xebra.exchange/guides/api-keys.
    */
   apiKey?: string;
+  /**
+   * A fetch to use instead of the global one, for tests or a custom agent.
+   * @defaultValue globalThis.fetch
+   */
   fetch?: typeof fetch;
-  /** Per request. Default 15 s. */
+  /**
+   * How long one request may take before it fails with code `timeout`, in milliseconds.
+   * @defaultValue 15000
+   */
   timeoutMs?: number;
   /**
    * Ask again when a GET fails for a reason that asking again can cure. Off unless given.
@@ -150,7 +170,11 @@ export interface XebraCallOptions {
    * still applies: whichever comes first ends the request.
    */
   signal?: AbortSignal;
-  /** How long this call may take, in place of the client's `timeoutMs`. */
+  /**
+   * How long this one call may take before it fails with code `timeout`, in place of the
+   * client's `timeoutMs`.
+   * @defaultValue the client's `timeoutMs`
+   */
   timeoutMs?: number;
 }
 
