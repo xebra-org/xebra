@@ -43,49 +43,7 @@ without it.
 
 `estimate`, `startWithdrawal` and `prepareDeposit` all take the same `RebalanceRequest`.
 
-<TypeTable
-  type={{
-    intentsAccount: {
-      type: 'string',
-      description: 'Your account inside NEAR Intents, the intent `signer_id`, e.g. `"mm.near"`. Also where the deposit is credited and a failed withdrawal is refunded.',
-      required: true,
-    },
-    from: {
-      type: 'string',
-      description: 'The chain whose USDC balance is too full, in Xebra\'s or NEAR Intents\' naming: `"base"`, `"avax"`.',
-      required: true,
-    },
-    to: {
-      type: 'string',
-      description: 'The chain whose USDC balance needs topping up.',
-      required: true,
-    },
-    amount: {
-      type: 'string',
-      description: 'Decimal USDC to move, e.g. `"100000"`. Refused if it has more decimal places than the token has.',
-      required: true,
-    },
-    fromWallet: {
-      type: 'string',
-      description: 'Your own wallet on `from`: receives the withdrawal and signs the burn.',
-      required: true,
-    },
-    toWallet: {
-      type: 'string',
-      description: 'Your own wallet on `to`: where 1Click refunds a deposit that arrives too late.',
-      required: true,
-    },
-    maxTotalFee: {
-      type: 'string',
-      description: 'Refuse to build the burn if Xebra\'s and Circle\'s fees together exceed this decimal amount. See [the fee cap](#step-2-building-the-burn).',
-    },
-    speed: {
-      type: '"standard" | "fast"',
-      description: 'CCTP speed for the burn.',
-      default: '"standard"',
-    },
-  }}
-/>
+<AutoTypeTable path="../../packages/sdk/src/intents/index.ts" name="RebalanceRequest" />
 
 ## Options
 

@@ -18,6 +18,7 @@
     "fumadocs-mdx": "15.5.3",
     "fumadocs-openapi": "12.6.0",
     "fumadocs-twoslash": "4.0.4",
+    "fumadocs-typescript": "5.5.2",
     "fumadocs-ui": "npm:@fumadocs/base-ui@16.18.4",
     "next": "16.4.5",
     "react": "19.3.1",
