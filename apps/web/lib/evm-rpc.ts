@@ -25,6 +25,21 @@ export interface ChainTarget {
   nativeCurrency: { name: string; symbol: string; decimals: number };
 }
 
+/**
+ * Thrown when `waitForReceipt` exhausts its polling deadline without the chain confirming
+ * the transaction. Carries the transaction hash so callers and error views can direct the
+ * user to the block explorer.
+ */
+export class EvmReceiptTimeoutError extends Error {
+  readonly hash: string;
+
+  constructor(message: string, hash: string) {
+    super(message);
+    this.name = "EvmReceiptTimeoutError";
+    this.hash = hash;
+  }
+}
+
 export type Hex = `0x${string}`;
 
 const hex = (n: number) => `0x${n.toString(16)}`;
@@ -229,8 +244,16 @@ export interface WaitOptions {
   timeoutMs?: number;
   pollMs?: number;
   /** Injected in tests. */
-  sleep?: (ms: number) => Promise<void>;
-  now?: () => number;
+  sleep?: ((ms: number) => Promise<void>) | undefined;
+  now?: (() => number) | undefined;
+  /** The chain the transaction is on, so a timeout can name it and link its explorer. */
+  chain?: ChainTarget | undefined;
+}
+
+function formatReceiptTimeout(hash: string, timeoutMs: number, chain?: ChainTarget): string {
+  if (!chain) return `no receipt for ${hash} after ${Math.round(timeoutMs / 1000)}s`;
+  const explorer = `${chain.explorerUrl.replace(/\/+$/, "")}/tx/${hash}`;
+  return `${chain.name} has not confirmed the transaction yet. It may still go through: check ${explorer}.`;
 }
 
 /**
@@ -260,7 +283,7 @@ export async function waitForReceipt(
     if (receipt) return receipt.status === "0x1" ? "success" : "reverted";
     await sleep(pollMs);
   }
-  throw new Error(`no receipt for ${hash} after ${Math.round(timeoutMs / 1000)}s`);
+  throw new EvmReceiptTimeoutError(formatReceiptTimeout(hash, timeoutMs, options.chain), hash);
 }
 
 /** The latest block number on the wallet's current chain. */
