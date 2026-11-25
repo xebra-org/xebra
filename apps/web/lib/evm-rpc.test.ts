@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   type ChainTarget,
+  EvmReceiptTimeoutError,
   ensureChain,
   ethCall,
   readBlockNumber,
@@ -319,14 +320,34 @@ describe("waitForReceipt", () => {
       t += 10_000;
       return t;
     };
+    const clock = { ...fast, timeoutMs: 30_000, now, chain: BASE };
+    const err = await waitForReceipt(
+      wallet(() => null),
+      HASH,
+      clock,
+    ).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(EvmReceiptTimeoutError);
+    expect((err as EvmReceiptTimeoutError).hash).toBe(HASH);
+    expect((err as Error).message).toBe(
+      `Base has not confirmed the transaction yet. It may still go through: check https://basescan.org/tx/${HASH}.`,
+    );
+  });
+
+  it("gives up at the deadline without a chain, carrying the hash", async () => {
+    let t = 0;
+    const now = () => {
+      t += 10_000;
+      return t;
+    };
     const clock = { ...fast, timeoutMs: 30_000, now };
-    await expect(
-      waitForReceipt(
-        wallet(() => null),
-        HASH,
-        clock,
-      ),
-    ).rejects.toThrow(`no receipt for ${HASH} after 30s`);
+    const err = await waitForReceipt(
+      wallet(() => null),
+      HASH,
+      clock,
+    ).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(EvmReceiptTimeoutError);
+    expect((err as EvmReceiptTimeoutError).hash).toBe(HASH);
+    expect((err as Error).message).toBe(`no receipt for ${HASH} after 30s`);
   });
 });
 

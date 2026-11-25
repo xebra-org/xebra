@@ -24,7 +24,14 @@ describe.skipIf(!RUN)("a Solana burn simulated on mainnet", () => {
   const owner = new PublicKey(OWNER);
 
   async function simulate(params: ReturnType<typeof solanaBurnParams>) {
-    const built = await buildSolanaBurnTransaction(connection, { owner, params });
+    // As the app builds it: Xebra's fee (0.01 + 0.01% of 1 USDC, here to the owner's own USDC
+    // account, which exists) and Xebra's memo, in the burn's own transaction.
+    const built = await buildSolanaBurnTransaction(connection, {
+      owner,
+      params,
+      fee: { owner, amount: 10_100n },
+      memo: "xebra",
+    });
     const tx = VersionedTransaction.deserialize(Buffer.from(built.transaction, "base64"));
     const sim = await connection.simulateTransaction(tx, {
       sigVerify: false,

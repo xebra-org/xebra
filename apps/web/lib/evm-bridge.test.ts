@@ -1,5 +1,5 @@
 import { FINALITY, tokenMessengerAbi, xebraWrapperAbi } from "@xebra/cctp-evm";
-import { EVM_CHAINS } from "@xebra/sdk/core";
+import { EVM_CHAINS, isXebraTagged } from "@xebra/sdk/core";
 import { decodeFunctionData } from "viem";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
@@ -269,7 +269,9 @@ describe("submitEvmBridge", () => {
     expect(fee?.to).toBe(base.usdcAddress);
     expect(fee?.data.slice(0, 10)).toBe("0xa9059cbb");
     expect(fee?.data).toContain(FEE_ADDRESS.slice(2).toLowerCase());
-    expect(BigInt(`0x${fee?.data.slice(-64)}`)).toBe(100_000n);
+    // selector + two words, then Xebra's ERC-8021 tag.
+    expect(isXebraTagged(fee?.data ?? "")).toBe(true);
+    expect(BigInt(`0x${fee?.data.slice(2 + 8 + 64, 2 + 8 + 128)}`)).toBe(100_000n);
 
     // 5 to burn and 0.10 to Xebra: a wallet holding exactly 5 is short.
     await expect(

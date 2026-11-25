@@ -28,6 +28,7 @@ import {
 import { feeDestination, routeDestination } from "../../lib/route-destination";
 import { type RecipientResolution, resolveRecipient } from "../../lib/solana-recipient";
 import { claimOnStellar } from "../../lib/sui-stellar/claim-client";
+import { fromClassified } from "../../lib/user-error";
 import {
   type ClassifiedError,
   type WalletErrorKind,
@@ -42,6 +43,7 @@ import {
   signAndSubmitAptosCall,
 } from "../../lib/wallets/aptos";
 import { Button } from "../ui/button";
+import { ErrorNotice } from "../ui/error-notice";
 import { Field, Input } from "../ui/field";
 import { ArrowRight } from "../ui/icons";
 import { Notice } from "../ui/notice";
@@ -571,20 +573,11 @@ export function AptosBridgeForm({
               </div>
             )}
 
-        {error &&
-          (error.kind === "declined" || error.kind === "popup" ? (
-            <Notice tone="info" title="Wallet request cancelled">
-              You cancelled in your wallet. Nothing was sent.
-            </Notice>
-          ) : error.maybeSent ? (
-            <Notice tone="alarm" title="Could not confirm transfer">
-              {error.message}
-            </Notice>
-          ) : (
-            <Notice tone="alarm" title="Could not send">
-              {error.message}
-            </Notice>
-          ))}
+        {error && (
+          <ErrorNotice
+            error={fromClassified(error, { wallet: aptos?.walletName, chain: "Aptos" })}
+          />
+        )}
 
         <Button
           size="lg"

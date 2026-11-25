@@ -6,6 +6,7 @@ import {
 } from "@xebra/cctp-evm";
 import { describe, expect, it } from "vitest";
 import { EVM_CHAINS } from "../core/chains/evm.js";
+import { withAttribution } from "../core/tag.js";
 import { XebraError } from "../errors.js";
 import { EvmBuildError, buildEvmBridge, evmBurnCall } from "./evm.js";
 
@@ -36,14 +37,16 @@ describe("buildEvmBridge", () => {
       kind: "evm",
       chainId: base.chainId,
       to: base.tokenMessengerAddress,
-      data: encodeDepositForBurnWithHook({
-        amount: INPUT.amount,
-        destinationDomain: 26,
-        recipient: RECIPIENT,
-        burnToken: base.usdcAddress,
-        maxFee: INPUT.maxFee,
-        minFinalityThreshold: FINALITY.standard,
-      }),
+      data: withAttribution(
+        encodeDepositForBurnWithHook({
+          amount: INPUT.amount,
+          destinationDomain: 26,
+          recipient: RECIPIENT,
+          burnToken: base.usdcAddress,
+          maxFee: INPUT.maxFee,
+          minFinalityThreshold: FINALITY.standard,
+        }),
+      ),
       value: "0",
     });
   });
@@ -66,15 +69,17 @@ describe("buildEvmBridge", () => {
     expect(steps[0]?.tx).toMatchObject({ data: encodeApprove(WRAPPER, INPUT.amount) });
     expect(steps[1]?.tx).toMatchObject({
       to: WRAPPER,
-      data: encodeWrapperBridge({
-        amount: INPUT.amount,
-        destinationDomain: 26,
-        recipient: RECIPIENT,
-        maxFee: INPUT.maxFee,
-        minFinalityThreshold: FINALITY.standard,
-        maxWrapperFee: via.maxWrapperFee,
-        deadline: INPUT.deadline,
-      }),
+      data: withAttribution(
+        encodeWrapperBridge({
+          amount: INPUT.amount,
+          destinationDomain: 26,
+          recipient: RECIPIENT,
+          maxFee: INPUT.maxFee,
+          minFinalityThreshold: FINALITY.standard,
+          maxWrapperFee: via.maxWrapperFee,
+          deadline: INPUT.deadline,
+        }),
+      ),
     });
   });
 
