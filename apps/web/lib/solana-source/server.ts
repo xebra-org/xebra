@@ -6,7 +6,7 @@ import {
   SolanaBurnRefused,
   buildSolanaBurnTransaction,
 } from "@xebra/cctp-solana";
-import { type EvmChain, type FeePlan, formatUsdc6, planEvmFee } from "@xebra/sdk/core";
+import { type EvmChain, type FeePlan, XEBRA_TAG, formatUsdc6, planEvmFee } from "@xebra/sdk/core";
 import { env } from "../env";
 import { irisBaseUrl, irisBudget, irisFetch } from "../server/iris";
 import { recipientStatus } from "../sui-stellar/stellar-side";
@@ -139,6 +139,8 @@ export async function buildSolanaSourceBurn(p: {
       owner: new PublicKey(p.sender),
       params,
       ...(p.fee ? { fee: { owner: new PublicKey(p.fee.owner), amount: p.fee.amount } } : {}),
+      // Public proof on chain that Xebra built this transfer.
+      memo: XEBRA_TAG,
     });
   } catch (err) {
     if (err instanceof InsufficientSolanaUsdcError) {

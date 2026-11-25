@@ -1,0 +1,85 @@
+name: transfers record
+
+# Keeps the public record of Xebra's transfers (`transfers.json` on the `proof-data` branch) up to
+# date from the chains, hourly. Read-only on every chain, no keys: the only write is the commit to
+# `proof-data`, which sits outside the main/dev rulesets. Stellar's public RPC keeps about seven
+# days of events, so a missed day is fine; a missed week leaves a gap the file records.
+#
+# Fee addresses are public repository variables (Settings → Secrets and variables → Actions →
+# Variables): XEBRA_FEE_ADDRESS_EVM, XEBRA_FEE_ADDRESS_SOLANA, XEBRA_FEE_ADDRESS_SUI — the same
+# values as the site's NEXT_PUBLIC_XEBRA_FEE_ADDRESS_*. A family without one is skipped.
+
+on:
+  schedule:
+    - cron: "17 * * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: transfers-record
+  cancel-in-progress: false
+
+env:
+  # The pinned public mainnet constants the packages are built against (as in ci.yml).
+  NETWORK: mainnet
+  NEXT_PUBLIC_NETWORK: mainnet
+  NEXT_PUBLIC_SOROBAN_RPC_URL: https://mainnet.sorobanrpc.com
+  NEXT_PUBLIC_HORIZON_URL: https://horizon.stellar.org
+  NEXT_PUBLIC_STELLAR_NETWORK_PASSPHRASE: "Public Global Stellar Network ; September 2015"
+  NEXT_PUBLIC_STELLAR_USDC_SAC_ADDRESS: CCW67TSZV3SSS2HXMBQ5JFGCKJNXKZM7UQUWUZPUTHXSTZLEO7SJMI75
+  NEXT_PUBLIC_STELLAR_TOKEN_MESSENGER_ADDRESS: CAE2G5Z77UP7GYPYGFOWFGW7C7J6I4YP2AFGSADRKQY62SYUFLPNFTXL
+  NEXT_PUBLIC_SOLANA_CCTP_DOMAIN_ID: "5"
+  NEXT_PUBLIC_SOLANA_RPC_URL: https://api.mainnet-beta.solana.com
+  NEXT_PUBLIC_SOLANA_USDC_MINT: EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v
+
+jobs:
+  record:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9.15.0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      # The script imports @xebra/sdk/core, which is read from its build.
+      - run: pnpm exec turbo run build --filter='./packages/*'
+
+      - name: Check out the record
+        run: |
+          if git fetch --depth=1 origin proof-data; then
+            git worktree add record FETCH_HEAD
+          else
+            git worktree add --orphan -b proof-data record
+          fi
+
+      - name: Read the chains
+        working-directory: apps/web
+        env:
+          NEXT_PUBLIC_XEBRA_FEE_ADDRESS_EVM: ${{ vars.XEBRA_FEE_ADDRESS_EVM }}
+          NEXT_PUBLIC_XEBRA_FEE_ADDRESS_SOLANA: ${{ vars.XEBRA_FEE_ADDRESS_SOLANA }}
+          NEXT_PUBLIC_XEBRA_FEE_ADDRESS_SUI: ${{ vars.XEBRA_FEE_ADDRESS_SUI }}
+        run: node scripts/transfers-record.mjs --out ../../record/transfers.json
+
+      - name: Commit the record
+        working-directory: record
+        run: |
+          git add transfers.json
+          if git diff --cached --quiet; then
+            echo "nothing new"
+            exit 0
+          fi
+          git -c user.name="xebra-record" \
+              -c user.email="41898282+github-actions[bot]@users.noreply.github.com" \
+              commit -m "Record of Xebra transfers, $(date -u +%Y-%m-%dT%H:%MZ)"
+          git push origin HEAD:proof-data

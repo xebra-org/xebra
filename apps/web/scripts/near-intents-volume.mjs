@@ -24,14 +24,9 @@
  * Default file: ../../evidence/near-intents/transfers.json (from apps/web).
  */
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { setDefaultAutoSelectFamilyAttemptTimeout } from "node:net";
 import { dirname, resolve } from "node:path";
 import { PublicKey } from "@solana/web3.js";
-import { scValToNative, xdr } from "@stellar/stellar-sdk";
-import { decodeEventLog, parseAbiItem, toEventSelector } from "viem";
-
-// Node gives each address 250 ms before trying the next; on a slow link that fails hosts that work.
-setDefaultAutoSelectFamilyAttemptTimeout(2_000);
+import { ARC_FIRST_BLOCK, arcTransfers, request, stellarTransfers } from "./lib/chain-readers.mjs";
 
 const here = dirname(new URL(import.meta.url).pathname);
 const argOut = process.argv.indexOf("--out");
@@ -42,64 +37,11 @@ const OUT = resolve(
 );
 
 const ONECLICK = "https://1click.chaindefuser.com";
-const ARC_RPC = process.env.ARC_RPC_URL || "https://rpc.mainnet.arc.io";
-const STELLAR_RPC = process.env.SOROBAN_RPC_URL || "https://mainnet.sorobanrpc.com";
-
-const ARC_WRAPPER = "0x11b30470DAE40B2Fc27b7AA90dc58e6B4fE9f4c3";
-/** The Arc wrapper's first `BridgeInitiated` (seq 1) is in block 31094669; nothing comes earlier. */
-const ARC_FIRST_BLOCK = 31_094_000n;
-const ARC_LOG_SPAN = 5_000n; // the public RPC refuses wider eth_getLogs ranges
-const STELLAR_WRAPPER = "CCPVTWII2TW6VVSVA4JQ2KFHICGBG4QVAHPIGUPSIW3E4VNPUI4Y2WQR";
 
 /** CCTP domains of the chains `@xebra/sdk/intents` uses as hubs (DEFAULT_HUBS). */
 const HUBS = { 6: "base", 3: "arbitrum", 5: "solana" };
 /** 1Click statuses that will not change again. */
 const FINAL = new Set(["SUCCESS", "REFUNDED", "FAILED"]);
-
-const ARC_EVENT = parseAbiItem(
-  "event BridgeInitiated(bytes32 indexed transferId, uint64 indexed seq, address indexed user, uint32 destinationDomain, bytes32 mintRecipient, uint256 amount, uint256 fee, uint256 netBurned, uint256 forwardFee, uint256 wrapperTake, uint32 minFinalityThreshold, bytes32 recipientOwner)",
-);
-
-const usdc = (units, decimals = 6) => Number(units) / 10 ** decimals;
-const hex = (b) => `0x${Buffer.from(b).toString("hex")}`;
-
-const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-
-/**
- * fetch, trying again (up to six times, backing off) when the network fails or the endpoint
- * rate-limits. Returns the response for anything else, errors included.
- */
-async function request(url, init = {}) {
-  for (let attempt = 0; ; attempt++) {
-    let res = null;
-    try {
-      res = await fetch(url, { ...init, signal: AbortSignal.timeout(30_000) });
-    } catch (e) {
-      if (attempt >= 6) throw e;
-    }
-    if (res && res.status !== 429) return res;
-    if (res && attempt >= 6) return res;
-    await sleep(1000 * 2 ** attempt);
-  }
-}
-
-async function rpc(url, method, params) {
-  for (let attempt = 0; ; attempt++) {
-    const res = await request(url, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ jsonrpc: "2.0", id: 1, method, params }),
-    });
-    const body = await res.json();
-    if (!body.error) return body.result;
-    // Arc's public RPC says "rate limit exceeded" in a 200.
-    if (/rate limit/i.test(body.error.message) && attempt < 6) {
-      await sleep(1000 * 2 ** attempt);
-      continue;
-    }
-    throw new Error(`${method}: ${body.error.message}`);
-  }
-}
 
 /** The deposit address 1Click would have issued for a mint recipient on a hub. */
 function depositAddressFor(domain, mintRecipient, recipientOwner) {
@@ -120,88 +62,6 @@ async function oneclickStatus(address) {
   if (res.status === 404) return null;
   if (!res.ok) throw new Error(`1Click status ${res.status} for ${address}`);
   return res.json();
-}
-
-// --- reading the wrappers ---------------------------------------------------------------------
-
-async function arcTransfers(fromBlock) {
-  const topic = toEventSelector(ARC_EVENT);
-  const latest = BigInt(await rpc(ARC_RPC, "eth_blockNumber", []));
-  const found = [];
-  for (let a = fromBlock; a <= latest; a += ARC_LOG_SPAN) {
-    await sleep(250);
-    const b = a + ARC_LOG_SPAN - 1n < latest ? a + ARC_LOG_SPAN - 1n : latest;
-    const logs = await rpc(ARC_RPC, "eth_getLogs", [
-      {
-        address: ARC_WRAPPER,
-        topics: [topic],
-        fromBlock: `0x${a.toString(16)}`,
-        toBlock: `0x${b.toString(16)}`,
-      },
-    ]);
-    for (const log of logs) {
-      const { args } = decodeEventLog({ abi: [ARC_EVENT], data: log.data, topics: log.topics });
-      const block = await rpc(ARC_RPC, "eth_getBlockByNumber", [log.blockNumber, false]);
-      found.push({
-        id: `arc:${args.transferId}`,
-        source: "arc",
-        sourceTx: log.transactionHash,
-        sourceTxUrl: `https://explorer.arc.io/tx/${log.transactionHash}`,
-        at: new Date(Number(BigInt(block.timestamp)) * 1000).toISOString(),
-        sender: args.user,
-        domain: Number(args.destinationDomain),
-        mintRecipient: args.mintRecipient,
-        recipientOwner: args.recipientOwner,
-        amount: usdc(args.amount),
-        xebraFee: usdc(args.wrapperTake),
-        circleFee: usdc(args.forwardFee),
-      });
-    }
-  }
-  return { found, cursor: latest + 1n };
-}
-
-async function stellarTransfers(cursorLedger) {
-  const health = await rpc(STELLAR_RPC, "getHealth");
-  let gap = null;
-  let start = cursorLedger ?? health.oldestLedger;
-  if (start < health.oldestLedger) {
-    gap = { from: start, to: health.oldestLedger - 1 };
-    start = health.oldestLedger;
-  }
-  const topic = xdr.ScVal.scvSymbol("bridge_initiated").toXDR("base64");
-  const found = [];
-  let page = { startLedger: start };
-  for (;;) {
-    const res = await rpc(STELLAR_RPC, "getEvents", {
-      ...page,
-      filters: [{ type: "contract", contractIds: [STELLAR_WRAPPER], topics: [[topic, "**"]] }],
-      pagination: { limit: 200, ...(page.cursor ? { cursor: page.cursor } : {}) },
-    });
-    for (const e of res.events) {
-      const v = scValToNative(xdr.ScVal.fromXDR(e.value, "base64"));
-      found.push({
-        id: `stellar:${hex(v.transfer_id)}`,
-        source: "stellar",
-        sourceTx: e.txHash,
-        sourceTxUrl: `https://stellar.expert/explorer/public/tx/${e.txHash}`,
-        at: e.ledgerClosedAt,
-        sender: v.user,
-        domain: Number(v.destination_domain),
-        mintRecipient: hex(v.mint_recipient),
-        recipientOwner: v.recipient_owner ? hex(v.recipient_owner) : null,
-        amount: usdc(v.amount, 7),
-        xebraFee: usdc(v.wrapper_take ?? 0, 7),
-        circleFee: usdc(v.forward_fee ?? 0, 7),
-      });
-    }
-    // The RPC scans a limited stretch of ledgers per call and hands back a cursor where it
-    // stopped, events or not, so follow it to the latest ledger rather than stopping on a short page.
-    const at = res.cursor ? Number(BigInt(res.cursor.split("-")[0]) >> 32n) : res.latestLedger;
-    if (at >= res.latestLedger) break;
-    page = { cursor: res.cursor };
-  }
-  return { found, cursor: health.latestLedger + 1, gap };
 }
 
 // --- the run ----------------------------------------------------------------------------------

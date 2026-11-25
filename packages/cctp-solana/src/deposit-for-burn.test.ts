@@ -6,6 +6,7 @@ import {
   DEPOSIT_FOR_BURN_WITH_HOOK_DISCRIMINATOR,
   type DepositForBurnWithHookParams,
   InsufficientSolanaUsdcError,
+  MEMO_PROGRAM,
   SOLANA_USDC_MINT,
   SolanaBurnRefused,
   buildDepositForBurnWithHookInstruction,
@@ -235,6 +236,26 @@ describe("buildSolanaBurnTransaction", () => {
     );
     // Compute limit first, priced second, burn last.
     expect(tx.instructions[0]?.data.readUInt32LE(1)).toBe(BURN_COMPUTE_UNITS);
+  });
+
+  it("carries Xebra's memo with the fee and the longest hook, and still fits a packet", async () => {
+    const feeOwner = Keypair.generate().publicKey;
+    const built = await buildSolanaBurnTransaction(connection(10_100_000n), {
+      owner,
+      params,
+      fee: { owner: feeOwner, amount: 100_000n },
+      memo: "xebra",
+      simulate: false,
+    });
+    const raw = Buffer.from(built.transaction, "base64");
+    console.log(`burn + fee + memo, Stellar hook: ${raw.length} of 1232 bytes`);
+    expect(raw.length).toBeLessThanOrEqual(1232);
+    const tx = Transaction.from(raw);
+    const memo = tx.instructions.at(-1);
+    expect(memo?.programId.equals(MEMO_PROGRAM)).toBe(true);
+    expect(memo?.keys).toEqual([]);
+    expect(memo?.data.toString("utf8")).toBe("xebra");
+    expect(tx.instructions.at(-2)?.programId.equals(TOKEN_PROGRAM)).toBe(true);
   });
 
   it("pays Xebra's fee in the same transaction, after the burn, and still fits a packet", async () => {

@@ -242,6 +242,11 @@ export async function buildSolanaBurnTransaction(
      * USDC moved to `owner`'s USDC token account, which must already exist.
      */
     fee?: { owner: PublicKey; amount: bigint };
+    /**
+     * A public note carried by the transaction (SPL Memo), so anyone reading the chain can tell
+     * who built it. No signer accounts: it proves where the transaction came from, not who signed.
+     */
+    memo?: string;
     /** Skip the simulation. Tests only. */
     simulate?: boolean;
   },
@@ -280,6 +285,7 @@ export async function buildSolanaBurnTransaction(
       }),
     );
   }
+  if (p.memo) tx.add(memoInstruction(p.memo));
 
   if (p.simulate !== false) {
     const sim = await connection.simulateTransaction(
@@ -307,6 +313,18 @@ export async function buildSolanaBurnTransaction(
     eventAccount: event.publicKey.toBase58(),
     lastValidBlockHeight,
   };
+}
+
+/** SPL Memo v2. */
+export const MEMO_PROGRAM = new PublicKey("MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr");
+
+/** An SPL Memo instruction with no signer accounts: the text, UTF-8, as the whole of its data. */
+export function memoInstruction(text: string): TransactionInstruction {
+  return new TransactionInstruction({
+    programId: MEMO_PROGRAM,
+    keys: [],
+    data: Buffer.from(text, "utf8"),
+  });
 }
 
 /**
