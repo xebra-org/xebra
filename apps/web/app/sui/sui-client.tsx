@@ -1,6 +1,6 @@
 "use client";
 
-import type { EvmChainId } from "@xebra/sdk/core";
+import { type EvmChainId, XEBRA_FLAT_FEE, formatUsdc6 } from "@xebra/sdk/core";
 import type React from "react";
 import { useEffect, useRef, useState } from "react";
 import { CHAIN_NAMES } from "../../components/bridge/chain-glyph";
@@ -198,7 +198,10 @@ export function SuiTransfer({
     if (start) setDigest(start);
   }, [forwardedKey]);
 
-  const amountOk = /^\d{1,12}(\.\d{1,6})?$/.test(amount.trim()) && Number(amount) > 0;
+  // Xebra's flat fee comes out of the amount, in the burn's own transaction: send more than it.
+  const amountOk =
+    /^\d{1,12}(\.\d{1,6})?$/.test(amount.trim()) &&
+    Number(amount) > Number(formatUsdc6(XEBRA_FLAT_FEE.deliver));
   const recipientOk = /^G[A-Z2-7]{55}$/.test(recipient.trim());
   const canSend = Boolean(wallet && account) && amountOk && recipientOk && step === "idle";
 
@@ -394,7 +397,7 @@ export function SuiTransfer({
       <Field
         id="sui-amount"
         label="Amount"
-        hint={maxUsdc !== null ? `USDC on Sui. Up to ${maxUsdc} per transfer.` : "USDC on Sui."}
+        hint={`USDC on Sui${maxUsdc !== null ? `, up to ${maxUsdc} per transfer` : ""}. Xebra takes 0.01 USDC plus 0.01% of it in the same transaction; the recipient gets the rest.`}
         trailing={<span className="text-xs text-bone/35">USDC</span>}
       >
         <Input

@@ -27,9 +27,12 @@ describe("SUI_SENDS_TO_EVM", () => {
     expect(ids("  ")).toEqual([]);
   });
 
-  it("is every chain in the EVM table for all, in table order, Arc included", () => {
+  it("is every chain Circle delivers to for all, in table order, Arc included", () => {
     const all = ids("all");
-    expect(all).toEqual(Object.keys(EVM_CHAINS));
+    // Not Injective, Morph or Pharos: a Sui burn to an EVM chain is always a forwarded one.
+    expect(all).toEqual(
+      Object.keys(EVM_CHAINS).filter((id) => !["injective", "morph", "pharos"].includes(id)),
+    );
     expect(all).toContain("arc");
     expect(ids(" ALL ")).toEqual(all);
   });

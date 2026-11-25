@@ -5,7 +5,13 @@ import {
   encodeAllowance,
   encodeBalanceOf,
 } from "@xebra/cctp-evm";
-import { type EvmBurnInput, evmApproveCall, evmBurnCall, evmBurnTarget } from "@xebra/sdk/build";
+import {
+  type EvmBurnInput,
+  buildEvmFeeStep,
+  evmApproveCall,
+  evmBurnCall,
+  evmBurnTarget,
+} from "@xebra/sdk/build";
 import { type EvmChain, formatUsdc6 } from "@xebra/sdk/core";
 import {
   type Hex,
@@ -46,14 +52,16 @@ export type EvmBridgeStep =
   | "checking"
   | "approving"
   | "confirming-approval"
-  | "burning";
+  | "burning"
+  | "paying-fee";
 
 export const EVM_STEP_LABEL: Record<EvmBridgeStep, (source: string) => string> = {
   switching: (s) => `Switch your wallet to ${s}`,
   checking: () => "Checking your balance",
-  approving: () => "Approve the amount in your wallet (1 of 2)",
+  approving: () => "Approve the amount in your wallet",
   "confirming-approval": (s) => `Waiting for ${s} to confirm the approval`,
-  burning: () => "Confirm the transfer in your wallet (2 of 2)",
+  burning: () => "Confirm the transfer in your wallet",
+  "paying-fee": () => "Confirm Xebra's fee in your wallet",
 };
 
 /** Long enough for a transaction priced low on a busy chain; the node is the wallet's, not ours. */
@@ -188,6 +196,11 @@ export interface EvmBridgeRequest {
    * fee included). Absent: call Circle directly.
    */
   via?: { address: string; maxWrapperFee: bigint } | null;
+  /**
+   * Xebra's flat fee, straight to Circle only (the wrapper takes its own): a USDC transfer to
+   * Xebra's fee address, asked for right after the burn. `amount` above is the burn.
+   */
+  xebraFee?: { address: string; amount: bigint } | null;
   /** Optional polling overrides used in tests for the post-error pending-nonce check. */
   nonceCheck?: { attempts?: number; intervalMs?: number };
 }
@@ -199,6 +212,8 @@ export interface EvmBridgeResult {
   /** The burn. On chain as soon as this is returned; watch it with `watchBurn`. */
   txHash: Hex;
   approvalTxHash: Hex | null;
+  /** Xebra's fee transfer, or null when there was none or the wallet did not send it. */
+  feeTxHash: Hex | null;
 }
 
 const NOTHING_BURNED = "Nothing was burned.";
@@ -227,13 +242,15 @@ export async function submitEvmBridge(req: EvmBridgeRequest): Promise<EvmBridgeR
   await ensureChain(provider, source);
 
   step("checking");
+  const xebraFee = via ? null : (req.xebraFee ?? null);
+  const total = amount + (xebraFee?.amount ?? 0n);
   const balance = await getUsdcBalance6(provider, source, from);
-  if (balance < amount) {
+  if (balance < total) {
     throw new Error(
-      `This wallet holds ${formatUsdc6(balance)} USDC on ${source.name}; the transfer needs ${formatUsdc6(amount)}.`,
+      `This wallet holds ${formatUsdc6(balance)} USDC on ${source.name}; the transfer needs ${formatUsdc6(total)}.`,
     );
   }
-  if (spendableUsdc(source, balance) < amount) {
+  if (spendableUsdc(source, balance) < total) {
     throw new Error(
       `Arc pays gas in USDC. Leave ${formatUsdc6(ARC_GAS_RESERVE_UNITS)} USDC in the wallet for it and send up to ${formatUsdc6(spendableUsdc(source, balance))}.`,
     );
@@ -349,7 +366,31 @@ export async function submitEvmBridge(req: EvmBridgeRequest): Promise<EvmBridgeR
       err,
     );
   }
-  return { txHash, approvalTxHash };
+
+  // The burn is out and cannot be recalled; the fee is asked for next. A wallet that declines it
+  // does not undo the transfer, so that is not an error here.
+  let feeTxHash: Hex | null = null;
+  if (xebraFee) {
+    step("paying-fee");
+    const fee = buildEvmFeeStep({
+      source,
+      feeAddress: xebraFee.address as Hex,
+      fee: xebraFee.amount,
+    });
+    if (fee.tx.kind === "evm") {
+      try {
+        feeTxHash = await sendTransaction(provider, {
+          from,
+          to: fee.tx.to,
+          data: fee.tx.data,
+          chainId: source.chainId,
+        });
+      } catch (err) {
+        console.warn("xebra fee not sent", formatError(err));
+      }
+    }
+  }
+  return { txHash, approvalTxHash, feeTxHash };
 }
 
 /**

@@ -1,11 +1,12 @@
 ---
 title: Sui to Stellar
-description: Burn USDC on Sui and mint it to a Stellar account, finishing the mint with a claim.
+description: Burn USDC on Sui and mint it to a Stellar account. Xebra's relayer finishes the mint.
 ---
 
 Sui to Stellar is two transactions on two chains. The user's Sui wallet burns USDC through Circle's
-CCTP. Once Circle has attested the burn, a Stellar transaction mints it to the recipient. Through the
-API you submit that second transaction yourself, with any Stellar account paying the network fee.
+CCTP. Once Circle has attested the burn, a Stellar transaction mints it to the recipient. Xebra's
+relayer sends that second transaction and pays its fee, for burns built through the API as for the
+web app: you sign one transaction, on Sui, and poll until the USDC arrives.
 
 The route is Standard speed only, and it appears in [`GET /v1/routes`](/docs/api/routes/list-routes)
 only while it is switched on.
@@ -23,9 +24,9 @@ only while it is switched on.
 - The recipient's Stellar account (`G...`). It must already exist and have a USDC trustline. If not,
   the API refuses with [`invalid_recipient`](/docs/errors/invalid_recipient) before anything is signed.
 - A Sui wallet that implements the Wallet Standard's `sui:signAndExecuteTransaction`.
-- A Stellar account to pay for the mint: the recipient, the sender's own Stellar account, or yours. It
-  needs a little XLM. It does not need to be the recipient; the mint always pays the recipient the burn
-  names.
+- Nothing on Stellar for the usual case: the relayer pays for the mint. Only if it cannot finish a
+  transfer (see [If the relayer cannot finish it](#if-the-relayer-cannot-finish-it)) do you need a
+  Stellar account with a little XLM to submit the claim yourself.
 
 ## The flow
 
@@ -51,17 +52,18 @@ digest. That digest is the transfer's identifier from now on.
 
 ### Wait for Circle
 
-Poll `getTransfer("sui", digest)`, or call `waitForDelivery`. The state is `pending` until Circle has
-attested the burn. It then becomes `needs_claim`: the USDC is ready to mint on Stellar.
+Poll `getTransfer("sui", digest)` (`GET /v1/transfers/sui/{tx}`), or call `waitForDelivery`. The
+state is `pending` until Circle has attested the burn.
 
 </Step>
 <Step>
 
-### Mint on Stellar
+### Xebra mints on Stellar
 
-Call `createClaim` with `chain: "sui"`, the digest as `tx`, and the paying Stellar account as `payer`.
-It returns one step, `id: "claim"`, `tx.kind: "stellar"`, whose source is the payer. Sign it in the
-payer's wallet and submit it to Soroban RPC. When it lands the state is `delivered`.
+The first poll after Circle attests the burn hands it to Xebra's relayer, the same one the web app
+uses. The state becomes `delivering`, with `deliveryTx` set once the mint is sent, and then
+`delivered`. There is nothing to call: keep polling, or let `waitForDelivery` do it. The relayer is
+idempotent, so polling often never mints twice.
 
 </Step>
 </Steps>
@@ -91,8 +93,10 @@ const burn = steps[0];
 if (!burn || burn.tx.kind !== "sui") throw new Error("expected one Sui step");
 const digest = await signAndExecuteSui(burn.tx.json);
 
+// Xebra's relayer mints on Stellar; this resolves at `delivered` in the usual case.
 const status = await xebra.waitForDelivery("sui", digest);
 if (status.state === "needs_claim") {
+  // Only when the relayer could not finish it: `status.reason` says why. Claim it yourself.
   const claim = await xebra.createClaim({ chain: "sui", tx: digest, payer: "GPAYER..." });
   for (const step of claim.steps) {
     if (step.tx.kind !== "stellar") throw new Error("expected a Stellar step");
@@ -100,6 +104,17 @@ if (status.state === "needs_claim") {
   }
 }
 ```
+
+## If the relayer cannot finish it
+
+A poll that comes back `needs_claim` means the relayer will not, or could not, mint this transfer:
+`reason` says why when it refused (for example, the recipient has no USDC trustline), and a
+deployment can run with the relayer switched off. Fix what `reason` names and keep polling, or finish
+it yourself: call `createClaim` with `chain: "sui"`, the digest as `tx`, and a Stellar account with a
+little XLM as `payer`. It returns one step, `id: "claim"`, `tx.kind: "stellar"`, whose source is the
+payer. Sign it in the payer's wallet and submit it to Soroban RPC. When it lands the state is
+`delivered`. The payer does not need to be the recipient; the mint always pays the recipient the
+burn names.
 
 ## When the claim is refused
 
@@ -115,8 +130,8 @@ A `failed` state on a Sui transfer means the same thing: Circle's record was rea
 carries the explanation, and `claimUrl` is always null on Sui; finish Sui transfers with
 [`POST /v1/claims`](/docs/api/claims/create-claim).
 
-<Callout title="On xebra.exchange the mint is automatic">
-  The Xebra web app finishes the Stellar mint for its own users. Transfers started through the API are
-  not finished for you: submit the claim as above. The burn is safe while it waits: whoever submits the
-  mint, it can only pay the recipient the burn names.
+<Callout title="The mint is automatic">
+  Xebra's relayer finishes the Stellar mint for transfers built through the API and the SDK, the same
+  as for the web app. The burn is safe while it waits: whoever submits the mint, it can only pay the
+  recipient the burn names.
 </Callout>

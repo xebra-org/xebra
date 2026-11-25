@@ -1,3 +1,4 @@
+import { apiGuard } from "../server/keys";
 import { type EndpointService, endpoints } from "./endpoints";
 import { createService } from "./service";
 
@@ -21,12 +22,15 @@ function service(): Promise<EndpointService> {
   return live;
 }
 
-/** The live `/v1` handlers. */
-export const v1 = endpoints({
-  routes: async () => (await service()).routes(),
-  solanaOpensAccount: async (recipient) => (await service()).solanaOpensAccount(recipient),
-  quote: async (q) => (await service()).quote(q),
-  buildTransfer: async (r) => (await service()).buildTransfer(r),
-  transferStatus: async (r) => (await service()).transferStatus(r),
-  buildClaim: async (r) => (await service()).buildClaim(r),
-});
+/** The live `/v1` handlers: real dependencies, real keys and rate limits. */
+export const v1 = endpoints(
+  {
+    routes: async () => (await service()).routes(),
+    solanaOpensAccount: async (recipient) => (await service()).solanaOpensAccount(recipient),
+    quote: async (q) => (await service()).quote(q),
+    buildTransfer: async (r) => (await service()).buildTransfer(r),
+    transferStatus: async (r) => (await service()).transferStatus(r),
+    buildClaim: async (r) => (await service()).buildClaim(r),
+  },
+  apiGuard(),
+);

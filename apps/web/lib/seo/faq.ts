@@ -13,7 +13,7 @@ export interface Faq {
 export function faqFor(arcViaWrapper: boolean): Faq[] {
   const arcFeeSentence = arcViaWrapper
     ? `From Arc the same rule applies, through Xebra's contract on Arc, plus a fraction of a cent of Arc gas, which Arc charges in USDC.`
-    : `From Arc there is no Xebra fee: you pay Circle's delivery fee, usually a few cents, plus a fraction of a cent of Arc gas, which Arc charges in USDC.`;
+    : `From Arc, and from every chain without a Xebra contract, Xebra takes 0.01 USDC plus 0.01% of the amount, paid beside the burn, plus Circle's delivery fee, usually a few cents. Arc charges gas in USDC, a fraction of a cent.`;
 
   return [
     {

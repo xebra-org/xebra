@@ -75,17 +75,32 @@ export const FeesSchema = z
   })
   .meta({ id: "Fees" });
 
+// The comments on the keys below reach the inferred `Quote` and `TransferStatus` types, and
+// from there the SDK reference pages (`AutoTypeTable` in apps/docs).
 export const QuoteSchema = z
   .object({
+    /** The chain the transfer starts on. */
     from: ChainIdSchema,
+    /** The chain it ends on. */
     to: ChainIdSchema,
+    /** Echoes the speed priced. */
     speed: SpeedSchema,
+    /** What the sender sends, in USDC. */
     amount: AmountOutSchema,
+    /** What arrives: `amount` minus `fees.total`. */
     recipientGets: AmountOutSchema,
+    /**
+     * What Xebra keeps, Circle's transfer fee (Fast only), what Circle is paid to deliver, and
+     * their sum. All strings of USDC.
+     */
     fees: FeesSchema,
+    /** The smallest amount this route takes right now, with a margin for fees moving. */
     minimum: AmountOutSchema,
+    /** The largest amount, or null when the route sets none. */
     maximum: AmountOutSchema.nullable(),
+    /** Circle's own health, when it could be read. */
     circleStatus: z.enum(["ok", "degraded"]).nullable(),
+    /** ISO 8601. Fees move; after this, ask again. */
     expiresAt: z.iso.datetime(),
   })
   .meta({ id: "Quote" });
@@ -117,12 +132,19 @@ export const UnsignedTxSchema = z
       }),
     }),
     z.object({ kind: z.literal("solana"), transaction: z.string() }),
+    z.object({
+      kind: z.literal("aptos_call"),
+      chainId: z.number().int(),
+      function: z.string().regex(/^0x[0-9a-f]{1,64}::[a-z_][a-z0-9_]*::[a-z_][a-z0-9_]*$/),
+      typeArguments: z.array(z.string()),
+      functionArguments: z.array(z.string()),
+    }),
   ])
   .meta({ id: "UnsignedTx", description: "A transaction for the user's wallet to sign." });
 
 export const TransferStepSchema = z
   .object({
-    id: z.enum(["approve", "burn", "open_account", "claim"]),
+    id: z.enum(["approve", "burn", "fee", "open_account", "claim"]),
     chain: ChainIdSchema,
     description: z.string(),
     tx: UnsignedTxSchema,
@@ -157,11 +179,17 @@ export const TransferBuildSchema = z
 
 export const TransferStatusSchema = z
   .object({
+    /** See [Track a transfer](/docs/guides/track-a-transfer). */
     state: z.enum(["pending", "delivering", "delivered", "needs_claim", "failed"]),
+    /** The chain the burn was made on. */
     chain: ChainIdSchema,
+    /** The burn's hash, as asked. */
     tx: z.string(),
+    /** The mint on the destination, once Circle has delivered it. */
     deliveryTx: z.string().nullable(),
+    /** Circle's own words when delivery did not complete, shortened. */
     reason: z.string().nullable(),
+    /** Where the recipient can finish a delivery that did not complete on its own. */
     claimUrl: z.url().nullable(),
   })
   .meta({ id: "TransferStatus" });
@@ -218,6 +246,20 @@ export const ProblemSchema = z
     total: AmountOutSchema.optional(),
     limit: AmountOutSchema.optional(),
     needs: z.string().optional(),
+    issues: z
+      .array(
+        z.object({
+          path: z.array(z.string()).meta({
+            description: 'Where the problem is, such as `["amount"]`. Empty for the whole input.',
+          }),
+          message: z.string(),
+        }),
+      )
+      .optional()
+      .meta({
+        description:
+          "On `invalid_request` and `invalid_amount` from checking the input: each field that failed, and why.",
+      }),
   })
   .meta({ id: "Problem", description: "An RFC 9457 problem. `detail` is written for a person." });
 

@@ -58,21 +58,33 @@ export interface RebalancerOptions {
 }
 
 export interface RebalanceRequest {
-  /** The market maker's account inside NEAR Intents (the intent `signer_id`), e.g. "mm.near". */
+  /**
+   * The market maker's account inside NEAR Intents (the intent `signer_id`), e.g. "mm.near".
+   * Also where the deposit is credited and a failed withdrawal is refunded.
+   */
   intentsAccount: string;
   /** Chain whose USDC balance is too full, in Xebra's or NEAR Intents' naming ("base", "arb"). */
   from: string;
   /** Chain whose USDC balance needs topping up. */
   to: string;
-  /** Decimal USDC to move, e.g. "100000". */
+  /**
+   * Decimal USDC to move, e.g. "100000". Refused if it has more decimal places than the token
+   * has.
+   */
   amount: string;
   /** The market maker's own wallet on `from`: receives the withdrawal, signs the burn. */
   fromWallet: string;
   /** The market maker's own wallet on `to`: where 1Click refunds a deposit that comes too late. */
   toWallet: string;
-  /** Refuse to build the burn if Xebra's and Circle's fees together exceed this decimal amount. */
+  /**
+   * Refuse to build the burn if Xebra's and Circle's fees together exceed this decimal amount.
+   * See [the fee cap](/docs/sdk/intents#step-2-building-the-burn).
+   */
   maxTotalFee?: string;
-  /** CCTP speed. Default "standard". */
+  /**
+   * CCTP speed for the burn.
+   * @defaultValue "standard"
+   */
   speed?: "standard" | "fast";
 }
 
@@ -109,11 +121,15 @@ export interface RebalanceEstimate {
   seconds: number;
   /**
    * The same move as one swap inside NEAR Intents, for comparison: what would arrive, or null with
-   * the reason when no market maker quotes it (often the case for large amounts).
+   * the reason and the OneClickError `code` when there is no quote. `http_error` is 1Click saying
+   * no (often no market maker for a large amount); anything else means it could not be asked.
    */
-  direct: { arrives: string } | { arrives: null; reason: string };
-  /** Which way leaves more USDC on the `to` balance. */
-  better: "rebalance" | "direct";
+  direct: { arrives: string } | { arrives: null; reason: string; code: OneClickErrorCode };
+  /**
+   * Which way leaves more USDC on the `to` balance. "unknown" when the direct swap could not be
+   * priced (1Click unreachable, timed out, 429 or 5xx): ask again before choosing.
+   */
+  better: "rebalance" | "direct" | "unknown";
 }
 
 export interface Withdrawal {
@@ -144,13 +160,38 @@ export type OneClickStatus =
   | "REFUNDED"
   | "FAILED";
 
-export class OneClickError extends Error {
+/** How a 1Click call failed. */
+export type OneClickErrorCode =
+  | "missing_api_key"
+  | "no_deposit_address"
+  | "http_error"
+  | "network_error"
+  | "timeout"
+  | "invalid_response";
+
+/**
+ * A 1Click call failed. `code` says how. `status` is 1Click's HTTP status for `http_error` and
+ * `invalid_response`, else 0. `body` is what 1Click sent (parsed JSON, else the raw text), when it
+ * sent anything. `retryable` is true for network errors, timeouts, 429 and 5xx.
+ */
+export class OneClickError extends XebraError {
+  declare readonly code: OneClickErrorCode;
+  readonly status: number;
+  readonly body?: unknown;
+
   constructor(
     message: string,
-    readonly status: number,
+    status: number,
+    opts: { code?: OneClickErrorCode; body?: unknown; cause?: unknown } = {},
   ) {
-    super(message);
+    const code = opts.code ?? "http_error";
+    super(code, message, {
+      retryable: code === "network_error" || code === "timeout" || status === 429 || status >= 500,
+      cause: opts.cause,
+    });
     this.name = "OneClickError";
+    this.status = status;
+    if (opts.body !== undefined) this.body = opts.body;
   }
 }
 
@@ -181,6 +222,41 @@ export function fromUnits(units: string, decimals: number): string {
   return `${neg ? "-" : ""}${int}${frac ? `.${frac}` : ""}`;
 }
 
+/** The rebalance step that failed. */
+export type RebalanceStage = "resolve" | "withdraw" | "deposit_quote" | "build";
+
+/**
+ * A step that runs once the market maker's USDC has left (or may have left) NEAR Intents failed:
+ * `submitWithdrawal` (stage "withdraw") or `prepareDeposit` ("resolve", "deposit_quote",
+ * "build"). The message says where the USDC is now. `code` is the cause's `XebraError` code, else
+ * `<stage>_failed`. `retryable` says whether calling the same step again can help. `cause` is the
+ * original error.
+ */
+export class RebalanceError extends XebraError {
+  readonly stage: RebalanceStage;
+
+  constructor(
+    stage: RebalanceStage,
+    message: string,
+    opts: { code: string; retryable: boolean; cause: unknown },
+  ) {
+    super(opts.code, message, { retryable: opts.retryable, cause: opts.cause });
+    this.name = "RebalanceError";
+    this.stage = stage;
+  }
+}
+
+function afterWithdrawal(stage: RebalanceStage, where: string, err: unknown): RebalanceError {
+  const said = err instanceof Error ? err.message : String(err);
+  const known = err instanceof XebraError;
+  return new RebalanceError(stage, `${said} ${where}`, {
+    code: known ? err.code : `${stage}_failed`,
+    // Asking again after an unsure withdrawal could sign a second one: check status first.
+    retryable: stage !== "withdraw" && known && err.retryable,
+    cause: err,
+  });
+}
+
 /** Exact decimal subtraction for the 6/7-place amounts used here. */
 function sub(a: string, b: string): string {
   const d = 7;
@@ -200,6 +276,25 @@ function floorTo(amount: string, places: number): string {
   return t ? `${i}.${t}` : (i as string);
 }
 
+const isRecord = (v: unknown): v is Record<string, unknown> =>
+  typeof v === "object" && v !== null && !Array.isArray(v);
+const isUnits = (v: unknown): boolean => typeof v === "string" && /^\d+$/.test(v);
+
+/** Shape checks for the 1Click answers this module reads. A body that fails is `invalid_response`. */
+const SHAPES = {
+  tokens: (v: unknown) => Array.isArray(v),
+  quote: (v: unknown) =>
+    isRecord(v) &&
+    isRecord(v.quote) &&
+    isUnits(v.quote.amountOut) &&
+    isUnits(v.quote.minAmountOut) &&
+    typeof v.quote.timeEstimate === "number" &&
+    (v.quote.depositAddress === undefined || typeof v.quote.depositAddress === "string"),
+  intent: (v: unknown) => isRecord(v) && isRecord(v.intent),
+  submitted: (v: unknown) => isRecord(v) && typeof v.intentHash === "string",
+  status: (v: unknown) => isRecord(v) && typeof v.status === "string",
+};
+
 export function createRebalancer(opts: RebalancerOptions) {
   const doFetch = opts.fetch ?? globalThis.fetch;
   const now = opts.now ?? Date.now;
@@ -215,23 +310,43 @@ export function createRebalancer(opts: RebalancerOptions) {
       throw new OneClickError(
         "Withdrawing from NEAR Intents needs a 1Click partner API key (oneClick.apiKey).",
         0,
+        { code: "missing_api_key" },
       );
     }
   }
 
-  async function call<T>(path: string, body?: unknown, needsKey = false): Promise<T> {
+  async function call<T>(
+    path: string,
+    body: unknown,
+    needsKey: boolean,
+    valid: (json: unknown) => boolean,
+  ): Promise<T> {
     if (needsKey) requireKey();
-    const res = await doFetch(`${base}${path}`, {
-      method: body === undefined ? "GET" : "POST",
-      headers: {
-        Accept: "application/json",
-        ...(body !== undefined ? { "Content-Type": "application/json" } : {}),
-        ...(apiKey ? { "X-API-Key": apiKey } : {}),
-      },
-      ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
-      signal: AbortSignal.timeout(timeoutMs),
-    });
-    const text = await res.text();
+    let res: Response;
+    let text: string;
+    try {
+      res = await doFetch(`${base}${path}`, {
+        method: body === undefined ? "GET" : "POST",
+        headers: {
+          Accept: "application/json",
+          ...(body !== undefined ? { "Content-Type": "application/json" } : {}),
+          ...(apiKey ? { "X-API-Key": apiKey } : {}),
+        },
+        ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
+        signal: AbortSignal.timeout(timeoutMs),
+      });
+      text = await res.text();
+    } catch (err) {
+      const name = err instanceof Error ? err.name : "";
+      const timedOut = name === "TimeoutError" || name === "AbortError";
+      throw new OneClickError(
+        timedOut
+          ? `1Click did not answer ${path.split("?")[0]} within ${timeoutMs} ms.`
+          : `Could not reach 1Click (${path.split("?")[0]}).`,
+        0,
+        { code: timedOut ? "timeout" : "network_error", cause: err },
+      );
+    }
     let json: unknown = null;
     try {
       json = text ? JSON.parse(text) : null;
@@ -243,14 +358,21 @@ export function createRebalancer(opts: RebalancerOptions) {
         json && typeof json === "object" && "message" in json && typeof json.message === "string"
           ? json.message
           : `1Click answered ${res.status}`;
-      throw new OneClickError(said, res.status);
+      throw new OneClickError(said, res.status, { body: json ?? (text || undefined) });
+    }
+    if (!valid(json)) {
+      throw new OneClickError(
+        `1Click answered ${res.status} to ${path.split("?")[0]}, but not with the fields Xebra reads.`,
+        res.status,
+        { code: "invalid_response", body: json ?? text },
+      );
     }
     return json as T;
   }
 
   async function tokens(): Promise<IntentsToken[]> {
     if (tokenCache && now() - tokenCache.at < 300_000) return tokenCache.list;
-    const list = await call<IntentsToken[]>("/v0/tokens");
+    const list = await call<IntentsToken[]>("/v0/tokens", undefined, false, SHAPES.tokens);
     tokenCache = { at: now(), list };
     return list;
   }
@@ -268,7 +390,10 @@ export function createRebalancer(opts: RebalancerOptions) {
     if (!from || !to) throw new Error(`Unknown chain: ${!from ? r.from : r.to}`);
     if (from === to) throw new Error("`from` and `to` are the same chain.");
     if (!(await router.isRouteAvailable(from, to))) {
-      throw new Error(`Xebra does not move USDC from ${from} to ${to} right now.`);
+      throw new XebraError(
+        "route_unavailable",
+        `Xebra does not move USDC from ${from} to ${to} right now.`,
+      );
     }
     const [fromToken, toToken] = await Promise.all([usdcAsset(from), usdcAsset(to)]);
     return { from, to, fromToken, toToken };
@@ -279,11 +404,7 @@ export function createRebalancer(opts: RebalancerOptions) {
   }
 
   function quote(q: Record<string, unknown>): Promise<{ quote: OneClickQuote }> {
-    return call("/v0/quote", {
-      slippageTolerance: 10,
-      referral,
-      ...q,
-    });
+    return call("/v0/quote", { slippageTolerance: 10, referral, ...q }, false, SHAPES.quote);
   }
 
   function withdrawQuote(
@@ -350,6 +471,7 @@ export function createRebalancer(opts: RebalancerOptions) {
     const { quote: w } = await withdrawQuote(r, fromToken, true);
     const receives = fromUnits(w.minAmountOut, fromToken.decimals);
     const x = await xebraQuote(from, to, receives, r.speed);
+    let priced = true;
     const [{ quote: d }, direct] = await Promise.all([
       depositQuote(r, toToken, x.recipientGets, true, 60),
       quote({
@@ -367,17 +489,26 @@ export function createRebalancer(opts: RebalancerOptions) {
       }).then(
         // Expected output; its floor (minAmountOut) is lower by the 0.1% slippage allowed.
         ({ quote: q }) => ({ arrives: fromUnits(q.amountOut, toToken.decimals) }),
-        (err: unknown) => ({
-          arrives: null,
-          reason: err instanceof Error ? err.message : String(err),
-        }),
+        (err: unknown) => {
+          // Only 1Click's own failures mean "no direct quote"; anything else is a bug: throw it.
+          if (!(err instanceof OneClickError)) throw err;
+          // A refusal (no market maker) settles the comparison; an outage or a bad answer does not.
+          priced = err.code === "http_error" && !err.retryable;
+          return { arrives: null, reason: err.message, code: err.code };
+        },
       ),
     ]);
     const arrives = fromUnits(d.minAmountOut, toToken.decimals);
     const withdrawFee = sub(r.amount, receives);
     const cctpFee = sub(receives, x.recipientGets);
     const better =
-      direct.arrives !== null && cmp(direct.arrives, arrives) > 0 ? "direct" : "rebalance";
+      direct.arrives !== null
+        ? cmp(direct.arrives, arrives) > 0
+          ? "direct"
+          : "rebalance"
+        : priced
+          ? "rebalance"
+          : "unknown";
     return {
       from,
       to,
@@ -403,7 +534,12 @@ export function createRebalancer(opts: RebalancerOptions) {
     const { fromToken } = await resolve(r);
     requireKey();
     const { quote: q } = await withdrawQuote(r, fromToken, false);
-    if (!q.depositAddress) throw new OneClickError("1Click issued no deposit address.", 0);
+    if (!q.depositAddress) {
+      throw new OneClickError("1Click issued no deposit address.", 0, {
+        code: "no_deposit_address",
+        body: q,
+      });
+    }
     const { intent } = await call<{ intent: Withdrawal["intent"] }>(
       "/v0/generate-intent",
       {
@@ -413,6 +549,7 @@ export function createRebalancer(opts: RebalancerOptions) {
         depositAddress: q.depositAddress,
       },
       true,
+      SHAPES.intent,
     );
     return {
       depositAddress: q.depositAddress,
@@ -422,8 +559,7 @@ export function createRebalancer(opts: RebalancerOptions) {
     };
   }
 
-  /** Step 1, submit. `signed` is what the wallet returned for `w.intent.payload`. */
-  function submitWithdrawal(
+  function submitIntent(
     w: Withdrawal,
     signed: { public_key: string; signature: string },
   ): Promise<{ intentHash: string }> {
@@ -431,7 +567,28 @@ export function createRebalancer(opts: RebalancerOptions) {
       "/v0/submit-intent",
       { type: "swap_transfer", signedData: { ...w.intent, ...signed } },
       true,
+      SHAPES.submitted,
     );
+  }
+
+  /**
+   * Step 1, submit. `signed` is what the wallet returned for `w.intent.payload`. Throws
+   * RebalanceError (stage "withdraw", never `retryable`): the withdrawal may have been accepted,
+   * so check `status(w.depositAddress)` before signing another.
+   */
+  async function submitWithdrawal(
+    w: Withdrawal,
+    signed: { public_key: string; signature: string },
+  ): Promise<{ intentHash: string }> {
+    try {
+      return await submitIntent(w, signed);
+    } catch (err) {
+      throw afterWithdrawal(
+        "withdraw",
+        `The withdrawal may already be on its way to your wallet: check status("${w.depositAddress}") before signing another.`,
+        err,
+      );
+    }
   }
 
   /**
@@ -442,19 +599,47 @@ export function createRebalancer(opts: RebalancerOptions) {
    * `minutes` is how long the deposit address waits for Circle's mint before refunding to
    * `toWallet`. Standard CCTP waits for the source chain to finalize (minutes on most EVM chains),
    * so the default is generous.
+   *
+   * Safe to call again: it signs and moves nothing. A failure throws RebalanceError, whose message
+   * says the withdrawn USDC is still in `fromWallet`; call again with the same `amount`.
    */
   async function prepareDeposit(
     r: RebalanceRequest,
     o: { amount?: string; minutes?: number } = {},
   ): Promise<Deposit> {
+    const at: { stage: RebalanceStage } = { stage: "resolve" };
+    try {
+      return await depositSteps(r, o, at);
+    } catch (err) {
+      const where = `Nothing was burned: the USDC withdrawn from NEAR Intents is still in ${r.fromWallet} on ${r.from}. prepareDeposit is safe to call again.`;
+      throw afterWithdrawal(at.stage, where, err);
+    }
+  }
+
+  async function depositSteps(
+    r: RebalanceRequest,
+    o: { amount?: string; minutes?: number },
+    at: { stage: RebalanceStage },
+  ): Promise<Deposit> {
     const { from, to, toToken } = await resolve(r);
+    at.stage = "deposit_quote";
     const amount = o.amount ?? r.amount;
     const x = await xebraQuote(from, to, amount, r.speed);
     if (r.maxTotalFee !== undefined && cmp(x.fees.total, r.maxTotalFee) > 0) {
-      throw new Error(`CCTP fees ${x.fees.total} exceed maxTotalFee ${r.maxTotalFee}.`);
+      throw new XebraError(
+        "fees_above_cap",
+        `CCTP fees ${x.fees.total} exceed maxTotalFee ${r.maxTotalFee}.`,
+        { retryable: true },
+      );
     }
     const { quote: q } = await depositQuote(r, toToken, x.recipientGets, false, o.minutes ?? 120);
-    if (!q.depositAddress) throw new OneClickError("1Click issued no deposit address.", 0);
+    if (!q.depositAddress) {
+      throw new OneClickError("1Click issued no deposit address.", 0, {
+        code: "no_deposit_address",
+        body: q,
+      });
+    }
+    at.stage = "build";
     const build = await router.buildDeposit({
       from,
       depositChain: to,
@@ -470,27 +655,61 @@ export function createRebalancer(opts: RebalancerOptions) {
   async function status(depositAddress: string): Promise<OneClickStatus> {
     const s = await call<{ status: OneClickStatus }>(
       `/v0/status?${new URLSearchParams({ depositAddress })}`,
+      undefined,
+      false,
+      SHAPES.status,
     );
     return s.status;
   }
 
-  /** Polls `status` until SUCCESS, REFUNDED or FAILED. Default every 5 s for up to 2 h. */
+  /** Waits `ms`, or rejects with the signal's reason as soon as it aborts. */
+  function sleep(ms: number, signal?: AbortSignal): Promise<void> {
+    return new Promise((ok, fail) => {
+      if (signal?.aborted) return fail(signal.reason);
+      const onAbort = () => {
+        clearTimeout(t);
+        fail(signal?.reason);
+      };
+      const t = setTimeout(() => {
+        signal?.removeEventListener("abort", onAbort);
+        ok();
+      }, ms);
+      signal?.addEventListener("abort", onAbort, { once: true });
+    });
+  }
+
+  /**
+   * Polls `status` until SUCCESS, REFUNDED or FAILED. Default every 5 s for up to 2 h. Network
+   * errors, timeouts, 429 and 5xx from 1Click do not end the wait: it backs off (doubling, up to
+   * a minute) and keeps polling until the deadline. An abort through `signal` ends it at once.
+   */
   async function waitFor(
     depositAddress: string,
     o: { intervalMs?: number; timeoutMs?: number; signal?: AbortSignal } = {},
   ): Promise<OneClickStatus> {
     const interval = o.intervalMs ?? 5_000;
     const end = now() + (o.timeoutMs ?? 2 * 60 * 60_000);
+    let wait = interval;
+    let lastError: unknown;
     for (;;) {
       o.signal?.throwIfAborted();
       try {
         const s = await status(depositAddress);
         if (s === "SUCCESS" || s === "REFUNDED" || s === "FAILED") return s;
+        wait = interval;
+        lastError = undefined;
       } catch (err) {
-        if (!(err instanceof OneClickError) || err.status < 500) throw err;
+        if (!(err instanceof OneClickError) || !err.retryable) throw err;
+        lastError = err;
+        wait = Math.max(interval, Math.min(wait * 2, 60_000));
       }
-      if (now() + interval > end) throw new Error(`${depositAddress} did not settle in time.`);
-      await new Promise((ok) => setTimeout(ok, interval));
+      if (now() + wait > end) {
+        throw new Error(
+          `${depositAddress} did not settle in time. It may still: check status() before acting again.`,
+          { cause: lastError },
+        );
+      }
+      await sleep(wait, o.signal);
     }
   }
 

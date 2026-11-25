@@ -583,6 +583,16 @@
           "xdc",
           "hyperevm",
           "ink",
+          "ethereum",
+          "linea",
+          "plume",
+          "edge",
+          "cronos",
+          "plasma",
+          "xlayer",
+          "injective",
+          "morph",
+          "pharos",
           "arc"
         ],
         "description": "A chain, as the API names it.",
@@ -790,6 +800,30 @@
           },
           "needs": {
             "type": "string"
+          },
+          "issues": {
+            "description": "On `invalid_request` and `invalid_amount` from checking the input: each field that failed, and why.",
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "path": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  },
+                  "description": "Where the problem is, such as `[\"amount\"]`. Empty for the whole input."
+                },
+                "message": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "path",
+                "message"
+              ],
+              "additionalProperties": false
+            }
           }
         },
         "required": [
@@ -925,6 +959,7 @@
             "enum": [
               "approve",
               "burn",
+              "fee",
               "open_account",
               "claim"
             ]
@@ -1124,6 +1159,44 @@
             "required": [
               "kind",
               "transaction"
+            ],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "kind": {
+                "type": "string",
+                "const": "aptos_call"
+              },
+              "chainId": {
+                "type": "integer",
+                "minimum": -9007199254740991,
+                "maximum": 9007199254740991
+              },
+              "function": {
+                "type": "string",
+                "pattern": "^0x[0-9a-f]{1,64}::[a-z_][a-z0-9_]*::[a-z_][a-z0-9_]*$"
+              },
+              "typeArguments": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "functionArguments": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              }
+            },
+            "required": [
+              "kind",
+              "chainId",
+              "function",
+              "typeArguments",
+              "functionArguments"
             ],
             "additionalProperties": false
           }

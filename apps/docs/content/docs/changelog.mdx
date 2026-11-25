@@ -5,12 +5,68 @@ description: What changed in the Xebra API and SDK, newest first.
 
 ## Unreleased
 
+**API**:
+
+- Every route without a Xebra fee contract carries Xebra's fee: 0.01 USDC plus 0.01% of the
+  amount, whether the transfer arrives by itself (Circle's Forwarding Service, or Xebra's relayer
+  into Stellar) or the recipient claims it. `fees.xebra` shows it; `amount` is what leaves the wallet
+  and the burn is the rest. See [Fees](/docs/concepts/fees).
+- `POST /v1/transfers` returns a `fee` step after the burn from EVM chains (a USDC transfer) and
+  from Aptos (a new `aptos_call` transaction). From Solana and Sui the fee is in the burn's own
+  transaction.
+- Aptos to Stellar needs at least about 1.0102 USDC (1 USDC burned, what the relayer completes).
+- `invalid_request` and `invalid_amount` from checking the input carry `issues`, each field that
+  failed as `{ path, message }`, beside the `detail` sentence. `openapi.json` lists it, and in
+  `@xebra/sdk` `ProblemSchema` has it as optional and `XebraApiError` carries it on `extra.issues`.
+- Sui to Stellar transfers built through `/v1` are now finished by Xebra's relayer, as the web app's
+  are. When `GET /v1/transfers/sui/{tx}` sees an attested burn that has not been minted, it hands it
+  to the relayer and answers `delivering` (with `deliveryTx` once the mint is sent) instead of
+  `needs_claim`. `needs_claim` now means the relayer refused (its `reason` says why) or is switched
+  off, and `POST /v1/claims` still finishes it. No new call, field or state.
+
 **SDK**, `@xebra/sdk`:
 
+- `planEvmFee` takes `xebraFee`; `FeePlan` gains `burn`. `XEBRA_FLAT_FEE`, `flatFeeFor`,
+  `flatFeeKind`, `CLAIM_ONLY_DOMAINS`; `buildEvmFeeStep`, `buildAptosFeeStep`.
+- `TransferStep.id` can be `"fee"`; `UnsignedTx` can be `aptos_call`.
+- `createRebalancer().estimate`: `better` is `"unknown"` when the direct swap could not be priced
+  (1Click unreachable, timed out, 429 or 5xx), not `"rebalance"`; `direct` carries the failure's
+  `code` next to `reason`. An error that is not 1Click's is thrown instead of becoming `reason`.
+- `isXebraApiError(e)` (additive): a type guard for `XebraApiError` that also works when two copies
+  of the SDK are installed, where `instanceof` does not. It checks a brand,
+  `Symbol.for("xebra.error")`, and the error's `name`.
 - `XebraError` (additive): shared base error class exported from `@xebra/sdk` with `code`,
   `retryable`, and `cause`. `XebraApiError` now extends `XebraError` (keeping `instanceof
   XebraApiError` compatibility), preserves `cause` when wrapping errors, and marks `network_error`,
   `timeout`, `rate_limited`, `upstream_unavailable`, and `internal_error` as `retryable`.
+- `OneClickError` (`@xebra/sdk/intents`, the market-maker rebalancer) extends `XebraError`. Its
+  `code` is `missing_api_key`, `no_deposit_address`, `http_error`, `network_error`, `timeout` or
+  `invalid_response` (an answer without the fields the rebalancer reads); `retryable` is true for
+  network errors, timeouts, 429 and 5xx; `body` keeps what 1Click sent. `status` is unchanged.
+- `CLIENT_ERROR_CODES`, `ClientErrorCode` and `XebraErrorCode` (additive): the codes the client
+  throws on its own, and every code an `XebraApiError` can carry. `XebraApiErrorCode` is kept as
+  the same type. `err.extra` types `minimum`, `maximum`, `have`, `need`, `total`, `limit` and
+  `needs` as strings.
+
+- `quote` and `createTransfer` check their input with `QuoteRequestSchema` and
+  `TransferRequestSchema` before calling the API. Input it would refuse throws `XebraApiError` with
+  `status` 0 and code `invalid_amount` or `invalid_request`, and the problems on `extra.issues`,
+  without a request.
+
+- `RebalanceError` (`@xebra/sdk/intents`): `submitWithdrawal` and `prepareDeposit` throw it, with
+  `stage` (`withdraw`, `resolve`, `deposit_quote`, `build`), `code`, `retryable` and `cause`, and a
+  message that says where the market maker's USDC is now. `prepareDeposit` is safe to call again.
+  A route Xebra stopped running is `route_unavailable`; fees over `maxTotalFee` are `fees_above_cap`.
+- `buildSuiMint` / `buildSuiMintStep`: mint a transfer bound for Sui (Circle does not deliver there)
+  from any Sui wallet; `readSuiBoundMessage` reads its recipient and amount; a transfer already
+  minted throws `AlreadyMintedError`. `checkSuiAddress`.
+- `stellarDestinations({ sui: true })` adds Sui once the wrapper commits domain 8; `Destination`
+  gains `claimOnly`.
+
+**App**:
+
+- Stellar to Sui, behind `NEXT_PUBLIC_STELLAR_TO_SUI=1` and the wrapper's domain 8. The recipient
+  finishes it at `/claim`, which now mints any transfer bound for Sui.
 
 ## 0.4.0 (2026-11-15)
 

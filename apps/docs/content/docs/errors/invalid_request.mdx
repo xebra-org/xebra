@@ -17,6 +17,7 @@ Read `detail`. It names the field and what was wrong with it, for up to five pro
 
 ## Extra fields
 
+- `issues`: When the input failed its checks, each field that failed, as data: `[{ "path": ["to"], "message": "Invalid option" }]`. `path` is empty for a problem with the whole input, such as an unknown field. A form can mark the field without reading `detail`. The SDK puts it on `err.extra.issues`.
 - `needs`: The name of a required field when one is needed to proceed. For example, claiming a transfer on Solana without the wallet that owns the recipient account returns `"recipientOwner"`.
 
 ## Example

@@ -7,29 +7,34 @@ HTTP **429**. `type`: `https://docs.xebra.exchange/errors/rate_limited`
 
 ## What it means
 
-Too many requests in a short time.
+Too many requests in a short time. The API allows 60 requests a minute without a key, counted per
+calling address, or 600 a minute with a key, counted per key.
 
-The API does not send this code today: `/v1` enforces no per-client limits yet. The code is
-reserved for when per-key limits ship with API keys (see [Planned](/docs/changelog#planned)), so
-code written against it now keeps working then. Until then, keep your request rate reasonable, as
-[Limits](/docs/api#limits) asks.
 
 ## What to do
 
-Treat it like any other retryable error: wait, then ask again.
+Wait for the number of seconds in the `Retry-After` header, then ask again. Every answer also
+carries `RateLimit-Limit`, `RateLimit-Remaining` and `RateLimit-Reset`, so you can pace yourself
+before you are refused. If you need more than 60 a minute, [get an API key](/docs/guides/api-keys).
 
-- If the response has a `Retry-After` header, wait at least that many seconds.
-- If it has none, back off: wait a few seconds, then double the wait each time it happens again,
-  up to about a minute.
+If a response ever comes without `Retry-After`, back off: wait a few seconds, then double the wait
+each time it happens again, up to about a minute.
 
-In the SDK the error is an `XebraApiError` with `code: "rate_limited"` and `retryable: true`. It
-does not carry the response's headers, so around your own calls (`quote`, `createTransfer`,
-`createClaim`, `getTransfer`) back off as above. `waitForDelivery` does not throw it: it waits its
-usual interval (`intervalMs`, 5 seconds by default) and asks again, until `timeoutMs` runs out. It
-does not read `Retry-After`.
+In the SDK the error is an `XebraApiError` with `code: "rate_limited"`, `retryable: true`, and the
+server's wait in `retryAfterMs`. Reads (`GET`) are retried on their own, honouring `Retry-After` up
+to a minute; a longer wait is thrown at once for you to act on. `waitForDelivery` waits a 429 out on
+its own.
 
 ## Example
 
-The API does not return `rate_limited` today: no limits are enforced yet, so there is no real
-response to show. When limits arrive, it will have the same shape as every other error. See
-[Errors](/docs/errors) for that shape and how to handle errors.
+```json
+{
+  "type": "https://docs.xebra.exchange/errors/rate_limited",
+  "title": "Rate limited",
+  "status": 429,
+  "detail": "Too many requests: 60 a minute without a key. Send an API key for 600 a minute, or try again in 40 seconds.",
+  "code": "rate_limited"
+}
+```
+
+Every error has this shape. See [Errors](/docs/errors) for how to handle them.

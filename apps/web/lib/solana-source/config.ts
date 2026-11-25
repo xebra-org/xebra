@@ -1,3 +1,4 @@
+import { CLAIM_ONLY_DOMAINS } from "@xebra/sdk/core";
 /**
  * Server-side switches for transfers that start on Solana. Read at request time, so turning a route
  * on or off is a Vercel env change and a redeploy, not a rebuild of the bundle.
@@ -46,7 +47,10 @@ export function parseSolanaSendsTo(raw: string | null | undefined): SolanaSends 
     .filter((s) => s !== "" && s !== "none");
   const all = names.includes("all");
   return {
-    evm: Object.values(EVM_CHAINS).filter((c) => all || names.includes(c.id)),
+    // A Solana burn is always a forwarded one: never to a chain Circle does not deliver to.
+    evm: Object.values(EVM_CHAINS).filter(
+      (c) => (all || names.includes(c.id)) && !CLAIM_ONLY_DOMAINS.includes(c.cctpDomainId),
+    ),
     stellar: all || names.includes("stellar"),
   };
 }

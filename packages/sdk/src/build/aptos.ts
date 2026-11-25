@@ -1,4 +1,5 @@
 import { recipientAndHook } from "@xebra/cctp-evm";
+import { formatUsdc6 } from "../core/amounts.js";
 import { XebraError } from "../errors.js";
 import type { BurnRecipient } from "./evm.js";
 import type { TransferStep } from "./types.js";
@@ -657,6 +658,29 @@ export function buildAptosBurnStep(a: AptosBurnArgs, description: string): Trans
       chainId: APTOS_CHAIN_ID,
       bytecode: APTOS_BURN_SCRIPT,
       arguments: aptosBurnArgsToJson(a),
+    },
+    expiresAt: null,
+  };
+}
+
+/**
+ * Xebra's flat fee from Aptos: native USDC moved with `primary_fungible_store::transfer` to Xebra's
+ * fee address, its own transaction after the burn (Circle's burn is a fixed script).
+ */
+export function buildAptosFeeStep(p: { feeAddress: string; fee: bigint }): TransferStep {
+  const to = normaliseAptosAddress(p.feeAddress);
+  if (!to) throw new Error("Not an Aptos fee address.");
+  if (p.fee <= 0n || p.fee > U64_MAX) throw new RangeError("The fee must be more than zero.");
+  return {
+    id: "fee",
+    chain: "aptos",
+    description: `Pay Xebra's fee, ${formatUsdc6(p.fee)} USDC, on Aptos.`,
+    tx: {
+      kind: "aptos_call",
+      chainId: APTOS_CHAIN_ID,
+      function: "0x1::primary_fungible_store::transfer",
+      typeArguments: ["0x1::fungible_asset::Metadata"],
+      functionArguments: [APTOS_CCTP.usdc, to, p.fee.toString()],
     },
     expiresAt: null,
   };

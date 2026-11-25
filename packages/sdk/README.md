@@ -76,12 +76,25 @@ const e = await rb.estimate(req); // dry quotes only; also prices the same move 
 if (e.better === "rebalance") {
   const w = await rb.startWithdrawal(req); // sign w.intent.payload with mm.near's key
   await rb.submitWithdrawal(w, signed);
-  await rb.waitFor(w.depositAddress);
+  const withdrawn = await rb.waitFor(w.depositAddress);
+  if (withdrawn !== "SUCCESS") throw new Error(`withdrawal ${withdrawn}: nothing to burn`);
   const d = await rb.prepareDeposit(req, { amount: w.receives });
   // sign and send d.build.steps from 0xYourBaseWallet, then:
-  await rb.waitFor(d.depositAddress);
+  const deposited = await rb.waitFor(d.depositAddress);
+  if (deposited !== "SUCCESS") console.warn(`deposit ${deposited}: see below`);
 }
 ```
+
+`waitFor` returns the end state rather than throwing, so check it before the next step:
+
+- Withdrawal `SUCCESS`: the USDC is in `fromWallet`; build the burn. `REFUNDED`: it went back to
+  your Intents `from` balance; start again with a new quote. `FAILED`: 1Click could not finish it;
+  do not build a burn, ask `rb.status(w.depositAddress)` and 1Click support with that address.
+- Deposit `SUCCESS`: credited to your Intents `to` balance. `REFUNDED`: Circle's mint came after
+  the deposit address expired, so 1Click sent the USDC to `toWallet`; deposit it into Intents
+  again. `FAILED`: ask 1Click support with `d.depositAddress`; never burn the same amount twice.
+- `waitFor` throws when its deadline passes first: the move may still settle, so check
+  `rb.status(...)` before doing anything again.
 
 Live dry quotes on 2026-11-14 for 100,000 USDC from Base: Avalanche, Polygon, Optimism and Monad
 cost 0.05 to 0.10 USDC this way, and NEAR Intents had no market maker to quote the same move as one

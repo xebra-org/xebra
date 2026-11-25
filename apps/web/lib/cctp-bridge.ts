@@ -11,6 +11,7 @@ import {
 import { INCLUSION_FEE, buildStellarBridge } from "@xebra/sdk/build";
 import type { DomainForwardConfig, FeeParams } from "@xebra/sdk/core";
 import { formatError } from "./format-error";
+import { type ClassifiedError, classifyWalletError } from "./wallet-error";
 
 /**
  * Client for `contracts/stellar-cctp-wrapper-v2` — Stellar to Solana and to every EVM chain the
@@ -100,7 +101,8 @@ export async function quoteBridge(
    *  *is* the price, so the price cannot be quoted without it. */
   maxFee: bigint,
 ): Promise<BridgeQuote> {
-  if (!config.wrapperContractId) throw new Error("The bridge contract is not configured.");
+  if (!config.wrapperContractId)
+    throw new BridgeSubmitError("The bridge contract is not configured.");
 
   const server = new rpc.Server(config.sorobanRpcUrl);
   const contract = new Contract(config.wrapperContractId);
@@ -124,9 +126,9 @@ export async function quoteBridge(
 
   const sim = await server.simulateTransaction(tx);
   if (rpc.Api.isSimulationError(sim)) {
-    throw new Error(humanizeContractError(sim.error, config.wrapperContractId));
+    throw new BridgeSubmitError(humanizeContractError(sim.error, config.wrapperContractId));
   }
-  if (!sim.result) throw new Error("The bridge did not return a quote.");
+  if (!sim.result) throw new BridgeSubmitError("The bridge did not return a quote.");
 
   const raw = scValToNative(sim.result.retval) as {
     amount: bigint;
@@ -285,12 +287,12 @@ export interface SubmitBridgeParams {
 export async function submitBridge(
   kit: StellarWalletsKit,
   params: SubmitBridgeParams,
-): Promise<{ txHash: string }> {
+): Promise<{ txHash: string; maxTimeMs?: number }> {
   const { config, userAddress, ...input } = params;
   if (!config.wrapperContractId) {
     // There is no direct path to fall back to: a burn that skips the wrapper skips the forwarding
     // hook, and nobody would deliver it.
-    throw new Error("The bridge contract is not configured.");
+    throw new BridgeSubmitError("The bridge contract is not configured.");
   }
   const server = new rpc.Server(config.sorobanRpcUrl);
 
@@ -302,9 +304,11 @@ export async function submitBridge(
       { ...input, user: userAddress, destinationDomain: config.destinationDomain },
     );
   } catch (err) {
-    throw new Error(humanizeContractError(formatError(err), config.wrapperContractId));
+    // Humanized or not (an unmatched Soroban error comes back raw, event log and all), this is
+    // the app's own answer: it must reach the user intact, never via the wallet classifier.
+    throw new BridgeSubmitError(humanizeContractError(formatError(err), config.wrapperContractId));
   }
-  if (step.tx.kind !== "stellar") throw new Error("expected a Stellar transaction");
+  if (step.tx.kind !== "stellar") throw new BridgeSubmitError("expected a Stellar transaction");
 
   // Name the account the transaction was built for. Without `address` the wallet signs with
   // whichever account is active now, so a switch in Freighter after connecting yields a
@@ -315,9 +319,22 @@ export async function submitBridge(
   });
 
   const signedTx = TransactionBuilder.fromXDR(signedTxXdr, config.networkPassphrase);
-  return submitSigned(server, signedTx, "bridge transaction", userAddress, {
+  const maxTimeMs = txMaxTimeMs(signedTx);
+  const { txHash } = await submitSigned(server, signedTx, "bridge transaction", userAddress, {
     horizonUrl: config.horizonUrl,
   });
+  return maxTimeMs === undefined ? { txHash } : { txHash, maxTimeMs };
+}
+
+/**
+ * The upper time bound of the transaction that was actually signed, in ms since the epoch, or
+ * `undefined` when it has none (`maxTime` 0). After this moment the network can no longer
+ * include it, so it is the only honest deadline for deciding a burn was not sent.
+ */
+export function txMaxTimeMs(tx: ReturnType<typeof TransactionBuilder.fromXDR>): number | undefined {
+  const inner = "innerTransaction" in tx ? tx.innerTransaction : tx;
+  const maxTime = Number(inner.timeBounds?.maxTime ?? 0);
+  return Number.isFinite(maxTime) && maxTime > 0 ? maxTime * 1000 : undefined;
 }
 
 /**
@@ -360,6 +377,21 @@ export class UncertainSubmitError extends Error {
     );
     this.name = "UncertainSubmitError";
     this.txHash = txHash;
+  }
+}
+
+/**
+ * An error `quoteBridge` / `submitBridge` / `submitSigned` raise themselves: a humanized contract
+ * error, the raw Soroban fallback with its diagnostic event log, a missing quote, or a
+ * rejected-transaction explanation. Its message is already the answer to show, so
+ * `classifyStellarSubmitError` passes it through unchanged instead of matching words like "denied"
+ * or "cancelled" in it. Nothing was sent. (`quoteBridge` is included because the form re-quotes
+ * inside the same `try` as the submit.)
+ */
+export class BridgeSubmitError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "BridgeSubmitError";
   }
 }
 
@@ -426,11 +458,11 @@ export async function submitSigned(
       // Already in the mempool from a previous attempt — the same hash, so polling is valid.
       return { txHash: result.hash };
     case "TRY_AGAIN_LATER":
-      throw new Error(
+      throw new BridgeSubmitError(
         `The network declined to queue the ${what} right now (TRY_AGAIN_LATER). Nothing has moved. Wait a few seconds and try again.`,
       );
     default:
-      throw new Error(describeRejectedTransaction(result, what, account));
+      throw new BridgeSubmitError(describeRejectedTransaction(result, what, account));
   }
 }
 
@@ -510,11 +542,19 @@ export async function waitForTx(
 ): Promise<void> {
   const deadline = Date.now() + timeoutMs;
   const url = `${config.horizonUrl.replace(/\/$/, "")}/transactions/${txHash}`;
+  // When Horizon last answered 404, and whether that was its latest answer. Only a 404 is
+  // evidence the transaction is not on chain; a dropped request or a 5xx says nothing.
+  let lastNotFoundAtMs: number | undefined;
+  let lastAnswerWasNotFound = false;
 
   while (Date.now() < deadline) {
     try {
       const res = await fetch(url, { headers: { Accept: "application/json" } });
-      if (res.ok) {
+      if (res.status === 404) {
+        lastNotFoundAtMs = Date.now();
+        lastAnswerWasNotFound = true;
+      } else if (res.ok) {
+        lastAnswerWasNotFound = false;
         const body = (await res.json()) as { successful?: boolean; result_xdr?: string };
         if (body.successful === true) return;
         if (body.successful === false) {
@@ -522,7 +562,7 @@ export async function waitForTx(
             `Transaction ${txHash} was included in a ledger but failed. Nothing has moved.`,
           );
         }
-      } else if (res.status !== 404) {
+      } else {
         // 404 is the expected "not included yet" answer; anything else is worth surfacing
         // rather than silently retrying until the deadline.
         throw new Error(`Horizon returned ${res.status} while checking ${txHash}.`);
@@ -533,13 +573,33 @@ export async function waitForTx(
       if (err instanceof Error && err.message.includes("was included in a ledger but failed")) {
         throw err;
       }
+      lastAnswerWasNotFound = false;
     }
     await new Promise((r) => setTimeout(r, pollIntervalMs));
   }
 
-  throw new Error(
-    `Timed out after ${Math.round(timeoutMs / 1000)}s waiting for ${txHash} to be applied.\n\nCheck the hash on stellar.expert. If it never lands, nothing has moved and it is safe to retry.`,
-  );
+  const message = `Timed out after ${Math.round(timeoutMs / 1000)}s waiting for ${txHash} to be applied.\n\nCheck the hash on stellar.expert. If it never lands, nothing has moved and it is safe to retry.`;
+  if (lastAnswerWasNotFound && lastNotFoundAtMs !== undefined) {
+    throw new StellarTxNotFoundError(message, txHash, lastNotFoundAtMs);
+  }
+  throw new Error(message);
+}
+
+/**
+ * `waitForTx` ran out of time and Horizon's latest answer was a 404: the transaction was not on
+ * chain at `lastNotFoundAtMs`. Distinct from a plain timeout, where Horizon could not be reached
+ * or answered with an error, which proves nothing either way.
+ */
+export class StellarTxNotFoundError extends Error {
+  readonly txHash: string;
+  readonly lastNotFoundAtMs: number;
+
+  constructor(message: string, txHash: string, lastNotFoundAtMs: number) {
+    super(message);
+    this.name = "StellarTxNotFoundError";
+    this.txHash = txHash;
+    this.lastNotFoundAtMs = lastNotFoundAtMs;
+  }
 }
 
 /**
@@ -636,4 +696,35 @@ export function humanizeContractError(raw: string, wrapperContractId?: string | 
     return "Your USDC balance is too low for this transfer.";
   }
   return raw;
+}
+
+/**
+ * Classifies errors caught during Stellar burn submission:
+ * - `UncertainSubmitError` keeps its message (including the tx hash) with `maybeSent: true` so the
+ *   UI never claims "No funds have moved" or hides the hash.
+ * - `BridgeSubmitError`, the app's own answers from `quoteBridge` / `submitBridge` /
+ *   `submitSigned` (humanized contract errors, the raw Soroban fallback, a missing quote,
+ *   rejected-transaction explanations), passes through unchanged with `maybeSent: false`. Its text is never matched, so a diagnostic log containing
+ *   "denied" or "cancelled" stays an alarm with its full event log, and rewording a message cannot
+ *   quietly change how it is classified.
+ * - Everything else is a wallet or transport error and goes to `classifyWalletError`.
+ */
+export function classifyStellarSubmitError(err: unknown): ClassifiedError {
+  if (err instanceof UncertainSubmitError) {
+    return {
+      kind: "network",
+      message: err.message,
+      maybeSent: true,
+      raw: err.message,
+    };
+  }
+  if (err instanceof BridgeSubmitError) {
+    return {
+      kind: "unknown",
+      message: err.message,
+      maybeSent: false,
+      raw: err.message,
+    };
+  }
+  return classifyWalletError(err);
 }

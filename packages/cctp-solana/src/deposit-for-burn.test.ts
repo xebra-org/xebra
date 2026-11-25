@@ -6,6 +6,7 @@ import {
   DEPOSIT_FOR_BURN_WITH_HOOK_DISCRIMINATOR,
   type DepositForBurnWithHookParams,
   InsufficientSolanaUsdcError,
+  SOLANA_USDC_MINT,
   SolanaBurnRefused,
   buildDepositForBurnWithHookInstruction,
   buildSolanaBurnTransaction,
@@ -13,7 +14,11 @@ import {
   describeSimulationError,
   encodeDepositForBurnWithHook,
 } from "./deposit-for-burn.js";
-import { TOKEN_MESSENGER_MINTER_V2, TOKEN_PROGRAM } from "./receive-message.js";
+import {
+  TOKEN_MESSENGER_MINTER_V2,
+  TOKEN_PROGRAM,
+  associatedTokenAddress,
+} from "./receive-message.js";
 
 /**
  * Two REAL mainnet `deposit_for_burn_with_hook` transactions, read over RPC on 2026-11-13 and both
@@ -230,6 +235,38 @@ describe("buildSolanaBurnTransaction", () => {
     );
     // Compute limit first, priced second, burn last.
     expect(tx.instructions[0]?.data.readUInt32LE(1)).toBe(BURN_COMPUTE_UNITS);
+  });
+
+  it("pays Xebra's fee in the same transaction, after the burn, and still fits a packet", async () => {
+    const feeOwner = Keypair.generate().publicKey;
+    const built = await buildSolanaBurnTransaction(connection(10_100_000n), {
+      owner,
+      params,
+      fee: { owner: feeOwner, amount: 100_000n },
+      simulate: false,
+    });
+    const raw = Buffer.from(built.transaction, "base64");
+    expect(raw.length).toBeLessThanOrEqual(1232);
+    const tx = Transaction.from(raw);
+    const fee = tx.instructions.at(-1);
+    expect(fee?.programId.equals(TOKEN_PROGRAM)).toBe(true);
+    expect(fee?.data.readUInt8(0)).toBe(12);
+    expect(fee?.data.readBigUInt64LE(1)).toBe(100_000n);
+    expect(fee?.data.readUInt8(9)).toBe(6);
+    expect(fee?.keys[2]?.pubkey.equals(associatedTokenAddress(feeOwner, SOLANA_USDC_MINT))).toBe(
+      true,
+    );
+    expect(fee?.keys[3]?.pubkey.equals(owner)).toBe(true);
+    expect(tx.instructions.at(-2)?.programId.equals(TOKEN_MESSENGER_MINTER_V2)).toBe(true);
+    // The burn's balance check counts the fee too.
+    await expect(
+      buildSolanaBurnTransaction(connection(10_099_999n), {
+        owner,
+        params,
+        fee: { owner: feeOwner, amount: 100_000n },
+        simulate: false,
+      }),
+    ).rejects.toMatchObject({ need: 10_100_000n });
   });
 
   it("uses a new event account every time", async () => {

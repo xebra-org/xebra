@@ -15,6 +15,9 @@ const { SolanaSourceError } = await import("../../../../lib/solana-source/checks
 const SENDER = "DtG5HoH4WKC6HjmdTm4k7PNreyQmB1UmpFfqHMCeNj9y";
 const EVM = "0x140d18eaa68c34c3ca761988f83cf8c395526e1d";
 const G = "GBHC3U6RUUU5NRX7SHZ2XC5HA5JIG364LOMVJLYWM72JFBANWSWYJ7ZV";
+const FEE_OWNER = "2GiJjxVmqSSTL2yfUbVnBBDkTeXEn1DM8QM2ZrRGumte";
+/** Xebra's fee paid to its Solana address: 0.01 plus 0.01% of what is entered. */
+const fee = (amount: bigint) => ({ owner: FEE_OWNER, amount });
 
 const post = async (body: unknown) => {
   const res = await POST(
@@ -29,6 +32,7 @@ const post = async (body: unknown) => {
 describe("POST /api/solana-source/build", () => {
   beforeEach(() => {
     vi.unstubAllEnvs();
+    vi.stubEnv("NEXT_PUBLIC_XEBRA_FEE_ADDRESS_SOLANA", FEE_OWNER);
     build.mockReset().mockResolvedValue({
       transaction: "dHg=",
       eventAccount: "E",
@@ -53,12 +57,24 @@ describe("POST /api/solana-source/build", () => {
       maxFee: "60000",
     });
     expect(r.status).toBe(200);
-    expect(r.body).toMatchObject({ transaction: "dHg=", maxFee: "60000", received: "4940000" });
+    expect(r.body).toMatchObject({
+      transaction: "dHg=",
+      maxFee: "60000",
+      received: "4940000",
+      xebraFee: "10500",
+    });
+    // Priced with Xebra's fee (0.01 + 0.01% of 5) out of the 5 entered; the burn is the rest.
+    expect(price).toHaveBeenCalledWith(
+      expect.objectContaining({ id: "base" }),
+      5_000_000n,
+      10_500n,
+    );
     expect(build).toHaveBeenCalledWith({
       sender: SENDER,
-      amount: 5_000_000n,
+      amount: 4_989_500n,
       target: { kind: "evm", chain: expect.objectContaining({ id: "base" }), recipient: EVM },
       maxFee: 60_000n,
+      fee: fee(10_500n),
     });
   });
 
@@ -93,19 +109,29 @@ describe("POST /api/solana-source/build", () => {
     expect(build).not.toHaveBeenCalled();
   });
 
-  it("builds a burn to Stellar with no fee, after checking the recipient", async () => {
+  it("builds a burn to Stellar with no Circle fee and Xebra's 0.01 plus 0.01%, after checking the recipient", async () => {
     vi.stubEnv("SOLANA_SENDS_TO", "stellar");
     const r = await post({ sender: SENDER, amount: "2.5", recipient: G, chain: "stellar" });
     expect(r.status).toBe(200);
-    expect(r.body).toMatchObject({ maxFee: "0", received: "2500000" });
-    expect(toStellar).toHaveBeenCalledWith(G, 2_500_000n);
+    expect(r.body).toMatchObject({ maxFee: "0", received: "2489750", xebraFee: "10250" });
+    expect(toStellar).toHaveBeenCalledWith(G, 2_489_750n);
     expect(price).not.toHaveBeenCalled();
     expect(build).toHaveBeenCalledWith({
       sender: SENDER,
-      amount: 2_500_000n,
+      amount: 2_489_750n,
       target: { kind: "stellar", recipient: G },
       maxFee: 0n,
+      fee: fee(10_250n),
     });
+  });
+
+  it("refuses to build without Xebra's fee address, rather than send for free", async () => {
+    vi.stubEnv("SOLANA_SENDS_TO", "stellar");
+    vi.stubEnv("NEXT_PUBLIC_XEBRA_FEE_ADDRESS_SOLANA", "");
+    const r = await post({ sender: SENDER, amount: "2.5", recipient: G, chain: "stellar" });
+    expect(r.status).toBe(503);
+    expect(r.body.error).toMatch(/fee address/);
+    expect(build).not.toHaveBeenCalled();
   });
 
   it("passes a recipient refusal on, and builds nothing", async () => {

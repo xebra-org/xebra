@@ -9,11 +9,11 @@ import type { TransferStep, UnsignedTx } from "./index.js";
 describe("package root type exports", () => {
   it("names TransferStep and UnsignedTx as the root defines them", () => {
     expectTypeOf<TransferStep["id"]>().toEqualTypeOf<
-      "approve" | "burn" | "open_account" | "claim"
+      "approve" | "burn" | "open_account" | "claim" | "fee"
     >();
     expectTypeOf<TransferStep["expiresAt"]>().toEqualTypeOf<string | null>();
     expectTypeOf<UnsignedTx["kind"]>().toEqualTypeOf<
-      "stellar" | "evm" | "sui" | "aptos" | "solana"
+      "stellar" | "evm" | "sui" | "aptos" | "solana" | "aptos_call"
     >();
     expectTypeOf<TransferStep["tx"]>().toEqualTypeOf<UnsignedTx>();
 

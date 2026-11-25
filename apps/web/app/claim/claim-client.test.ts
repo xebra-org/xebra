@@ -1,10 +1,11 @@
 import { describe, expect, it, vi } from "vitest";
 import { CIRCLE_UNAVAILABLE_MESSAGE, mapAttestationResponse } from "./claim-client";
 
-// The client component pulls in the wallet provider chain through ./evm-claim,
-// which does not load under vitest. The mapping function under test touches none
-// of that, so the component module is stubbed out here.
+// The client component pulls in the wallet provider chain through ./evm-claim and
+// ./sui-claim, which do not load under vitest. The mapping function under test
+// touches none of that, so the component modules are stubbed out here.
 vi.mock("./evm-claim", () => ({ EvmClaim: () => null }));
+vi.mock("./sui-claim", () => ({ SuiClaim: () => null }));
 
 const COMPLETE = {
   status: "complete",

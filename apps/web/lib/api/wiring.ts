@@ -3,6 +3,7 @@ import { rpc } from "@stellar/stellar-sdk";
 import type { CircleHealth } from "@xebra/cctp-client";
 import { buildSuiBurn, buildSuiForwardStep } from "@xebra/sdk/build";
 import { EVM_CHAINS, type FeeParams, stellarDestinations, wrapperFor } from "@xebra/sdk/core";
+import { after } from "next/server";
 import { GET as aptosStatus } from "../../app/api/aptos/status/route";
 import { GET as attestation } from "../../app/api/attestation/route";
 import { GET as circleHealth } from "../../app/api/circle-health/route";
@@ -10,6 +11,8 @@ import { GET as delivery } from "../../app/api/delivery/route";
 import { GET as evmWrapper } from "../../app/api/evm-wrapper/route";
 import { GET as recipient } from "../../app/api/recipient/route";
 import { GET as solanaStellarStatus } from "../../app/api/solana-source/status/route";
+import { GET as stellarInboundStatus } from "../../app/api/stellar-inbound/status/route";
+import { POST as suiComplete } from "../../app/api/sui-stellar/complete/route";
 import { GET as suiStatus } from "../../app/api/sui-stellar/status/route";
 import { buildAptosTransfer } from "../aptos/build";
 import { APTOS_CCTP_DOMAIN, aptosDestinations, aptosMaxUsdcBase } from "../aptos/config";
@@ -31,6 +34,7 @@ import {
   suiSendsToSolana,
   suiStellarEnabled,
 } from "../sui-stellar/config";
+import { createRelayKick } from "../sui-stellar/relay-kick";
 import { planClaim, recipientStatus } from "../sui-stellar/stellar-side";
 import type { Eip1193Provider } from "../wallets/types";
 import type { Deps, StellarRoutes } from "./deps";
@@ -42,7 +46,8 @@ import { ApiError } from "./errors";
  * Circle, delivery and Solana-recipient lookups call the site's own route handlers, which means the
  * same Iris budget, cache and rules apply.
  *
- * Nothing here signs or holds a key. Reads only.
+ * Nothing here signs or holds a key. The one write, `suiRelay`, goes through the relayer's own route
+ * handler (`/api/sui-stellar/complete`), which holds the key and decides what it will complete.
  */
 
 const SITE_URL = process.env.XEBRA_SITE_URL ?? "https://xebra.exchange";
@@ -85,6 +90,22 @@ async function readJson(res: Response): Promise<Record<string, unknown> | null> 
   }
 }
 
+/** Relays attested Sui burns seen through `/v1`, after the poll that saw them has been answered. */
+const suiRelay = createRelayKick({
+  async run(digest) {
+    return readJsonAnyStatus(
+      await suiComplete(
+        new Request(`${ORIGIN}/api/sui-stellar/complete`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ digest }),
+        }),
+      ),
+    );
+  },
+  schedule: after,
+});
+
 export const liveDeps: Deps = {
   siteUrl: SITE_URL,
   suiStellar: {
@@ -107,8 +128,18 @@ export const liveDeps: Deps = {
       ),
     );
   },
+  async stellarInboundStatus(tx, srcDomain) {
+    return readJsonAnyStatus(
+      await stellarInboundStatus(
+        new Request(
+          `${ORIGIN}/api/stellar-inbound/status?tx=${encodeURIComponent(tx)}&src=${srcDomain}`,
+        ),
+      ),
+    );
+  },
   aptos: { destinations: aptosDestinations(), maxUnits: aptosMaxUsdcBase() },
   evmRoutes: env.evmRoutes,
+  feeAddresses: env.feeAddresses,
   stellarRoutes,
   evmWrapperAddress: (chain) => wrapperFor(chain, env.arcUseWrapper),
   async evmWrapperSettings(chain) {
@@ -161,6 +192,7 @@ export const liveDeps: Deps = {
       ),
     );
   },
+  suiRelay,
   async aptosStatus(tx) {
     return readJsonAnyStatus(
       await aptosStatus(new Request(`${ORIGIN}/api/aptos/status?tx=${encodeURIComponent(tx)}`)),
@@ -239,6 +271,7 @@ export const liveDeps: Deps = {
           amount: p.amount,
           target,
           maxFee: p.maxFee,
+          ...(p.fee ? { fee: p.fee } : {}),
         });
         return {
           id: "burn",
@@ -260,6 +293,7 @@ export const liveDeps: Deps = {
     solanaStellarClaim: (tx, payer) => planClaim(tx, payer, SOLANA_CCTP_DOMAIN),
     aptosBuild: (request) => buildAptosTransfer(request, liveAptosBuildDeps()),
     aptosClaim: (tx, payer) => planClaim(tx, payer, APTOS_CCTP_DOMAIN),
+    stellarInboundClaim: (tx, payer, srcDomain) => planClaim(tx, payer, srcDomain),
   },
 };
 

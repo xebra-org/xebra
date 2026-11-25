@@ -2,6 +2,7 @@
   "title": "Guides",
   "pages": [
     "index",
+    "api-keys",
     "send-from-stellar",
     "send-from-evm",
     "sui-to-stellar",

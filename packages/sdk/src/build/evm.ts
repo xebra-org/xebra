@@ -1,4 +1,6 @@
 import { encodeApprove, encodeDepositForBurnWithHook, encodeWrapperBridge } from "@xebra/cctp-evm";
+import { encodeFunctionData } from "viem";
+import { formatUsdc6 } from "../core/amounts.js";
 import type { EvmChain } from "../core/chains/evm.js";
 import { XebraError } from "../errors.js";
 import type { TransferStep } from "./types.js";
@@ -150,4 +152,47 @@ export function buildEvmBridge(
     expiresAt: p.via ? new Date(Number(p.deadline) * 1000).toISOString() : null,
   });
   return steps;
+}
+
+const ERC20_TRANSFER = [
+  {
+    type: "function",
+    name: "transfer",
+    stateMutability: "nonpayable",
+    inputs: [
+      { name: "to", type: "address" },
+      { name: "value", type: "uint256" },
+    ],
+    outputs: [{ type: "bool" }],
+  },
+] as const;
+
+/**
+ * Xebra's flat fee from an EVM chain: a plain USDC `transfer` to Xebra's fee address, signed after
+ * the burn. Nothing on chain ties it to the burn; Xebra's own app and API always ask for it.
+ */
+export function buildEvmFeeStep(p: {
+  source: EvmChain;
+  feeAddress: Hex;
+  fee: bigint;
+}): TransferStep {
+  if (p.fee <= 0n) throw new RangeError("The fee must be more than zero.");
+  if (!/^0x[0-9a-fA-F]{40}$/.test(p.feeAddress)) throw new Error("Not an EVM fee address.");
+  return {
+    id: "fee",
+    chain: p.source.id,
+    description: `Pay Xebra's fee, ${formatUsdc6(p.fee)} USDC, on ${p.source.name}.`,
+    tx: {
+      kind: "evm",
+      chainId: p.source.chainId,
+      to: p.source.usdcAddress as Hex,
+      data: encodeFunctionData({
+        abi: ERC20_TRANSFER,
+        functionName: "transfer",
+        args: [p.feeAddress, p.fee],
+      }),
+      value: "0",
+    },
+    expiresAt: null,
+  };
 }

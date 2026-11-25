@@ -8,7 +8,7 @@ The recipient gets `amount` minus `fees.total`, and nothing else is charged in U
 
 | Field | Who is paid | When it is non-zero |
 |---|---|---|
-| `fees.xebra` | Xebra | Transfers through a Xebra fee contract (out of Stellar today) |
+| `fees.xebra` | Xebra | Every transfer: through Xebra's contract on Stellar and Arc, or a flat fee everywhere else |
 | `fees.circle` | Circle, for Fast Transfer | Fast transfers only |
 | `fees.delivery` | Circle's Forwarding Service, for minting on the destination | Every route Circle forwards |
 | `fees.total` | | The sum of the three |
@@ -63,24 +63,35 @@ tenth of the amount (see below), so a route with a larger delivery fee needs a l
 Solana recipient, whose USDC account Circle opens, costs the most. `minimum` in the quote already
 includes this, with a small margin for the fee moving.
 
-## Out of EVM chains
+## Every other route
 
-Transfers out of an EVM chain, as the API builds them today, call Circle's `TokenMessengerV2`
-directly. There is **no Xebra fee** (`fees.xebra` is `"0"`). The sender pays:
+Where a transfer does not go through a Xebra contract (out of EVM chains other than Arc's wrapper,
+Solana, Sui and Aptos), Xebra takes **0.01 USDC plus 0.01% of the amount** (since 2026-11-22; it
+was a flat 0.10 USDC, or 0.05 where the recipient claims, before), on top of Circle's fees and gas.
+The same wherever the transfer goes, whether it arrives by itself or the recipient claims it.
 
-- `fees.delivery`: Circle's delivery fee for the destination.
-- `fees.circle`: Circle's Fast Transfer fee, a small fraction of the amount, on Fast transfers only.
+The fee comes **out of the amount**: `amount` is what leaves the wallet, Xebra's fee is paid to
+Xebra's fee address on the source chain, and the rest is burned. Circle's fees come out of the burn.
 
-Xebra has a fee contract on Arc that applies the same rule as Stellar's. While it is switched on
-for the site, the API does not build transfers out of EVM chains, and
-[`POST /v1/transfers`](/docs/api/transfers/create-transfer) answers `route_unavailable` for them,
-so that a transaction from the API never carries a different fee from the one the site shows.
+```text
+xebra    = 0.01 + 0.01% × amount
+burn     = amount − xebra
+received = burn − delivery − circle
+```
 
-## Out of Sui
+How the fee is paid depends on the chain:
 
-Sui to Stellar has no fee from Xebra or from Circle as of 2026-11-12: every fee field is `"0"` and
-the recipient gets the whole amount. The Stellar fee for the mint is paid by Xebra's relayer, or by
-whoever claims it.
+- **Solana and Sui**: in the same transaction as the burn, so both land or neither does.
+- **EVM chains**: a USDC transfer, `steps[].id` `"fee"`, signed right after the burn.
+- **Aptos**: an `aptos_call` transaction, `steps[].id` `"fee"`, signed right after the burn
+  (Circle's Aptos burn is a fixed script that cannot carry it).
+
+Fees together, Xebra's and Circle's, may be at most a tenth of the amount; `minimum` in the quote
+includes this. Into Stellar the burn must be at least 1 USDC, what the relayer completes, so the
+smallest amount is about 1.0102.
+
+Out of Arc, while Xebra's fee contract there is switched on for the site, the contract's own rule
+applies, the same as Stellar's above, and there is no flat fee.
 
 ## Circle's delivery fee
 

@@ -1,19 +1,22 @@
-import type { ApiErrorCode } from "../api/errors.js";
+import type { ApiErrorCode, XebraErrorCode } from "../api/errors.js";
 import {
   type ClaimBuild,
   ClaimBuildSchema,
   type ClaimRequest,
   type Health,
   HealthSchema,
+  type Problem,
   ProblemSchema,
   type Quote,
   type QuoteRequest,
+  QuoteRequestSchema,
   QuoteSchema,
   type Routes,
   RoutesSchema,
   type TransferBuild,
   TransferBuildSchema,
   type TransferRequest,
+  TransferRequestSchema,
   type TransferStatus,
   TransferStatusSchema,
 } from "../api/schemas.js";
@@ -31,43 +34,101 @@ const RETRYABLE_API_CODES = new Set<string>([
   "internal_error",
 ]);
 
-export type XebraApiErrorCode =
-  | ApiErrorCode
-  | "network_error"
-  | "timeout"
-  | "invalid_response"
-  | "wait_timeout";
+/** The same as `XebraErrorCode`, by the name it had first. */
+export type XebraApiErrorCode = XebraErrorCode;
 
 /** A problem the API answered with: `code` is stable, `detail` is written for a person. */
 export class XebraApiError extends XebraError {
+  /**
+   * Stable: an `ApiErrorCode` or one of `CLIENT_ERROR_CODES`. The API codes are listed on
+   * [Errors](/docs/errors).
+   */
   declare readonly code: XebraApiErrorCode;
+  /**
+   * How long the server asked to be left alone, from its `Retry-After` header, in milliseconds
+   * from when the answer arrived. Undefined when the answer carried no such header, or one that
+   * is neither a number of seconds nor a date.
+   */
+  readonly retryAfterMs: number | undefined;
 
   constructor(
+    /** The HTTP status, or 0 when no answer came back. */
     readonly status: number,
     code: XebraApiErrorCode,
+    /** A sentence for a person. */
     readonly detail: string,
-    /** The problem's other fields, such as `minimum`, `maximum`, `have` and `need`. */
-    readonly extra: Record<string, unknown> = {},
-    opts?: { cause?: unknown },
+    /**
+     * The problem's other fields, such as `minimum`, `maximum`, `have` and `need`. The amounts
+     * and `needs` are typed as strings.
+     */
+    readonly extra: Partial<
+      Pick<Problem, "minimum" | "maximum" | "have" | "need" | "total" | "limit" | "needs">
+    > &
+      Record<string, unknown> = {},
+    opts?: { cause?: unknown; retryAfterMs?: number | undefined },
   ) {
     super(code, detail, {
       retryable: RETRYABLE_API_CODES.has(code),
       ...(opts?.cause !== undefined ? { cause: opts.cause } : {}),
     });
     this.name = "XebraApiError";
+    this.retryAfterMs = opts?.retryAfterMs;
+    Object.defineProperty(this, XEBRA_ERROR_BRAND, { value: true });
   }
 }
 
+/** Shared by every copy of the SDK in one process, where the class itself is not. */
+const XEBRA_ERROR_BRAND = Symbol.for("xebra.error");
+
+/**
+ * Whether `e` is an `XebraApiError`, from this copy of the SDK or any other. `instanceof` is not
+ * enough where two copies are installed, as in a monorepo or a framework that bundles its server
+ * and client builds apart: an error from one copy is not an instance of the other's class.
+ */
+export function isXebraApiError(e: unknown): e is XebraApiError {
+  if (e instanceof XebraApiError) return true;
+  return (
+    typeof e === "object" &&
+    e !== null &&
+    (e as { [XEBRA_ERROR_BRAND]?: unknown })[XEBRA_ERROR_BRAND] === true &&
+    (e as { name?: unknown }).name === "XebraApiError"
+  );
+}
+
 export interface XebraClientOptions {
+  /**
+   * Where the API answers.
+   * @defaultValue "https://api.xebra.exchange"
+   */
   baseUrl?: string;
   /**
-   * Sent as `Authorization: Bearer <apiKey>`. Optional: keys are not issued yet, and the API
-   * answers without one.
+   * Sent as `Authorization: Bearer <apiKey>`. Optional: without one the API answers at a lower
+   * rate limit. See https://docs.xebra.exchange/guides/api-keys.
    */
   apiKey?: string;
+  /**
+   * A fetch to use instead of the global one, for tests or a custom agent.
+   * @defaultValue globalThis.fetch
+   */
   fetch?: typeof fetch;
-  /** Per request. Default 15 s. */
+  /**
+   * How long one request may take before it fails with code `timeout`, in milliseconds.
+   * @defaultValue 15000
+   */
   timeoutMs?: number;
+  /**
+   * Ask again when a GET fails for a reason that asking again can cure. Off unless given.
+   *
+   * A GET that ends in 429, 503 or `network_error` is sent up to `attempts` more times. Before
+   * each, the client waits for `baseMs` doubled per failure, less a random part of up to half so
+   * that clients which failed together do not return together, and never for less than the
+   * `Retry-After` the server sent. When the server asks for more than a minute the client does
+   * not sleep on it: the error is thrown at once, with `retryAfterMs` for the caller to act on.
+   *
+   * A POST is never sent twice: the first one may have been acted on. `timeoutMs` applies to
+   * each request, and a call's `signal` also ends the wait between two of them.
+   */
+  retry?: { attempts: number; baseMs: number };
 }
 
 interface Schema<T> {
@@ -109,13 +170,54 @@ export interface XebraCallOptions {
    * still applies: whichever comes first ends the request.
    */
   signal?: AbortSignal;
-  /** How long this call may take, in place of the client's `timeoutMs`. */
+  /**
+   * How long this one call may take before it fails with code `timeout`, in place of the
+   * client's `timeoutMs`.
+   * @defaultValue the client's `timeoutMs`
+   */
   timeoutMs?: number;
 }
 
 /** `getTransfer` took a bare signal before it took options; it still takes either. */
 function isAbortSignal(value: XebraCallOptions | AbortSignal | undefined): value is AbortSignal {
   return typeof (value as AbortSignal | undefined)?.addEventListener === "function";
+}
+
+/** Fields whose problems are about the amount, which the API answers as `invalid_amount`. */
+const AMOUNT_FIELDS = new Set(["amount", "maxTotalFee"]);
+
+/**
+ * Checks a request against the schema the API checks it with, and throws what the API would have
+ * answered (`invalid_amount` or `invalid_request`) with status 0, so bad input costs no round trip.
+ * The issues are on `extra.issues`, as `{ path, message }`.
+ */
+function checkInput(
+  schema: {
+    safeParse(
+      v: unknown,
+    ):
+      | { success: true }
+      | { success: false; error: { issues: Array<{ path: PropertyKey[]; message: string }> } };
+  },
+  input: unknown,
+): void {
+  const parsed = schema.safeParse(input);
+  if (parsed.success) return;
+  const issues = parsed.error.issues.map((i) => ({
+    path: i.path.map(String),
+    message: i.message,
+  }));
+  const amount = issues.find((i) => AMOUNT_FIELDS.has(i.path[0] ?? ""));
+  if (amount) {
+    throw new XebraApiError(0, "invalid_amount", `${amount.path[0]}: ${amount.message}.`, {
+      issues,
+    });
+  }
+  const detail = issues
+    .slice(0, 5)
+    .map((i) => (i.path.length > 0 ? `${i.path.join(".")}: ${i.message}` : i.message))
+    .join("; ");
+  throw new XebraApiError(0, "invalid_request", `${detail}.`, { issues });
 }
 
 /**
@@ -126,8 +228,30 @@ export function createXebraClient(opts: XebraClientOptions = {}) {
   const base = (opts.baseUrl ?? DEFAULT_BASE_URL).replace(/\/+$/, "");
   const doFetch = opts.fetch ?? globalThis.fetch;
   const defaultTimeoutMs = opts.timeoutMs ?? 15_000;
+  // Anything that is not a count or a duration means no retries, as leaving the option out does.
+  const retries = Math.max(0, Math.trunc(opts.retry?.attempts ?? 0)) || 0;
+  const retryBaseMs = Math.max(0, opts.retry?.baseMs ?? 0) || 0;
 
+  /** One call: a request, sent again where the client was asked to and it is safe to. */
   async function call<T>(
+    path: string,
+    schema: Schema<T>,
+    init: { method?: "GET" | "POST"; body?: unknown } & XebraCallOptions = {},
+  ): Promise<T> {
+    const allowed = (init.method ?? "GET") === "GET" ? retries : 0;
+    for (let failed = 0; ; failed++) {
+      try {
+        return await request(path, schema, init);
+      } catch (err) {
+        if (failed >= allowed || !worthAskingAgain(err)) throw err;
+        const wait = retryWait(retryBaseMs, failed, err.retryAfterMs);
+        if (wait > MAX_RETRY_WAIT_MS) throw err;
+        await sleep(wait, init.signal);
+      }
+    }
+  }
+
+  async function request<T>(
     path: string,
     schema: Schema<T>,
     init: { method?: "GET" | "POST"; body?: unknown } & XebraCallOptions = {},
@@ -168,6 +292,8 @@ export function createXebraClient(opts: XebraClientOptions = {}) {
       );
     }
 
+    // Read before the body: a gateway's 503 may carry the header and no JSON at all.
+    const retryAfterMs = res.ok ? undefined : parseRetryAfter(res.headers.get("Retry-After"));
     let body: unknown;
     try {
       body = await res.json();
@@ -188,22 +314,25 @@ export function createXebraClient(opts: XebraClientOptions = {}) {
         "invalid_response",
         `The API answered ${res.status} without JSON.`,
         {},
-        { cause: err },
+        { cause: err, retryAfterMs },
       );
     }
     if (!res.ok) {
       const p = ProblemSchema.safeParse(body);
       if (!p.success) {
+        // A code newer than this SDK, or a gateway's own JSON: keep what can be read, and the
+        // body itself, rather than only the status. An unknown code is the server's, as it sent it.
+        const loose = looseProblem(body);
         throw new XebraApiError(
           res.status,
-          "invalid_response",
-          `The API answered ${res.status}.`,
-          {},
-          { cause: p.error },
+          (loose.code ?? "invalid_response") as XebraApiErrorCode,
+          loose.detail ?? `The API answered ${res.status}.`,
+          { body },
+          { cause: p.error, retryAfterMs },
         );
       }
       const { type: _type, title: _title, status, detail, code, ...extra } = p.data;
-      throw new XebraApiError(status, code as ApiErrorCode, detail, extra);
+      throw new XebraApiError(status, code as ApiErrorCode, detail, extra, { retryAfterMs });
     }
     const parsed = schema.safeParse(body);
     if (!parsed.success) {
@@ -245,17 +374,27 @@ export function createXebraClient(opts: XebraClientOptions = {}) {
     /** Every route Xebra sends on right now. */
     routes: (o?: XebraCallOptions): Promise<Routes> => call("/v1/routes", RoutesSchema, passed(o)),
 
-    /** What a transfer costs and what the recipient gets. Read-only. */
-    quote: (q: QuoteRequest, o?: XebraCallOptions): Promise<Quote> =>
-      call(
+    /**
+     * What a transfer costs and what the recipient gets. Read-only. Input the API would refuse is
+     * refused here first, with status 0, without a request.
+     */
+    quote: async (q: QuoteRequest, o?: XebraCallOptions): Promise<Quote> => {
+      checkInput(QuoteRequestSchema, q);
+      return call(
         `/v1/quote?${query({ from: q.from, to: q.to, amount: q.amount, speed: q.speed, recipient: q.recipient })}`,
         QuoteSchema,
         passed(o),
-      ),
+      );
+    },
 
-    /** The unsigned transactions for a transfer, in signing order, and its price. */
-    createTransfer: (r: TransferRequest, o?: XebraCallOptions): Promise<TransferBuild> =>
-      call("/v1/transfers", TransferBuildSchema, { method: "POST", body: r, ...passed(o) }),
+    /**
+     * The unsigned transactions for a transfer, in signing order, and its price. Input the API
+     * would refuse is refused here first, with status 0, without a request.
+     */
+    createTransfer: async (r: TransferRequest, o?: XebraCallOptions): Promise<TransferBuild> => {
+      checkInput(TransferRequestSchema, r);
+      return call("/v1/transfers", TransferBuildSchema, { method: "POST", body: r, ...passed(o) });
+    },
 
     /** Where a transfer is, by the burn's transaction hash (or Sui digest). */
     getTransfer,
@@ -282,6 +421,8 @@ export function createXebraClient(opts: XebraClientOptions = {}) {
       // reached should say so, not only that the transfer did not settle.
       let lastFailure: unknown;
       for (;;) {
+        // How long to leave it before the next poll: the interval, unless the API asked for longer.
+        let wait = interval;
         try {
           const status = await getTransfer(chain, tx, o.signal);
           lastStatus = status;
@@ -296,8 +437,11 @@ export function createXebraClient(opts: XebraClientOptions = {}) {
               err.code === "timeout");
           if (!transient) throw err;
           lastFailure = err;
+          if (err.status === 429 || err.status === 503) {
+            wait = Math.max(interval, err.retryAfterMs ?? 0);
+          }
         }
-        if (Date.now() + interval > deadline) {
+        if (Date.now() + wait > deadline) {
           throw new XebraApiError(
             0,
             "wait_timeout",
@@ -306,13 +450,63 @@ export function createXebraClient(opts: XebraClientOptions = {}) {
             { cause: lastFailure },
           );
         }
-        await sleep(interval, o.signal);
+        await sleep(wait, o.signal);
       }
     },
   };
 }
 
 export type XebraClient = ReturnType<typeof createXebraClient>;
+
+/** What the API's codes look like. A gateway's `"code": "FUNCTION_INVOCATION_FAILED"` is not one. */
+const CODE_SHAPE = /^[a-z][a-z0-9_]{0,63}$/;
+
+/** The `code` and `detail` of an error body that failed `ProblemSchema`, where they are usable. */
+function looseProblem(body: unknown): { code?: string; detail?: string } {
+  if (typeof body !== "object" || body === null) return {};
+  const { code, detail } = body as Record<string, unknown>;
+  return {
+    ...(typeof code === "string" && CODE_SHAPE.test(code) ? { code } : {}),
+    ...(typeof detail === "string" && detail.trim() !== "" ? { detail } : {}),
+  };
+}
+
+/**
+ * `Retry-After` in milliseconds from now. The header is a number of seconds or an HTTP date
+ * (RFC 9110, 10.2.3); a date already past is no wait at all. Undefined for a missing header and
+ * for anything else, so that a value this cannot read is not mistaken for "ask at once".
+ */
+function parseRetryAfter(value: string | null): number | undefined {
+  if (value === null) return undefined;
+  const text = value.trim();
+  if (/^\d+$/.test(text)) return Number(text) * 1000;
+  // Only what looks like a date: `Date.parse` would read "1.5" or "-3" as some year.
+  if (!/[a-z]/i.test(text)) return undefined;
+  const at = Date.parse(text);
+  return Number.isNaN(at) ? undefined : Math.max(0, at - Date.now());
+}
+
+/** The failures asking again can cure: the two statuses the API says to wait out, and no answer. */
+function worthAskingAgain(err: unknown): err is XebraApiError {
+  return (
+    err instanceof XebraApiError &&
+    (err.status === 429 || err.status === 503 || err.code === "network_error")
+  );
+}
+
+/** The longest the client sleeps before a retry. A server that asks for more is not obeyed by
+ * holding the caller's promise open: the error goes back to the caller, who can see how long. */
+const MAX_RETRY_WAIT_MS = 60_000;
+
+/**
+ * How long to wait after `failed` earlier failures: `baseMs` doubled for each, then anywhere
+ * from half of that up to all of it, and never less than the server asked for.
+ */
+function retryWait(baseMs: number, failed: number, retryAfterMs: number | undefined): number {
+  const ceiling = baseMs * 2 ** failed;
+  const jittered = ceiling / 2 + Math.random() * (ceiling / 2);
+  return Math.max(Math.round(jittered), retryAfterMs ?? 0);
+}
 
 function sleep(ms: number, signal?: AbortSignal): Promise<void> {
   return new Promise((resolve, reject) => {

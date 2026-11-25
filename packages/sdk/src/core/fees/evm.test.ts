@@ -47,8 +47,48 @@ describe("planEvmFee", () => {
       // No contract of ours on a direct route: Circle's fee is the whole fee.
       xebraFee: 0n,
       fee: 16_778n,
+      burn: 5_000_000n,
       received: 4_983_222n,
     });
+  });
+
+  it("takes Xebra's flat fee out of the amount: the burn is the rest, paid separately", () => {
+    expect(
+      planEvmFee({ amount: 5_000_000n, tier: STANDARD, destination: ARC, xebraFee: 100_000n }),
+    ).toEqual({
+      ok: true,
+      maxFee: 16_778n,
+      deliveryFee: 16_778n,
+      speedFee: 0n,
+      xebraFee: 100_000n,
+      fee: 116_778n,
+      burn: 4_900_000n,
+      received: 4_883_222n,
+    });
+  });
+
+  it("counts the flat fee in the one-tenth rule, and its minimum agrees with the plan", () => {
+    const min = minimumEvmAmount(STANDARD, 100_000n);
+    expect(min).toBeGreaterThan(minimumEvmAmount(STANDARD));
+    expect(
+      planEvmFee({ amount: min, tier: STANDARD, destination: ARC, xebraFee: 100_000n }).ok,
+    ).toBe(true);
+    const below = planEvmFee({
+      amount: min - 1n,
+      tier: STANDARD,
+      destination: ARC,
+      xebraFee: 100_000n,
+    });
+    expect(below).toMatchObject({ ok: false, kind: "minimum" });
+  });
+
+  it("refuses an amount the flat fee alone would swallow", () => {
+    expect(
+      planEvmFee({ amount: 100_000n, tier: STANDARD, destination: ARC, xebraFee: 100_000n }).ok,
+    ).toBe(false);
+    expect(() =>
+      planEvmFee({ amount: 1n, tier: STANDARD, destination: ARC, xebraFee: -1n }),
+    ).toThrow();
   });
 
   it("adds the speed fee for Fast", () => {
@@ -176,6 +216,8 @@ describe("planWrapperFee", () => {
       speedFee: 0n,
       xebraFee: 245_901n,
       fee: 300_000n,
+      // The wrapper takes the whole amount and its fee itself.
+      burn: 2_000_000n,
       received: 1_700_000n,
     });
   });

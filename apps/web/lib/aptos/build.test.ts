@@ -156,7 +156,7 @@ describe("buildAptosTransfer to an EVM chain", () => {
       { ...toBase, sender: EVM.slice(2) },
       { ...toBase, amount: "0" },
       { ...toBase, amount: "1.0000001" },
-      { ...toBase, to: "ethereum" },
+      { ...toBase, to: "injective" },
       { ...toBase, to: "sui" },
       { ...toBase, maxFee: undefined },
       { ...toBase, maxFee: "-1" },

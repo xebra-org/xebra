@@ -61,7 +61,7 @@ If delivery ever fails, the transfer is still attested and anyone can finish it:
 
 ## Fees
 
-From Stellar, Xebra charges ${xebraFeeRule}, and Circle's delivery fee is paid out of that, not added on top. ${arcViaWrapper ? "From Arc the same rule applies." : "From Arc there is no Xebra fee, only Circle's delivery fee."} Details on [fees](/fees).
+From Stellar, Xebra charges ${xebraFeeRule}, and Circle's delivery fee is paid out of that, not added on top. ${arcViaWrapper ? "From Arc the same rule applies." : "From Arc, Xebra takes 0.01 USDC plus 0.01% of the amount, plus Circle's delivery fee."} From every other chain without a Xebra contract, Xebra takes 0.01 USDC plus 0.01% of the amount, paid beside the burn, on top of Circle's fees and gas. Details on [fees](/fees).
 
 ## Safety
 
@@ -158,7 +158,7 @@ The only other cost is the Stellar network fee, a fraction of a cent in XLM. Eac
 ${
   arcViaWrapper
     ? `Transfers out of Arc go through Xebra's contract on Arc with the same rule: **${xebraFeeRule}**, with Circle's delivery fee paid out of it. Each transfer is ${FEES.minTransferUsdc} to ${FEES.arcMaxTransferUsdc} USDC (as of ${FEES.asOf}).`
-    : "There is **no Xebra fee** on transfers out of Arc: your wallet calls Circle directly. You pay Circle's delivery fee, usually a few cents, which is taken out of the amount."
+    : "Transfers out of Arc call Circle directly. Xebra takes **0.01 USDC plus 0.01% of the amount**, paid in its own step after the burn, and you pay Circle's delivery fee, usually a few cents, out of the amount."
 } Arc charges gas in USDC, a fraction of a cent per transaction; keep a few cents in the wallet.
 
 ## Circle's delivery fee
@@ -311,14 +311,18 @@ function routeDoc(r: RouteInfo, all: RouteInfo[]): Doc {
   const to = ENDPOINT_NAMES[r.to];
   const toEvm = r.to !== "solana" && r.to !== "stellar";
   const fromStellar = r.from === "stellar";
-  const viaXebra = r.via !== "circle";
+  const viaXebra = r.via === "stellar-wrapper" || r.via === "evm-wrapper";
+  const relayed = r.via === "stellar-relayer";
+  const claimed = r.via === "claimed";
   const title = `Bridge USDC from ${from} to ${to}`;
   const feeRow = viaXebra
     ? `${xebraFeeRule}, with Circle's delivery fee paid out of it`
-    : "None: you pay Circle's delivery fee only";
-  const recipient = toEvm
-    ? `any ${to} address (0x…)`
-    : `any Solana wallet address; the bridge finds its USDC account${r.deliveryCapNewAccountUnits !== null ? ", and Circle opens one if it is missing" : ""}`;
+    : "0.01 USDC plus 0.01% of the amount, paid beside the burn";
+  const recipient = relayed
+    ? "an existing Stellar account (G…) that holds a USDC trustline"
+    : toEvm
+      ? `any ${to} address (0x…)`
+      : `any Solana wallet address; the bridge finds its USDC account${r.deliveryCapNewAccountUnits !== null ? ", and Circle opens one if it is missing" : ""}`;
   const wallet = fromStellar
     ? "Freighter or the LOBSTR extension"
     : "any browser EVM wallet (MetaMask, Rabby and others)";
@@ -326,14 +330,23 @@ function routeDoc(r: RouteInfo, all: RouteInfo[]): Doc {
     ? `${FEES.minTransferUsdc} to ${FEES.stellarMaxTransferUsdc} USDC per transfer (as of ${FEES.asOf})`
     : viaXebra
       ? `${FEES.minTransferUsdc} to ${FEES.arcMaxTransferUsdc} USDC per transfer (as of ${FEES.asOf})`
-      : "No Xebra limit; Circle's fee may be at most a tenth of the amount";
+      : relayed
+        ? "From 1.02 USDC; no Xebra maximum"
+        : claimed
+          ? "From 0.11 USDC; no Xebra maximum"
+          : "No Xebra limit; fees may be at most a tenth of the amount";
+  const circleRow = relayed
+    ? "None: Circle does not deliver into Stellar; Xebra's relayer completes the mint"
+    : claimed
+      ? `None: Circle does not deliver to ${to}; the recipient claims it there`
+      : `Quoted live before you sign; Xebra refuses more than ${usdc(r.deliveryCapUnits)} USDC${r.deliveryCapNewAccountUnits !== null ? ` (${usdc(r.deliveryCapNewAccountUnits)} when Circle opens the account)` : ""}`;
   const evmSource = r.from !== "stellar" ? EVM_CHAINS[r.from as EvmChainId] : null;
   const siblings = all.filter((o) => o.from === r.from && o.slug !== r.slug);
   return {
     path: `/bridge/${r.slug}`,
     markdownPath: md(`/bridge/${r.slug}`),
     title,
-    description: `Send native USDC from ${from} to ${to} over Circle's CCTP. ${viaXebra ? `Fee ${FEES.bps / 100}%, at least ${FEES.minFeeUsdc} USDC` : "No Xebra fee"}, usually minutes, and claimable if delivery fails.`,
+    description: `Send native USDC from ${from} to ${to} over Circle's CCTP. ${viaXebra ? `Fee ${FEES.bps / 100}%, at least ${FEES.minFeeUsdc} USDC` : "Xebra fee 0.01 USDC plus 0.01%"}, usually minutes, and claimable if delivery fails.`,
     section: "routes",
     breadcrumb: [
       { name: "Xebra", path: "/" },
@@ -352,17 +365,17 @@ Send USDC from ${from} to ${to} with Xebra. Circle burns it on ${from} and mints
 | You send | USDC on ${from}, from ${wallet} |
 | You receive | Native USDC on ${to}, at ${recipient} |
 | Xebra fee | ${feeRow} |
-| Circle's delivery fee | Quoted live before you sign; Xebra refuses more than ${usdc(r.deliveryCapUnits)} USDC${r.deliveryCapNewAccountUnits !== null ? ` (${usdc(r.deliveryCapNewAccountUnits)} when Circle opens the account)` : ""} |
+| Circle's delivery fee | ${circleRow} |
 | Amount | ${limits} |
-| Speed | Usually a few minutes${evmSource?.fast ? "; Fast transfers are offered for a small extra fee" : ""} |
-| If it gets stuck | Claim it yourself at [claim](/claim) |
+| Speed | ${relayed ? "Usually 15 to 20 minutes: Circle attests once the chain has finalised the burn" : `Usually a few minutes${evmSource?.fast ? "; Fast transfers are offered for a small extra fee" : ""}`} |
+| If it gets stuck | ${claimed ? "It never arrives by itself: claim it at [claim](/claim) once Circle attests" : "Claim it yourself at [claim](/claim)"} |
 
 ## How to send
 
 1. Open [the bridge](/?from=${r.from}&to=${r.to}) with ${from} and ${to} selected.
 2. Connect ${wallet}${r.from === "arc" ? "; keep a few cents of USDC for Arc's gas" : ""}.
 3. Enter the amount and the ${to} address. The bridge shows the fee and exactly what will arrive.
-4. ${fromStellar ? "Sign once." : "Approve the amount, then confirm the transfer."}
+4. ${fromStellar ? "Sign once." : viaXebra ? "Approve the amount, then confirm the transfer." : "Approve the amount, confirm the transfer, then confirm Xebra's fee."}
 5. Watch it arrive; the bridge follows Circle's attestation and delivery.
 
 ## If it does not arrive

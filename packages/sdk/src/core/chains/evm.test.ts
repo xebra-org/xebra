@@ -21,6 +21,7 @@ import {
   parseArcReceivesFrom,
   parseArcSendsTo,
   parseEvmMesh,
+  parseEvmToSolana,
   parseStellarSendsTo,
 } from "./evm.js";
 
@@ -123,6 +124,34 @@ describe("the EVM mesh", () => {
   });
 });
 
+describe("EVM chains to Solana", () => {
+  const routes = {
+    arcSendsTo: [],
+    arcReceivesFrom: [],
+    evmToSolana: ["base", "arbitrum"],
+  } as const;
+
+  it("adds Solana to the chains named, makes them sources, and nothing else", () => {
+    expect(evmDestinationsFrom("base", routes)).toEqual(["solana"]);
+    expect(evmDestinationsFrom("optimism", routes)).toEqual([]);
+    expect(evmSources(routes)).toEqual(["arbitrum", "base"]);
+    expect(hasEvmRoutes(routes)).toBe(true);
+  });
+
+  it("sits beside the mesh and Arc", () => {
+    const both = { ...routes, arcReceivesFrom: ["base"], evmMesh: ["base", "optimism"] } as const;
+    expect(evmDestinationsFrom("base", both)).toEqual(["arc", "optimism", "solana"]);
+  });
+
+  it("parses a list of EVM chains, and refuses Arc and Solana", () => {
+    expect(parseEvmToSolana("all")).not.toContain("arc");
+    expect(parseEvmToSolana("base, sei")).toEqual(["base", "sei"]);
+    expect(parseEvmToSolana(undefined)).toEqual([]);
+    expect(() => parseEvmToSolana("arc")).toThrow(/NEXT_PUBLIC_EVM_TO_SOLANA/);
+    expect(() => parseEvmToSolana("solana")).toThrow();
+  });
+});
+
 describe("the route lists", () => {
   it("are off when the variable is absent or empty", () => {
     expect(parseArcSendsTo(undefined)).toEqual([]);
@@ -134,7 +163,7 @@ describe("the route lists", () => {
     expect(parseArcSendsTo("base, arbitrum")).toEqual(["arbitrum", "base"]);
     expect(parseArcSendsTo("solana,unichain")).toEqual(["unichain", "solana"]);
     expect(parseArcSendsTo("all")).toEqual(ARC_PEERS);
-    expect(ARC_PEERS).toHaveLength(15);
+    expect(ARC_PEERS).toHaveLength(25);
     expect(parseArcReceivesFrom("all")).toEqual(EVM_ARC_PEERS);
   });
 
@@ -143,9 +172,10 @@ describe("the route lists", () => {
     expect(() => parseArcReceivesFrom("solana")).toThrow('Arc receives-from list names "solana"');
   });
 
-  it("fail loudly on a name they do not know, on Arc, and on the chains left out", () => {
-    for (const left of ["ethereum", "linea", "plume", "edge"]) {
-      expect(() => parseArcSendsTo(left)).toThrow(`Arc sends-to list names "${left}"`);
+  it("fail loudly on a name they do not know, and on Arc", () => {
+    // Ethereum, Linea, Plume and EDGE were left out until 2026-11-15; now they are chains like any.
+    for (const back of ["ethereum", "linea", "plume", "edge"]) {
+      expect(parseArcSendsTo(back)).toEqual([back]);
     }
     expect(() => parseArcSendsTo("base,bsae")).toThrow('names "bsae"');
     expect(() => parseArcSendsTo("arc")).toThrow('names "arc"');
@@ -156,7 +186,7 @@ describe("the route lists", () => {
     expect(parseStellarSendsTo(undefined)).toEqual([]);
     expect(parseStellarSendsTo("all")).toEqual(EVM_ARC_PEERS);
     expect(parseStellarSendsTo("ink, base")).toEqual(["base", "ink"]);
-    for (const other of ["arc", "solana", "ethereum"]) {
+    for (const other of ["arc", "solana", "starknet"]) {
       expect(() => parseStellarSendsTo(other)).toThrow(`Stellar sends-to list names "${other}"`);
     }
   });

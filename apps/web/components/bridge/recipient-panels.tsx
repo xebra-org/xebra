@@ -1,7 +1,9 @@
 import { getAddress } from "viem";
 import type { RecipientResolution } from "../../lib/solana-recipient";
 import type { Connection, Family } from "../../lib/wallets/types";
+import { cn } from "../ui/cn";
 import { InsetTray } from "../ui/glass-card";
+import { Check } from "../ui/icons";
 import { Notice } from "../ui/notice";
 
 /**
@@ -29,6 +31,79 @@ export function ArcRecipientPanel({
       <p className="tabular mt-1.5 break-all font-mono text-xs text-bone/70">
         {getAddress(address)}
       </p>
+    </InsetTray>
+  );
+}
+
+/**
+ * A Sui recipient, and what finishing the transfer takes. Said before signing because it is the one
+ * route where the transfer does not finish by itself: Circle does not deliver to Sui.
+ */
+/** Xebra's offer to finish a Sui transfer and pay its gas, when this deployment runs the relayer. */
+export interface SuiGasOffer {
+  /** Whether the person ticked the box. */
+  on: boolean;
+  onChange: (on: boolean) => void;
+  disabled?: boolean;
+}
+
+export function SuiRecipientPanel({
+  address,
+  valid,
+  gas,
+}: {
+  address: string;
+  valid: boolean;
+  /** Absent when Xebra does not pay Sui gas here; the transfer is then claimed by hand. */
+  gas?: SuiGasOffer;
+}) {
+  if (!valid) return null;
+  const paid = gas?.on === true;
+  return (
+    <InsetTray className="mt-3 py-3">
+      <p className="text-xs text-bone/40">USDC will be minted to this Sui address</p>
+      <p className="tabular mt-1.5 break-all font-mono text-xs text-bone/70">
+        {address.toLowerCase()}
+      </p>
+      {gas && (
+        <label className="group mt-3 flex cursor-pointer items-start gap-3 border-t border-bone/[0.06] pt-3 has-[:disabled]:cursor-not-allowed has-[:disabled]:opacity-50">
+          <input
+            type="checkbox"
+            checked={gas.on}
+            disabled={gas.disabled}
+            onChange={(e) => gas.onChange(e.target.checked)}
+            className="peer sr-only"
+          />
+          <span
+            aria-hidden="true"
+            className={cn(
+              "mt-px flex h-4 w-4 shrink-0 items-center justify-center rounded-[0.3rem] border",
+              "transition-colors duration-200 ease-haptic peer-focus-visible:ring-1 peer-focus-visible:ring-bone/40",
+              gas.on
+                ? "border-bone bg-bone text-obsidian"
+                : "border-bone/30 group-hover:border-bone/55",
+            )}
+          >
+            {gas.on && <Check className="h-3 w-3" />}
+          </span>
+          <span className="min-w-0">
+            <span className="block text-sm font-medium tracking-[-0.01em] text-bone">
+              Pay the Sui network fee for me
+            </span>
+            <span className="mt-0.5 block text-xs leading-relaxed text-bone/45">
+              Xebra finishes the transfer on Sui as soon as Circle signs it, and pays the gas. No
+              Sui wallet or SUI needed.
+            </span>
+          </span>
+        </label>
+      )}
+      {!paid && (
+        <p className="mt-2.5 text-xs leading-relaxed text-bone/45">
+          One more step on Sui: Circle does not deliver there by itself. A few minutes after you
+          send, the receipt links to the claim page, where any Sui wallet finishes it for a little
+          SUI gas. The USDC goes to this address whoever signs.
+        </p>
+      )}
     </InsetTray>
   );
 }
@@ -115,7 +190,7 @@ export function UseMyWallet({
   onUse,
   onConnect,
 }: {
-  family: "solana" | "evm";
+  family: "solana" | "evm" | "sui";
   connection: Connection | undefined;
   disabled: boolean;
   onUse: (address: string) => void;
@@ -140,7 +215,8 @@ export function UseMyWallet({
           onClick={() => onConnect([family])}
           className="underline underline-offset-4 transition-colors hover:text-bone disabled:opacity-40"
         >
-          Connect {family === "solana" ? "a Solana" : "an EVM"} wallet to fill this in
+          Connect {family === "solana" ? "a Solana" : family === "sui" ? "a Sui" : "an EVM"} wallet
+          to fill this in
         </button>
       )}
     </div>

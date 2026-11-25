@@ -36,7 +36,8 @@ import { type SimulationResult, describeVmStatus, maxGasFor } from "./node";
  * here from a fresh quote with the same rules as every direct EVM route (`planEvmFee`), and if it
  * has risen above the `maxFee` the page showed, the burn is refused (409) rather than signed at a
  * fee nobody saw. To Stellar nothing forwards and Circle is paid nothing; the relayer or the sender
- * completes it. No Xebra fee on any of these routes yet.
+ * completes it. `amount` here is the burn: Xebra's flat fee is taken before (`/api/aptos/build`, `/v1`)
+ * and paid in its own transaction.
  *
  * Every check that can be made before signing is made here, cheapest first: the request, the
  * recipient (a Solana wallet becomes its USDC token account, read on the server; a Stellar account

@@ -9,7 +9,10 @@ import { browserConnection, buildMintTransaction, prepareClaim } from "../../lib
 import type { EvmClaimTarget } from "../../lib/evm-claim";
 import { reportError } from "../../lib/format-error";
 import { waitForSignature } from "../../lib/solana-confirm";
+import type { ClassifiedError } from "../../lib/wallet-error";
+import { classifyClaimError } from "./claim-error";
 import { EvmClaim } from "./evm-claim";
+import { SuiClaim, type SuiClaimTarget } from "./sui-claim";
 
 /**
  * Completes a transfer from the user's own wallet, when Circle's forwarding did not.
@@ -36,7 +39,9 @@ import { EvmClaim } from "./evm-claim";
  *
  * # What a Solana claim costs the person clicking
  *
- * (An EVM claim is the destination chain's gas, and nothing else: `evm-claim.tsx`.)
+ * (An EVM claim is the destination chain's gas, and nothing else: `evm-claim.tsx`. A Sui claim is
+ * a little SUI for gas: `sui-claim.tsx`. Circle never delivers to Sui, so every transfer into Sui
+ * ends here.)
  *
  * The transaction fee plus 695,960 lamports of permanent `used_nonce` rent — about 0.0007 SOL —
  * and roughly 0.0015 SOL more if the recipient has no USDC account yet. None of it is recoverable
@@ -75,6 +80,8 @@ type Attestation =
       eventNonce?: string | null;
       /** Present for a message bound for any EVM chain: where to submit the mint. */
       evm?: EvmClaimTarget;
+      /** Present for a message bound for Sui: who receives it and how much. */
+      sui?: SuiClaimTarget;
     }
   | { status: "pending" }
   | { status: "unknown"; reason?: string };
@@ -175,6 +182,15 @@ function isSolanaBound(a: { destinationDomain: number; evm?: EvmClaimTarget }): 
   return !a.evm && a.destinationDomain === SOLANA_DOMAIN;
 }
 
+function plainClaimError(message: string): ClassifiedError {
+  return {
+    kind: "unknown",
+    message,
+    maybeSent: false,
+    raw: message,
+  };
+}
+
 /**
  * The interactive claim. `app/claim/page.tsx` renders it inside Suspense, with the page's intro as
  * the fallback, so the server HTML carries the page's words while this waits for the query string.
@@ -193,7 +209,7 @@ export function ClaimClient() {
   const [recipientOwner, setRecipientOwner] = useState("");
   const [needsOwner, setNeedsOwner] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<ClassifiedError | null>(null);
   const [signature, setSignature] = useState<string | null>(null);
   const [alreadyMinted, setAlreadyMinted] = useState(false);
 
@@ -236,7 +252,8 @@ export function ClaimClient() {
       const { publicKey } = await provider.connect();
       setWallet(publicKey.toBase58());
     } catch (err) {
-      setError(reportError("wallet connect failed", err));
+      reportError("wallet connect failed", err);
+      setError(classifyClaimError(err, false));
     }
   }, [provider]);
 
@@ -246,20 +263,30 @@ export function ClaimClient() {
     const hash = onSui || onSolana ? txHash.trim() : txHash.trim().toLowerCase();
     const onStellar = source === STELLAR;
     if (onSui && !SUI_DIGEST.test(hash)) {
-      setError("That is not a Sui transaction digest. Copy it from your wallet or a Sui explorer.");
+      setError(
+        plainClaimError(
+          "That is not a Sui transaction digest. Copy it from your wallet or a Sui explorer.",
+        ),
+      );
       return;
     }
     if (onSolana && !SOLANA_SIGNATURE.test(hash)) {
-      setError("That is not a Solana transaction signature. Copy it from your wallet or Solscan.");
+      setError(
+        plainClaimError(
+          "That is not a Solana transaction signature. Copy it from your wallet or Solscan.",
+        ),
+      );
       return;
     }
     if (!onSui && !onSolana && !(onStellar ? STELLAR_HASH : EVM_HASH).test(hash)) {
       setError(
-        onStellar
-          ? EVM_HASH.test(hash)
-            ? "That looks like a transaction on an EVM chain. Choose the chain it was burned on above."
-            : "That is not a Stellar transaction hash — expected 64 hex characters."
-          : `That is not a ${SOURCES.find((s) => s.value === source)?.label ?? "chain"} transaction hash — expected 0x followed by 64 hex characters.`,
+        plainClaimError(
+          onStellar
+            ? EVM_HASH.test(hash)
+              ? "That looks like a transaction on an EVM chain. Choose the chain it was burned on above."
+              : "That is not a Stellar transaction hash — expected 64 hex characters."
+            : `That is not a ${SOURCES.find((s) => s.value === source)?.label ?? "chain"} transaction hash — expected 0x followed by 64 hex characters.`,
+        ),
       );
       return;
     }
@@ -296,7 +323,7 @@ export function ClaimClient() {
       if (err instanceof DOMException && err.name === "TimeoutError") {
         setCircleUnavailable(CIRCLE_UNAVAILABLE_MESSAGE);
       } else {
-        setError(reportError("could not reach Circle", err));
+        setError(plainClaimError(reportError("could not reach Circle", err)));
       }
     } finally {
       setBusy(null);
@@ -307,6 +334,7 @@ export function ClaimClient() {
     if (!provider || !wallet || attestation?.status !== "complete") return;
     setBusy("Building the transaction…");
     setError(null);
+    let handedToWallet = false;
     try {
       const connection = browserConnection();
       const input = {
@@ -332,6 +360,7 @@ export function ClaimClient() {
       /** Signs, submits and waits, so the next step only starts on a landed transaction. */
       const submit = async (transaction: Transaction, step: string) => {
         setBusy(`${step}: confirm in your wallet…`);
+        handedToWallet = true;
         const signed = await provider.signTransaction(transaction);
         setBusy(`${step}: submitting…`);
         const sig = await connection.sendRawTransaction(signed.serialize());
@@ -341,11 +370,13 @@ export function ClaimClient() {
       };
 
       if (prepared.setup) await submit(prepared.setup, "Opening the USDC account (1 of 2)");
+      handedToWallet = false;
       setBusy("Building the mint…");
       const mint = await buildMintTransaction(connection, input);
       setSignature(await submit(mint, prepared.setup ? "Minting (2 of 2)" : "Minting"));
     } catch (err) {
-      setError(reportError("claim failed", err));
+      reportError("claim failed", err);
+      setError(classifyClaimError(err, handedToWallet));
     } finally {
       setBusy(null);
     }
@@ -465,8 +496,19 @@ export function ClaimClient() {
         />
       )}
 
+      {attestation?.status === "complete" && attestation.sui && (
+        <SuiClaim
+          key={attestation.attestation}
+          message={attestation.message}
+          attestation={attestation.attestation}
+          target={attestation.sui}
+          stellarTx={source === STELLAR ? txHash.trim().toLowerCase() : undefined}
+        />
+      )}
+
       {attestation?.status === "complete" &&
         !attestation.evm &&
+        !attestation.sui &&
         attestation.destinationDomain !== SOLANA_DOMAIN && (
           <Notice tone="alarm" title="This page cannot claim on that chain">
             Circle attested this transfer for a destination (CCTP domain{" "}
@@ -545,13 +587,26 @@ export function ClaimClient() {
           </>
         )}
 
-      {error && (
-        <Notice tone="alarm" title="That did not go through">
-          <pre className="max-h-48 overflow-auto whitespace-pre-wrap break-words font-mono text-[0.75rem] leading-relaxed text-bone/60">
-            {error}
-          </pre>
-        </Notice>
-      )}
+      {error &&
+        (error.kind === "declined" || error.kind === "popup" ? (
+          <Notice tone="info" title="Wallet request cancelled">
+            You cancelled. Your USDC is still waiting to be claimed; try again any time.
+          </Notice>
+        ) : error.maybeSent ? (
+          <Notice tone="alarm" title="Could not confirm claim">
+            <p>{error.message}</p>
+            <p className="mt-2 text-bone/35">
+              Your claim may have gone out. Check your wallet or the transfer status before trying
+              again.
+            </p>
+          </Notice>
+        ) : (
+          <Notice tone="alarm" title="That did not go through">
+            <pre className="max-h-48 overflow-auto whitespace-pre-wrap break-words font-mono text-[0.75rem] leading-relaxed text-bone/60">
+              {error.message}
+            </pre>
+          </Notice>
+        ))}
 
       {signature && (
         <Notice tone="signal" title="Minted">

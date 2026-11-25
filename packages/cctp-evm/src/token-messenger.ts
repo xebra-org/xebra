@@ -22,7 +22,15 @@ import { CctpEvmError } from "./errors.js";
  */
 export const tokenMessengerAbi = parseAbi([
   "function depositForBurnWithHook(uint256 amount, uint32 destinationDomain, bytes32 mintRecipient, address burnToken, bytes32 destinationCaller, uint256 maxFee, uint32 minFinalityThreshold, bytes hookData)",
+  "function depositForBurn(uint256 amount, uint32 destinationDomain, bytes32 mintRecipient, address burnToken, bytes32 destinationCaller, uint256 maxFee, uint32 minFinalityThreshold)",
 ]);
+
+/**
+ * EVM domains Circle's Forwarding Service does not deliver to (Injective, Morph, Pharos; Circle's
+ * list, 2026-11-15). A burn there carries no forwarding hook, so it is a plain `depositForBurn`
+ * (the hook variant refuses an empty hook), and the recipient claims the mint on arrival.
+ */
+export const NO_FORWARD_EVM_DOMAINS: readonly number[] = [29, 30, 31];
 
 /**
  * `"cctp-forward"` right-padded to 32 bytes: magic (24), version 0 (4), payload length 0 (4).
@@ -122,6 +130,21 @@ export function encodeDepositForBurnWithHook(args: BurnWithHookArgs): Hex {
   if (!isAddress(args.burnToken, { strict: false })) {
     throw new CctpEvmError("invalid_request", `not an EVM address: ${args.burnToken}`);
   }
+  if (hookData === "0x") {
+    return encodeFunctionData({
+      abi: tokenMessengerAbi,
+      functionName: "depositForBurn",
+      args: [
+        args.amount,
+        args.destinationDomain,
+        mintRecipient,
+        getAddress(args.burnToken),
+        destinationCaller,
+        args.maxFee,
+        args.minFinalityThreshold,
+      ],
+    });
+  }
   return encodeFunctionData({
     abi: tokenMessengerAbi,
     functionName: "depositForBurnWithHook",
@@ -190,7 +213,9 @@ export function recipientAndHook(
     if (mintRecipient === ZERO_BYTES32) {
       throw new CctpEvmError("invalid_recipient", "the recipient is the zero address");
     }
-    return { mintRecipient, hookData: FORWARD_HOOK, destinationCaller: ZERO_BYTES32 };
+    // Asking Circle to forward where it does not deliver would be refused; no hook, claimed instead.
+    const hookData = NO_FORWARD_EVM_DOMAINS.includes(destinationDomain) ? "0x" : FORWARD_HOOK;
+    return { mintRecipient, hookData, destinationCaller: ZERO_BYTES32 };
   }
   if (destinationDomain !== SOLANA_DOMAIN) {
     throw new CctpEvmError(
