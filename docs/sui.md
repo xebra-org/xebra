@@ -200,3 +200,34 @@ Work, if that trade is wanted:
 
 Re-check `27/8?forward=true` before starting: if Circle adds Sui to the Forwarding Service the work shrinks
 to the table rows and the admin proposal (`{"domain":8,"evm_style":false,...}`), like Solana.
+
+## Stellar to Sui: Xebra pays the Sui gas (built 2026-11-24, off until the key is set)
+
+Stellar to Sui went live in the app on 2026-11-23 as a claim: the recipient finishes the transfer at
+`/claim` with a Sui wallet that holds gas. That fails exactly the people a bridge is for, someone with a new
+Sui wallet and no SUI. So the Stellar form now offers a box on the Sui recipient panel, **"Pay the Sui network
+fee for me"**. Ticked, the receipt asks Xebra's Sui relayer to finish the transfer as soon as Circle signs it.
+
+- `POST /api/stellar-sui/complete {"tx": <Stellar hash>}` (`lib/stellar-sui/relayer.ts`) reads Circle's
+  attested message, checks that the Stellar transaction is a **Xebra wrapper burn** to Sui (its
+  `bridge_initiated` event, matched against the message's recipient and amount), builds the same four-call
+  mint `/claim` builds (`buildSuiMint`, which simulates it), and signs it with the relayer key.
+  Answers like `/api/sui-stellar/complete`: `pending`, `submitted` with the Sui digest, `delivered`,
+  `refused`, `failed`.
+- `GET /api/stellar-sui/config` → `{ relayer }`; the box only shows when it is `true`.
+- **No on-chain change.** Wrapper v2 burns with a zero `destination_caller` (`lib.rs`), so anyone may submit
+  the mint. That is also why `/claim` still works if the relayer is off, empty or refuses: the receipt then
+  shows the claim link, as before.
+
+Why it is safe to leave open to anyone: the USDC always goes to the address Circle signed for; only burns
+through Xebra's wrapper are paid for (each paid Xebra's fee, at least 0.01 USDC, against about 0.002-0.003 SUI
+of gas), so nobody can drain the key with direct Circle burns; each message mints once, so a burn is paid for
+once; and the gas budget is capped at 0.05 SUI before signing.
+
+| Variable | Purpose |
+|---|---|
+| `SUI_RELAYER_SECRET` | The relayer's Sui key, `suiprivkey1…` (Ed25519, as `sui keytool export` prints it). Unset or unreadable: the box is not offered and Sui stays claim-only. Use a dedicated address with a small SUI float (1 SUI pays for about 300-500 mints). |
+
+`/claim` offers the same thing for any Stellar to Sui transfer: **"Let Xebra finish it and pay the gas"**,
+with "Claim with my Sui wallet" kept beside it. So a tab closed before Circle signed (the box's choice lives
+only in the open page) is still finished for free from the claim link.
