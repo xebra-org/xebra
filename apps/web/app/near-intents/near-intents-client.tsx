@@ -13,6 +13,7 @@ import { Badge } from "../../components/ui/badge";
 import { Button } from "../../components/ui/button";
 import { cn } from "../../components/ui/cn";
 import { DataRow } from "../../components/ui/data-row";
+import { ErrorNotice } from "../../components/ui/error-notice";
 import { Field, Input } from "../../components/ui/field";
 import { GlassCard, InsetTray } from "../../components/ui/glass-card";
 import { ArrowRight, ArrowUpRight, Check } from "../../components/ui/icons";
@@ -22,7 +23,7 @@ import { useWallets } from "../../components/wallet/wallet-provider";
 import { env } from "../../lib/env";
 import { ensureChain, readChainId, sendTransaction, waitForReceipt } from "../../lib/evm-rpc";
 import { reportError } from "../../lib/format-error";
-import { type ClassifiedError, classifyWalletError } from "../../lib/wallet-error";
+import { type UserError, describeError } from "../../lib/user-error";
 
 /**
  * USDC from a chain NEAR Intents does not reach into anything Intents delivers, with Xebra carrying
@@ -228,7 +229,7 @@ export function NearIntentsClient() {
   const [step, setStep] = useState<"idle" | "preparing" | "signing" | "burning" | "submitting">(
     "idle",
   );
-  const [sendError, setSendError] = useState<ClassifiedError | null>(null);
+  const [sendError, setSendError] = useState<UserError | null>(null);
   const [tracked, setTracked] = useState<Tracked | null>(null);
 
   useEffect(() => {
@@ -277,12 +278,14 @@ export function NearIntentsClient() {
     attempt.current += 1;
     setStep("idle");
     setSendError({
-      kind: "declined",
-      message: isStellar
-        ? "Cancelled. Nothing was sent: no transaction reached Stellar."
-        : `Cancelled. Nothing was burned on ${chainName(from)}. If you had already approved, the approval stays and covers exactly this amount; the next attempt reuses it.`,
-      maybeSent: false,
-      raw: "Cancelled by user",
+      tone: "info",
+      title: "You cancelled the transfer",
+      body: isStellar
+        ? "No transaction reached Stellar."
+        : `Nothing was burned on ${chainName(from)}. If you had already approved, the approval stays and covers exactly this amount; the next attempt reuses it.`,
+      steps: ["Send again whenever you're ready."],
+      funds: "unmoved",
+      detail: "",
     });
   }, [isStellar, from]);
 
@@ -344,9 +347,13 @@ export function NearIntentsClient() {
       setTracked(t);
     } catch (e) {
       if (live()) {
-        const classified = classifyWalletError(e);
-        reportError("The transfer", classified.raw);
-        setSendError(classified);
+        reportError("The transfer", e);
+        setSendError(
+          describeError(e, {
+            wallet: (isStellar ? connections.stellar : connections.evm)?.walletName,
+            chain: chainName(from),
+          }),
+        );
       }
     } finally {
       if (live()) setStep("idle");
@@ -444,7 +451,18 @@ export function NearIntentsClient() {
       }
       return burn;
     }
-  }, [kit, sender, destination, amount, recipient, from, isStellar, connections.evm, syncEvmChain]);
+  }, [
+    kit,
+    sender,
+    destination,
+    amount,
+    recipient,
+    from,
+    isStellar,
+    connections.evm,
+    connections.stellar,
+    syncEvmChain,
+  ]);
 
   const busy = step !== "idle";
   const via = comparison?.viaXebra;
@@ -587,24 +605,7 @@ export function NearIntentsClient() {
                   </button>
                 </div>
               )}
-              {sendError &&
-                (sendError.kind === "declined" || sendError.kind === "popup" ? (
-                  <Notice tone="info" title="Wallet request cancelled">
-                    {sendError.message}
-                  </Notice>
-                ) : sendError.maybeSent ? (
-                  <Notice tone="alarm" title="Could not confirm transfer">
-                    <p>{sendError.message}</p>
-                    <p className="mt-2 text-bone/35">
-                      Check your wallet&apos;s activity before retrying. Full detail is in the
-                      browser console under <code className="font-mono">[xebra]</code>.
-                    </p>
-                  </Notice>
-                ) : (
-                  <Notice tone="alarm" title="The transfer stopped">
-                    {sendError.message}
-                  </Notice>
-                ))}
+              {sendError && <ErrorNotice error={sendError} />}
             </div>
           </GlassCard>
 
