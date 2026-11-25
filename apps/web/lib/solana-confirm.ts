@@ -112,6 +112,22 @@ export class SolanaTransactionError extends Error {
 }
 
 /**
+ * Thrown when a transaction was not seen confirmed in time. It may still land, so callers must
+ * keep the signature in front of the user and never treat this as "nothing was sent".
+ */
+export class SolanaConfirmTimeoutError extends Error {
+  readonly signature: string;
+
+  constructor(signature: string, timeoutMs: number) {
+    super(
+      `Transaction ${signature} was not confirmed within ${Math.round(timeoutMs / 1000)} seconds. It may still land: look it up on Solscan before trying again.`,
+    );
+    this.name = "SolanaConfirmTimeoutError";
+    this.signature = signature;
+  }
+}
+
+/**
  * Waits for a Solana transaction by polling its status.
  *
  * `connection.confirmTransaction(sig, commitment)` waits on a websocket subscription, and the
@@ -143,9 +159,7 @@ export async function waitForSignature(
       return;
     }
     if (Date.now() >= deadline) {
-      throw new Error(
-        `Transaction ${signature} was not confirmed within ${Math.round(timeoutMs / 1000)} seconds. It may still land: look it up on Solscan before trying again.`,
-      );
+      throw new SolanaConfirmTimeoutError(signature, timeoutMs);
     }
     await new Promise((resolve) => setTimeout(resolve, intervalMs));
   }

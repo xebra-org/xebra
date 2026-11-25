@@ -1,5 +1,6 @@
 import { ERROR_TYPE_BASE } from "@xebra/sdk";
 import { logFailure } from "../server/log";
+import type { Gate, Guard } from "./auth";
 import { ApiError } from "./errors";
 import { TITLES } from "./host";
 import { extraToWire } from "./wire";
@@ -23,6 +24,8 @@ export const CORS: Record<string, string> = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
   "Access-Control-Allow-Headers": "Content-Type, Authorization, Idempotency-Key",
+  "Access-Control-Expose-Headers":
+    "RateLimit-Limit, RateLimit-Remaining, RateLimit-Reset, Retry-After",
   "Access-Control-Max-Age": "86400",
 };
 
@@ -90,19 +93,29 @@ export function preflight(): Response {
   return new Response(null, { status: 204, headers: CORS });
 }
 
+/** At most this many field problems go in a problem's `issues`; `detail` names the first five. */
+const MAX_ISSUES = 20;
+
 function invalid(issues: Array<{ path: PropertyKey[]; message: string }>): ApiError {
+  // For a form to mark the field: `detail` is a sentence, `issues` is the same thing as data.
+  const fields = {
+    issues: issues
+      .slice(0, MAX_ISSUES)
+      .map((i) => ({ path: i.path.map(String), message: i.message })),
+  };
   const amountIssue = issues.find((i) => AMOUNT_FIELDS.has(String(i.path[0])));
   if (amountIssue) {
     return new ApiError(
       "invalid_amount",
       `${String(amountIssue.path[0])}: ${amountIssue.message}.`,
+      fields,
     );
   }
   const detail = issues
     .slice(0, 5)
     .map((i) => (i.path.length > 0 ? `${i.path.map(String).join(".")}: ${i.message}` : i.message))
     .join("; ");
-  return new ApiError("invalid_request", `${detail}.`);
+  return new ApiError("invalid_request", `${detail}.`, fields);
 }
 
 async function readBody(req: Request): Promise<unknown> {
@@ -148,9 +161,13 @@ export async function handle<I, O>(
     output: Parser<O>;
     /** `Cache-Control` for a success. */
     cache?: string;
+    /** Identify and count the caller before anything is read. Refusals are problems like any other. */
+    guard: Guard;
   },
 ): Promise<Response> {
+  let gate: Gate | null = null;
   try {
+    gate = await opts.guard(req);
     let raw: unknown = {};
     if (opts.from === "query") raw = Object.fromEntries(new URL(req.url).searchParams);
     if (opts.from === "body") raw = await readBody(req);
@@ -170,9 +187,17 @@ export async function handle<I, O>(
       throw new ApiError("internal_error", "The answer failed our own checks. Nothing was sent.");
     }
     return Response.json(checked.data, {
-      headers: { ...CORS, "Cache-Control": opts.cache ?? "no-store" },
+      headers: {
+        ...CORS,
+        ...(gate?.headers ?? {}),
+        "Cache-Control": opts.cache ?? "no-store",
+      },
     });
   } catch (err) {
+    const headers = {
+      ...(gate?.headers ?? {}),
+      ...(err instanceof ApiError ? err.headers : {}),
+    };
     const id = requestId(req);
     const answer =
       err instanceof ApiError
@@ -194,6 +219,6 @@ export async function handle<I, O>(
         req,
       );
     }
-    return problem(answer, {}, id);
+    return problem(answer, headers, id);
   }
 }

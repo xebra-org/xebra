@@ -6,6 +6,7 @@ import {
   WalletNetwork,
 } from "@creit.tech/stellar-wallets-kit";
 import { env } from "./env";
+import { patient } from "./wallet-wake";
 
 /**
  * Freighter and the LOBSTR browser extension. Stellar Wallets Kit supports more, but
@@ -34,7 +35,7 @@ const NETWORK_BY_PASSPHRASE: Record<string, WalletNetwork> = {
  */
 let modules: ModuleInterface[] | null = null;
 function stellarModules(): ModuleInterface[] {
-  modules ??= [new FreighterModule(), new LobstrModule()];
+  modules ??= [patient(new FreighterModule()), patient(new LobstrModule())];
   return modules;
 }
 

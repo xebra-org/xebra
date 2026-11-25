@@ -72,6 +72,7 @@ const RAW = {
   NEXT_PUBLIC_EVM_TO_SOLANA: process.env.NEXT_PUBLIC_EVM_TO_SOLANA,
   NEXT_PUBLIC_EVM_TO_STELLAR: process.env.NEXT_PUBLIC_EVM_TO_STELLAR,
   NEXT_PUBLIC_STELLAR_SENDS_TO: process.env.NEXT_PUBLIC_STELLAR_SENDS_TO,
+  NEXT_PUBLIC_STELLAR_TO_SUI: process.env.NEXT_PUBLIC_STELLAR_TO_SUI,
   NEXT_PUBLIC_ARC_USE_WRAPPER: process.env.NEXT_PUBLIC_ARC_USE_WRAPPER,
   NEXT_PUBLIC_STELLAR_ESCROW_CONTRACT_ID: process.env.NEXT_PUBLIC_STELLAR_ESCROW_CONTRACT_ID,
   NEXT_PUBLIC_STELLAR_CCTP_WRAPPER_CONTRACT_ID:
@@ -189,6 +190,12 @@ export const env = {
    * before the chains are added, and each one switches on by itself as its commit lands.
    */
   stellarSendsTo: parseStellarSendsTo(optional("NEXT_PUBLIC_STELLAR_SENDS_TO")),
+  /**
+   * Offer Sui on the Stellar form. Exactly `1` to switch on. Like `stellarSendsTo`, necessary and
+   * not sufficient: Sui appears only once the wrapper has domain 8 committed (non-forwarded, since
+   * Circle does not deliver to Sui). Every such transfer is minted by its owner at `/claim`.
+   */
+  stellarToSui: optional("NEXT_PUBLIC_STELLAR_TO_SUI") === "1",
   /**
    * Send transfers out of a chain through Xebra's fee wrapper where one is pinned
    * (`XEBRA_WRAPPERS` in `packages/sdk/src/core/chains/evm.ts`), instead of calling Circle directly. Exactly `1` to

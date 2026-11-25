@@ -5,7 +5,7 @@ import type { AptosBuildAnswer } from "../aptos/build";
 import { APTOS_ALL_DESTINATIONS } from "../aptos/config";
 import type { BuildDeps, Deps } from "./deps";
 import { ApiError } from "./errors";
-import { RECIPIENT, STELLAR_RECIPIENT, buildDeps, deps, health } from "./fakes";
+import { RECIPIENT, STELLAR_RECIPIENT, buildDeps, deps, health, mintUnchecked } from "./fakes";
 import { createService } from "./service";
 
 const NOW = 1_800_000_000_000;
@@ -196,6 +196,18 @@ describe("Aptos in the public API", () => {
       deliveryTx: "0xf",
     });
     expect(delivery).toHaveBeenCalledWith(TX, 9);
+  });
+
+  it("says unavailable (503), not needs_claim, when the mint on Stellar could not be checked", async () => {
+    const delivery = vi.fn(async () => ({ status: "known", state: "claimable" }));
+    const err = await refusal(
+      svc({}, { delivery, aptosStatus: async () => mintUnchecked() }).transferStatus({
+        chain: "aptos",
+        tx: TX,
+      }),
+    );
+    expect(err).toMatchObject({ code: "upstream_unavailable", status: 503 });
+    expect(delivery).not.toHaveBeenCalled();
   });
 
   it("says Aptos is off rather than looking a burn up", async () => {

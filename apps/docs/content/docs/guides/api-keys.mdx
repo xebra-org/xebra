@@ -1,0 +1,95 @@
+---
+title: API keys
+description: Send a key to raise your limit from 60 to 600 requests a minute. A key identifies you; it never moves funds.
+---
+
+The API answers with or without a key. A key identifies your integration, so your traffic gets its
+own, higher limit and is not counted with everyone else's.
+
+| | Per minute | Counted by |
+|---|---|---|
+| No key | 60 requests | The calling address |
+| With a key | 600 requests | The key |
+
+Both limits apply to every `/v1` endpoint. A key changes the limit and nothing else: the API stays
+non-custodial, still builds unsigned transactions, and never asks for or accepts a private key.
+
+## Get a key
+
+Keys are issued by the Xebra team. Ask for one at [hello@xebra.exchange](mailto:hello@xebra.exchange)
+with the name of your integration and a contact address, and you will get back a key that looks like
+`xk_live_` followed by 32 letters and digits.
+
+Store it as a secret in your server environment. A key is shown once — if you lose it, ask for a new
+one and revoke the old one.
+
+## Send it
+
+Every request carries the key in an `Authorization: Bearer` header:
+
+```bash
+curl -H "Authorization: Bearer $XEBRA_API_KEY" \
+  "https://api.xebra.exchange/v1/quote?from=stellar&to=base&amount=10"
+```
+
+The SDK sends the key from its `apiKey` option:
+
+```ts
+import { createXebraClient } from "@xebra/sdk";
+
+const xebra = createXebraClient({ apiKey: process.env.XEBRA_API_KEY });
+
+const quote = await xebra.quote({ from: "stellar", to: "base", amount: "10" });
+```
+
+Keep the key on your server. Anything in a browser bundle is public, and a key in a browser is a key
+that has to be revoked.
+
+## Reading the limit
+
+Every answer carries three headers, so you can see where you stand before you hit the limit:
+
+| Header | Meaning |
+|---|---|
+| `RateLimit-Limit` | Requests allowed in the current minute: 60, or 600 with a key |
+| `RateLimit-Remaining` | Requests left in this minute |
+| `RateLimit-Reset` | When the next minute starts, in epoch seconds |
+
+## When you go over
+
+The request is refused with HTTP **429** and an RFC 9457 problem, like every other failure, plus a
+`Retry-After` header with the number of seconds to wait:
+
+```http
+HTTP/1.1 429 Too Many Requests
+Retry-After: 40
+RateLimit-Limit: 60
+RateLimit-Remaining: 0
+RateLimit-Reset: 1767225640
+Content-Type: application/problem+json
+```
+
+```json
+{
+  "type": "https://docs.xebra.exchange/errors/rate_limited",
+  "title": "Rate limited",
+  "status": 429,
+  "detail": "Too many requests: 60 a minute without a key. Send an API key for 600 a minute, or try again in 40 seconds.",
+  "code": "rate_limited"
+}
+```
+
+Wait for `Retry-After`, then ask again. Do not retry sooner or in a tight loop: a burst against a
+limit just spends the next minute's allowance. See [`rate_limited`](/docs/errors/rate_limited).
+
+`waitForDelivery` treats a 429 as transient and waits it out on its own.
+
+## Errors a key can cause
+
+| Status | `code` | Why |
+|---|---|---|
+| 401 | `unauthorized` | The key was not issued by us, was revoked, or the header was not `Authorization: Bearer …` |
+
+A revoked key answers **401** within a minute. See [`unauthorized`](/docs/errors/unauthorized).
+
+Keys have nothing to do with webhooks yet; when those ship, watching a transfer will need one.

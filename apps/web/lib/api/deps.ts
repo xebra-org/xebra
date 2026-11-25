@@ -1,7 +1,7 @@
 import type { CircleHealth } from "@xebra/cctp-client";
 import type { StellarBuildRpc, SuiForwardRecipient, TransferStep } from "@xebra/sdk/build";
 import type {
-  Destination,
+  DeliveredDestination,
   DomainForwardConfig,
   EnabledRoutes,
   EvmChain,
@@ -18,8 +18,11 @@ import type { WrapperSettings } from "../evm-wrapper";
  */
 
 export interface StellarRoutes {
-  /** What the bridge page would offer for a send from Stellar right now. */
-  destinations: Destination[];
+  /**
+   * What the bridge page would offer for a send from Stellar right now, less Sui: the API only
+   * builds transfers Circle delivers, and Sui is claimed at `/claim`.
+   */
+  destinations: DeliveredDestination[];
   /** The wrapper's committed domains, or null when the contract could not be read. */
   domains: Map<number, DomainForwardConfig> | null;
 }
@@ -53,6 +56,14 @@ export interface Deps {
   };
   /** A Sui burn's progress, as `/api/sui-stellar/status` answers it. Null if unreadable. */
   suiStatus?(digest: string): Promise<Record<string, unknown> | null>;
+  /**
+   * Hand an attested Sui burn to Stellar to the relayer, as `/api/sui-stellar/complete` does for
+   * the `/sui` page. Idempotent: the relayer re-reads the mint before it sends. Answers the
+   * relayer's word (`delivered`, `submitted` with a `hash`, `pending`, `refused` with a `reason`,
+   * `failed`, `unavailable`), or `scheduled` while a run started by this call is still going. Null
+   * if unreadable. Absent: nothing relays, and an attested burn reads as `needs_claim`.
+   */
+  suiRelay?(digest: string): Promise<Record<string, unknown> | null>;
   /**
    * Where Solana may send (`SOLANA_SENDS_TO`): EVM chains, delivered by Circle's Forwarding Service,
    * and Stellar, completed by the relayer. Absent or empty: Solana is not a source.

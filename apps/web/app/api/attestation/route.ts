@@ -1,5 +1,7 @@
 import { IrisUnavailable, readDestinationDomain, readExpirationBlock } from "@xebra/cctp-client";
 import { CCTP_DOMAIN, PRESETS, evmChainForDomain } from "@xebra/network-config";
+import { readSuiBoundMessage } from "@xebra/sdk/build";
+import { formatUsdc6 } from "@xebra/sdk/core";
 import { env } from "../../../lib/env";
 import { irisBaseUrl, irisFetch, stellarDomainId } from "../../../lib/server/iris";
 import { normaliseTxHash, readSource, txHashHint } from "../../../lib/server/routes";
@@ -24,6 +26,18 @@ import { normaliseTxHash, readSource, txHashHint } from "../../../lib/server/rou
  */
 
 export const dynamic = "force-dynamic";
+
+const SUI_DOMAIN = 8;
+
+/** The recipient and the amount it receives, read from the message; null if it is not a burn. */
+function suiTarget(message: `0x${string}`): { recipient: string; receivedUsdc: string } | null {
+  try {
+    const m = readSuiBoundMessage(Uint8Array.from(Buffer.from(message.slice(2), "hex")));
+    return { recipient: m.recipient, receivedUsdc: formatUsdc6(m.received) };
+  } catch {
+    return null;
+  }
+}
 
 export async function GET(request: Request): Promise<Response> {
   const params = new URL(request.url).searchParams;
@@ -82,6 +96,7 @@ export async function GET(request: Request): Promise<Response> {
     const destinationDomain = readDestinationDomain(message);
     const arc = PRESETS.mainnet.arc;
     const evm = evmChainForDomain(destinationDomain);
+    const sui = destinationDomain === SUI_DOMAIN ? suiTarget(message) : null;
 
     return Response.json({
       status: "complete",
@@ -112,6 +127,9 @@ export async function GET(request: Request): Promise<Response> {
             },
           }
         : {}),
+      // For a message bound for Sui: who receives it and how much. Circle never delivers to Sui, so
+      // every such transfer is minted from `/claim`.
+      ...(sui ? { sui } : {}),
       // The older, Arc-only form of `evm`, kept for a page that loaded before `evm` existed.
       ...(destinationDomain === CCTP_DOMAIN.arc
         ? {
