@@ -2,7 +2,6 @@ import { describe, expect, it } from "vitest";
 import { EVM_CHAINS } from "../chains/evm.js";
 import { CLAIM_ONLY_DOMAINS, XEBRA_FEE_BPS, XEBRA_FLAT_FEE, flatFeeFor } from "./flat.js";
 import {
-  ANY_PARTNER,
   DEFAULT_FEE_RULE_ID,
   FEE_PRODUCTS,
   FEE_TABLE,
@@ -13,6 +12,7 @@ import {
   feeRuleFor,
   feeUnder,
   priceFee,
+  withRebalancePartners,
 } from "./table.js";
 
 /** A small seeded generator, so a failure names amounts that can be run again. */
@@ -55,13 +55,26 @@ const DOMAINS = [
 const today = (amount: bigint) => 10_000n + amount / 10_000n;
 
 const PARTNER = "jd7abc123keyid";
+/** A key that is valid but not named as a market maker: an ordinary integrator. */
+const OTHER_KEY = "jd7zzz999otherkey";
+/** The table as the server builds it, with one market-maker key named. */
+const SERVER_TABLE = withRebalancePartners([PARTNER]);
 const CONTEXTS: FeeContext[] = FEE_PRODUCTS.flatMap((product) =>
-  [null, PARTNER].map((partner) => ({ product, partner })),
+  [null, PARTNER, OTHER_KEY].map((partner) => ({ product, partner })),
 );
 
 describe("the fee table", () => {
-  it("is valid: one default, never free, rebalance only behind a key", () => {
+  it("is valid: one default, never free, rebalance only for named keys", () => {
     expect(() => checkFeeTable(FEE_TABLE)).not.toThrow();
+    expect(() => checkFeeTable(SERVER_TABLE)).not.toThrow();
+  });
+
+  it("ships no market-maker price: the server names the keys", () => {
+    expect(FEE_TABLE.map((r) => r.id)).toEqual([DEFAULT_FEE_RULE_ID]);
+    expect(withRebalancePartners([])).toBe(FEE_TABLE);
+    expect(withRebalancePartners([" ", ""])).toBe(FEE_TABLE);
+    const two = withRebalancePartners([" a ", "b", "a"]);
+    expect(two.find((r) => r.id === "rebalance-capped")?.partners).toEqual(["a", "b"]);
   });
 
   it("its default rule is today's 0.01% + 0.01 USDC, the figures `flat.ts` names", () => {
@@ -80,8 +93,11 @@ describe("the fee table", () => {
     expect(() => checkFeeTable([{ ...base, fixed: 0n }])).toThrow(/free/);
     expect(() => checkFeeTable([{ ...base, bps: 1_001n }])).toThrow(/10%/);
     expect(() => checkFeeTable([base, { ...base, id: "r", product: "rebalance" }])).toThrow(
-      /without an API key/,
+      /naming the keys/,
     );
+    expect(() =>
+      checkFeeTable([base, { ...base, id: "r", product: "rebalance", partners: [] }]),
+    ).toThrow(/naming the keys/);
   });
 });
 
@@ -97,7 +113,7 @@ describe("priceFee", () => {
             { from, to },
             { from, to, product: "transfer" as const, partner: PARTNER },
           ]) {
-            const p = priceFee(amount, ctx);
+            const p = priceFee(amount, ctx, SERVER_TABLE);
             if (p.fee !== today(amount) || p.rule !== "default") {
               wrong.push(`${JSON.stringify(ctx)} ${amount}: ${p.fee} by ${p.rule}`);
             }
@@ -112,35 +128,38 @@ describe("priceFee", () => {
     expect(wrong).toEqual([]);
   });
 
-  it("a rebalance without an API key is priced as the default", () => {
+  it("a rebalance without a named market-maker key is priced as the default", () => {
     for (const amount of SAMPLE) {
-      expect(priceFee(amount, { product: "rebalance", partner: null })).toEqual({
-        fee: today(amount),
-        rule: "default",
-      });
-      expect(priceFee(amount, { product: "rebalance" })).toEqual(priceFee(amount));
+      for (const partner of [null, OTHER_KEY]) {
+        expect(priceFee(amount, { product: "rebalance", partner }, SERVER_TABLE)).toEqual({
+          fee: today(amount),
+          rule: "default",
+        });
+      }
+      expect(priceFee(amount, { product: "rebalance" }, SERVER_TABLE)).toEqual(priceFee(amount));
+      // The shipped table names nobody, so even the market maker's key gets the default there.
+      expect(priceFee(amount, { product: "rebalance", partner: PARTNER })).toEqual(
+        priceFee(amount),
+      );
     }
   });
 
-  it("a rebalance with an API key: 0.01% capped at 2 USDC, plus 0.01", () => {
+  it("a rebalance with a named market-maker key: 0.01% capped at 2 USDC, plus 0.01", () => {
     const rebalance = { product: "rebalance" as const, partner: PARTNER, from: 6, to: 3 };
+    const price = (amount: bigint) => priceFee(amount, rebalance, SERVER_TABLE);
     // 100,000 USDC Base to Arbitrum: 2.01, not 10.01.
-    expect(priceFee(100_000_000_000n, rebalance)).toEqual({
-      fee: 2_010_000n,
-      rule: "rebalance-capped",
-    });
+    expect(price(100_000_000_000n)).toEqual({ fee: 2_010_000n, rule: "rebalance-capped" });
     // 1,000 USDC: 0.11, as before.
-    expect(priceFee(1_000_000_000n, rebalance)).toEqual({
-      fee: 110_000n,
-      rule: "rebalance-capped",
-    });
+    expect(price(1_000_000_000n)).toEqual({ fee: 110_000n, rule: "rebalance-capped" });
     // The cap starts to bite at 20,000 USDC.
-    expect(priceFee(20_000_000_000n, rebalance).fee).toBe(2_010_000n);
-    expect(priceFee(19_999_990_000n, rebalance).fee).toBe(2_009_999n);
-    expect(priceFee(MAX, rebalance).fee).toBe(2_010_000n);
+    expect(price(20_000_000_000n).fee).toBe(2_010_000n);
+    expect(price(19_999_990_000n).fee).toBe(2_009_999n);
+    expect(price(MAX).fee).toBe(2_010_000n);
+    // The same key sending an ordinary transfer pays the default.
+    expect(priceFee(MAX, { ...rebalance, product: "transfer" }, SERVER_TABLE).fee).toBe(today(MAX));
     // Never dearer than the default, and never free.
     for (const amount of SAMPLE) {
-      const fee = priceFee(amount, rebalance).fee;
+      const fee = price(amount).fee;
       expect(fee).toBeLessThanOrEqual(today(amount));
       expect(fee).toBeGreaterThanOrEqual(10_000n);
     }
@@ -150,13 +169,13 @@ describe("priceFee", () => {
     for (const ctx of CONTEXTS) {
       for (const amount of SAMPLE) {
         if (amount < 110_000n) continue;
-        expect(priceFee(amount, ctx).fee * 10n).toBeLessThanOrEqual(amount);
+        expect(priceFee(amount, ctx, SERVER_TABLE).fee * 10n).toBeLessThanOrEqual(amount);
       }
     }
   });
 
   it("every rule's cap always holds, its minimum too, and no rule is ever free", () => {
-    for (const rule of FEE_TABLE) {
+    for (const rule of SERVER_TABLE) {
       for (const amount of SAMPLE) {
         const fee = feeUnder(rule, amount);
         const ceiling = rule.fixed + (rule.cap ?? 0n);
@@ -177,18 +196,19 @@ describe("priceFee", () => {
       { id: "to-base", to: 6, bps: 2n, fixed: 10_000n, cap: null, min: 0n },
       { id: "from-arb", from: 3, bps: 3n, fixed: 10_000n, cap: null, min: 0n },
       {
-        id: "any-key-rebalance",
+        id: "two-key-rebalance",
         product: "rebalance",
-        partner: ANY_PARTNER,
+        partners: [PARTNER, "other"],
         bps: 1n,
         fixed: 10_000n,
         cap: 1n,
         min: 0n,
       },
       {
-        id: "one-key-rebalance",
+        id: "one-key-rebalance-to-base",
         product: "rebalance",
-        partner: PARTNER,
+        partners: [PARTNER],
+        to: 6,
         bps: 1n,
         fixed: 5_000n,
         cap: 1n,
@@ -201,10 +221,16 @@ describe("priceFee", () => {
     // Two rules of one field each: the earlier wins.
     expect(feeRuleFor({ from: 3, to: 6 }, table).id).toBe("to-base");
     expect(feeRuleFor({ product: "rebalance", partner: "other" }, table).id).toBe(
-      "any-key-rebalance",
+      "two-key-rebalance",
+    );
+    expect(feeRuleFor({ product: "rebalance", partner: "other", to: 6 }, table).id).toBe(
+      "two-key-rebalance",
+    );
+    expect(feeRuleFor({ product: "rebalance", partner: OTHER_KEY, to: 6 }, table).id).toBe(
+      "to-base",
     );
     expect(feeRuleFor({ product: "rebalance", partner: PARTNER, to: 6 }, table).id).toBe(
-      "one-key-rebalance",
+      "one-key-rebalance-to-base",
     );
     expect(feeRuleFor({ product: "rebalance", partner: null, to: 6 }, table).id).toBe("to-base");
     expect(() => feeRuleFor({}, table.slice(1))).toThrow(/default/);
@@ -213,7 +239,7 @@ describe("priceFee", () => {
 
 describe("amountForBurnUnder", () => {
   it("is the least amount that leaves at least the burn, under every rule", () => {
-    for (const rule of FEE_TABLE) {
+    for (const rule of SERVER_TABLE) {
       for (const burn of SAMPLE.slice(0, 150)) {
         const a = amountForBurnUnder(rule, burn);
         expect(a - feeUnder(rule, a)).toBeGreaterThanOrEqual(burn);

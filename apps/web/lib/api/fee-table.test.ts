@@ -6,6 +6,7 @@ import { createRebalancer } from "@xebra/sdk/intents";
 import { decodeFunctionData, parseAbi } from "viem";
 import { describe, expect, it, vi } from "vitest";
 import type { AptosBuildAnswer } from "../aptos/build";
+import { feeTableFrom } from "../server/fee-table";
 import { flatFeeOn } from "../server/flat-fee";
 import { createGuard, createMemoryKeyStore, hashKey } from "./auth";
 import type { BuildDeps, Deps } from "./deps";
@@ -24,7 +25,7 @@ import { ANYONE, type DestId, type Pricing, type SourceId, createService } from 
 
 /**
  * Xebra's fee table (`FEE_TABLE`, `priceFee`) as the API and the page's build routes use it: what
- * a quote shows is what the build charges, a rebalance is priced as one only with an API key, and
+ * a quote shows is what the build charges, a rebalance is priced as one only with a named market-maker key, and
  * everything else keeps today's price.
  */
 
@@ -40,6 +41,11 @@ const ERC20 = parseAbi(["function transfer(address to, uint256 value) returns (b
 const USDC = 1_000_000n;
 const KEY = `xk_live_${"A".repeat(32)}`;
 const KEY_ID = "key_mm";
+/** A valid key that is not named as a market maker: an ordinary integrator. */
+const OTHER_KEY = `xk_live_${"B".repeat(32)}`;
+const OTHER_KEY_ID = "key_wallet";
+/** The table as production builds it with `XEBRA_REBALANCE_KEY_IDS=key_mm`. */
+const TABLE = feeTableFrom(KEY_ID);
 
 const REBALANCE: Pricing = { product: "rebalance", partner: KEY_ID };
 const REBALANCE_NO_KEY: Pricing = { product: "rebalance", partner: null };
@@ -107,6 +113,7 @@ function svc(m = mocks(), top: Partial<Deps> = {}) {
       solanaSource: { evm: ["base"], stellar: true, maxUnits: null },
       aptos: { destinations: ["stellar", "base"], maxUnits: null },
       feeAddresses: FEES,
+      feeTable: TABLE,
       ...top,
     }),
   );
@@ -201,10 +208,18 @@ describe("quote and build, priced by the fee table", () => {
 });
 
 describe("/v1 with and without an API key", () => {
-  async function api() {
+  async function keyStore() {
     const store = createMemoryKeyStore([]);
     store.keys.set(await hashKey(KEY), { id: KEY_ID, integrator: "mm", revokedAt: null });
-    return endpoints(svc(), createGuard({ store }));
+    store.keys.set(await hashKey(OTHER_KEY), {
+      id: OTHER_KEY_ID,
+      integrator: "wallet",
+      revokedAt: null,
+    });
+    return store;
+  }
+  async function api() {
+    return endpoints(svc(), createGuard({ store: await keyStore() }));
   }
   const BASE = "https://api.xebra.exchange/v1";
   const quote = (query: string, key?: string) =>
@@ -236,6 +251,23 @@ describe("/v1 with and without an API key", () => {
     );
     expect(anonymous.fees.xebra).toBe("10.01");
     expect(anonymous.feeRule).toBe("default");
+
+    // A valid key that is not named as a market maker pays the default for a rebalance.
+    const otherKey = QuoteSchema.parse(
+      await (await v1.quote(quote(`${move}&product=rebalance`, OTHER_KEY))).json(),
+    );
+    expect(otherKey.fees.xebra).toBe("10.01");
+    expect(otherKey.feeRule).toBe("default");
+
+    // With no key named at all, the market maker's key pays the default too.
+    const unnamed = endpoints(
+      svc(mocks(), { feeTable: feeTableFrom(undefined) }),
+      createGuard({ store: await keyStore() }),
+    );
+    const notListed = QuoteSchema.parse(
+      await (await unnamed.quote(quote(`${move}&product=rebalance`, KEY))).json(),
+    );
+    expect(notListed.feeRule).toBe("default");
 
     // A key alone does not make a transfer a rebalance.
     const transferWithKey = QuoteSchema.parse(await (await v1.quote(quote(move, KEY))).json());

@@ -4,8 +4,8 @@
  * build routes both price through `priceFee`, on the server, so what a person is shown is what
  * they sign.
  *
- * A rule matches on the product (`transfer` or `rebalance`), the caller's API key (`partner`), and
- * the CCTP source and destination domains. A field a rule leaves out matches anything. The most
+ * A rule matches on the product (`transfer` or `rebalance`), the caller's API key (`partners`),
+ * and the CCTP source and destination domains. A field a rule leaves out matches anything. The most
  * specific matching rule wins; the default rule, which sets nothing, is today's 0.01% + 0.01 USDC.
  *
  * The Arc and Stellar contracts take their own fee on-chain and are not priced here.
@@ -23,10 +23,11 @@ export interface FeeRule {
   /** Left out: any product. */
   product?: FeeProduct;
   /**
-   * Left out: any caller, with or without an API key. `"any"`: any caller with a valid API key.
-   * Any other value: that one key, by its id.
+   * Left out: any caller, with or without an API key. A list: only callers whose valid API key's
+   * id is on it. Keys are named one by one, so a price meant for market makers cannot be claimed by
+   * any other integrator who holds a key.
    */
-  partner?: string;
+  partners?: readonly string[];
   /** CCTP domain the burn is made on. Left out: any. */
   from?: number;
   /** CCTP domain the USDC arrives on. Left out: any. */
@@ -42,28 +43,46 @@ export interface FeeRule {
 }
 
 export const DEFAULT_FEE_RULE_ID = "default";
-/** `partner` on a rule that any caller with a valid API key matches. */
-export const ANY_PARTNER = "any";
+export const REBALANCE_CAPPED_RULE_ID = "rebalance-capped";
 
 /**
- * The table. Changes go through review, with tests (`table.test.ts`). Every rule must keep the
- * table valid (`checkFeeTable`): one default rule, never free, rebalance prices behind a key.
+ * The table every caller is priced from. Changes go through review, with tests (`table.test.ts`).
+ * Every rule must keep the table valid (`checkFeeTable`): one default rule, never free, rebalance
+ * prices only for named keys. The market-maker price is added by the server for the keys it names
+ * (`withRebalancePartners`), so key ids never ship in this package.
  */
 export const FEE_TABLE: readonly FeeRule[] = [
   // Today's price for every transfer: 0.01% of the amount plus 0.01 USDC.
   { id: DEFAULT_FEE_RULE_ID, bps: 1n, fixed: 10_000n, cap: null, min: 0n },
-  // A market maker rebalancing its own USDC, with its API key: 0.01% capped at 2 USDC a move, plus
-  // the same 0.01. 100,000 USDC costs 2.01 instead of 10.01; 1,000 USDC costs 0.11 either way.
-  {
-    id: "rebalance-capped",
-    product: "rebalance",
-    partner: ANY_PARTNER,
-    bps: 1n,
-    fixed: 10_000n,
-    cap: 2_000_000n,
-    min: 0n,
-  },
 ];
+
+/**
+ * `table` plus the market-maker price for the API keys named in `keyIds`: a rebalance of the
+ * market maker's own USDC costs 0.01% capped at 2 USDC a move, plus the same 0.01. 100,000 USDC
+ * costs 2.01 instead of 10.01; 1,000 USDC costs 0.11 either way. With no keys named, nobody gets
+ * it and `table` comes back unchanged.
+ */
+export function withRebalancePartners(
+  keyIds: readonly string[],
+  table: readonly FeeRule[] = FEE_TABLE,
+): readonly FeeRule[] {
+  const partners = [...new Set(keyIds.map((k) => k.trim()).filter((k) => k !== ""))];
+  if (partners.length === 0) return table;
+  const out: readonly FeeRule[] = [
+    ...table,
+    {
+      id: REBALANCE_CAPPED_RULE_ID,
+      product: "rebalance",
+      partners,
+      bps: 1n,
+      fixed: 10_000n,
+      cap: 2_000_000n,
+      min: 0n,
+    },
+  ];
+  checkFeeTable(out);
+  return out;
+}
 
 /** Who is asking and for what. Everything left out is an ordinary transfer from anyone. */
 export interface FeeContext {
@@ -84,21 +103,20 @@ export interface FeePrice {
 
 function matches(rule: FeeRule, ctx: FeeContext): boolean {
   if (rule.product !== undefined && rule.product !== (ctx.product ?? "transfer")) return false;
-  if (rule.partner !== undefined) {
+  if (rule.partners !== undefined) {
     const partner = ctx.partner ?? null;
-    if (partner === null) return false;
-    if (rule.partner !== ANY_PARTNER && rule.partner !== partner) return false;
+    if (partner === null || !rule.partners.includes(partner)) return false;
   }
   if (rule.from !== undefined && rule.from !== ctx.from) return false;
   if (rule.to !== undefined && rule.to !== ctx.to) return false;
   return true;
 }
 
-/** How specific a rule is: one point per field it sets, two for one named key. */
+/** How specific a rule is: one point per field it sets, two for a list of named keys. */
 function specificity(rule: FeeRule): number {
   return (
     (rule.product !== undefined ? 1 : 0) +
-    (rule.partner === undefined ? 0 : rule.partner === ANY_PARTNER ? 1 : 2) +
+    (rule.partners === undefined ? 0 : 2) +
     (rule.from !== undefined ? 1 : 0) +
     (rule.to !== undefined ? 1 : 0)
   );
@@ -159,7 +177,7 @@ export function amountForBurnUnder(rule: FeeRule, burn: bigint): bigint {
 /**
  * Refuses a table that would price something wrong: no default rule (one that sets no match
  * field), duplicate ids or match sets, a rule that could be free, a percentage over 10%, a negative
- * figure, or a rebalance price anyone could claim without an API key.
+ * figure, or a rebalance price that does not name the API keys it is for.
  */
 export function checkFeeTable(table: readonly FeeRule[]): void {
   const ids = new Set<string>();
@@ -168,7 +186,12 @@ export function checkFeeTable(table: readonly FeeRule[]): void {
   for (const r of table) {
     if (ids.has(r.id)) throw new Error(`Fee rule ${r.id} appears twice.`);
     ids.add(r.id);
-    const shape = JSON.stringify([r.product, r.partner, r.from, r.to]);
+    const shape = JSON.stringify([
+      r.product,
+      r.partners === undefined ? undefined : [...r.partners].sort(),
+      r.from,
+      r.to,
+    ]);
     if (shapes.has(shape)) throw new Error(`Fee rule ${r.id} matches what an earlier rule does.`);
     shapes.add(shape);
     if (specificity(r) === 0) defaults += 1;
@@ -177,8 +200,8 @@ export function checkFeeTable(table: readonly FeeRule[]): void {
     }
     if (r.bps > 1_000n) throw new Error(`Fee rule ${r.id} takes more than 10%.`);
     if (r.fixed <= 0n && r.min <= 0n) throw new Error(`Fee rule ${r.id} could be free.`);
-    if (r.product === "rebalance" && r.partner === undefined) {
-      throw new Error(`Fee rule ${r.id} prices rebalances without an API key.`);
+    if (r.product === "rebalance" && (r.partners === undefined || r.partners.length === 0)) {
+      throw new Error(`Fee rule ${r.id} prices rebalances without naming the keys it is for.`);
     }
   }
   if (defaults !== 1) throw new Error("The fee table needs exactly one default rule.");

@@ -22,8 +22,8 @@
  * have one; it is passed in and only ever sent to 1Click.
  *
  * Xebra prices the burn as a rebalance: every quote and build here says `product: "rebalance"`.
- * With a Xebra API key on the client (`createXebraClient({ apiKey })`) that is 0.01% capped at
- * 2 USDC a move, plus 0.01; without one, the ordinary 0.01% plus 0.01. `estimate` names the rule
+ * With a Xebra market-maker API key on the client (`createXebraClient({ apiKey })`) that is 0.01%
+ * capped at 2 USDC a move, plus 0.01; without one, the ordinary 0.01% plus 0.01. `estimate` names the rule
  * that priced it (`feeRule`).
  */
 
@@ -55,8 +55,9 @@ export interface OneClickOptions {
 
 export interface RebalancerOptions {
   /**
-   * A Xebra client (`createXebraClient({ apiKey })`). Its API key earns the rebalance price: 0.01%
-   * capped at 2 USDC a move, plus 0.01. Without a key, moves are priced as ordinary transfers.
+   * A Xebra client (`createXebraClient({ apiKey })`). A key Xebra has set up for market-maker
+   * rebalances earns the rebalance price: 0.01% capped at 2 USDC a move, plus 0.01. Without one,
+   * moves are priced as ordinary transfers.
    */
   xebra: Pick<XebraClient, "routes" | "quote" | "createTransfer">;
   oneClick?: OneClickOptions;
@@ -126,8 +127,8 @@ export interface RebalanceEstimate {
     total: string;
   };
   /**
-   * The Xebra fee rule that priced the CCTP leg: "rebalance-capped" when the client's API key
-   * earned the rebalance price, "default" when it did not. Null from a server too old to say.
+   * The Xebra fee rule that priced the CCTP leg: "rebalance-capped" when the client's market-maker
+   * key earned the rebalance price, "default" when it did not. Null from a server too old to say.
    */
   feeRule: string | null;
   /** Rough seconds end to end: withdrawal plus CCTP plus deposit. */

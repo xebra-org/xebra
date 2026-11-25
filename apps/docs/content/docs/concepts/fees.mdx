@@ -104,8 +104,9 @@ xebra    = 0.01 + min(0.01% × amount, 2)
 ```
 
 The capped price needs both: the request says `product: "rebalance"` (on `GET /v1/quote` and
-`POST /v1/transfers`), and it carries a valid [API key](/docs/guides/api-keys). A rebalance
-without a key is priced as any other transfer. 100,000 USDC costs 2.01 instead of 10.01; up to
+`POST /v1/transfers`), and it carries an [API key](/docs/guides/api-keys) that Xebra has set up
+for market-maker rebalances. Ask for that when you ask for the key. A rebalance without such a key,
+including one sent with an ordinary integration key, is priced as any other transfer. 100,000 USDC costs 2.01 instead of 10.01; up to
 20,000 USDC the two prices are the same.
 
 Every quote names the rule that priced Xebra's fee in `feeRule` (`"default"` or

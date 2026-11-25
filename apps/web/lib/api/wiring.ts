@@ -23,6 +23,7 @@ import { env } from "../env";
 import { getAllowance, getUsdcBalance6 } from "../evm-bridge";
 import { checkClaim, isAlreadyMinted } from "../evm-claim";
 import { type WrapperState, parseWrapperState } from "../evm-wrapper";
+import { liveFeeTable } from "../server/fee-table";
 import { createTtlCache } from "../server/ttl-cache";
 import { SolanaSourceError } from "../solana-source/checks";
 import { SOLANA_CCTP_DOMAIN, solanaMaxUsdcBase, solanaSends } from "../solana-source/config";
@@ -140,6 +141,7 @@ export const liveDeps: Deps = {
   aptos: { destinations: aptosDestinations(), maxUnits: aptosMaxUsdcBase() },
   evmRoutes: env.evmRoutes,
   feeAddresses: env.feeAddresses,
+  feeTable: liveFeeTable,
   stellarRoutes,
   evmWrapperAddress: (chain) => wrapperFor(chain, env.arcUseWrapper),
   async evmWrapperSettings(chain) {

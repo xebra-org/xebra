@@ -16,7 +16,7 @@ import { createXebraClient } from "@xebra/sdk";
 import { createRebalancer } from "@xebra/sdk/intents";
 
 const rb = createRebalancer({
-  // Your Xebra API key earns the rebalance price (below).
+  // A Xebra market-maker key earns the rebalance price (below).
   xebra: createXebraClient({ apiKey: "xk_live_your Xebra key" }),
   oneClick: { apiKey: "your 1Click partner key" },
 });
@@ -43,11 +43,11 @@ without it.
 ## What Xebra charges
 
 Every quote and burn the rebalancer asks Xebra for says `product: "rebalance"`. With a
-[Xebra API key](/docs/guides/api-keys) on the client, Xebra prices it as a rebalance: **0.01% of
-the amount capped at 2 USDC a move, plus 0.01 USDC**. Without a key it is an ordinary transfer,
-0.01% plus 0.01 with no cap.
+[Xebra API key](/docs/guides/api-keys) that Xebra has set up for market-maker rebalances on the
+client, Xebra prices it as a rebalance: **0.01% of the amount capped at 2 USDC a move, plus 0.01
+USDC**. Without one it is an ordinary transfer, 0.01% plus 0.01 with no cap.
 
-| Move | With a Xebra API key | Without |
+| Move | With a market-maker key | Without |
 |---|---|---|
 | 100,000 USDC | 2.01 | 10.01 |
 | 50,000 USDC | 2.01 | 5.01 |

@@ -15,6 +15,7 @@ import {
   CLAIM_ONLY_DOMAINS,
   EVM_CHAINS,
   type EvmChainId,
+  FEE_TABLE,
   type FeePlan,
   type FeeProduct,
   type FeeTier,
@@ -265,6 +266,7 @@ const floorToUnits = (stroops: bigint) => stroops / STROOPS_PER_UNIT;
 const WRAPPER_DEADLINE_SECS = 1_800;
 
 export function createService(deps: Deps, now: () => number = Date.now) {
+  const feeTable = deps.feeTable ?? FEE_TABLE;
   async function routes(): Promise<{ routes: RouteGroup[]; stellarContractRead: boolean }> {
     const stellar = await deps.stellarRoutes();
     const groups: RouteGroup[] = [
@@ -568,7 +570,7 @@ export function createService(deps: Deps, now: () => number = Date.now) {
         `Transfers from ${SOURCE_NAME(from)} are off for now: Xebra's fee address there is not set up.`,
       );
     }
-    const price = priceFee(amount, feeContext(from, to, pricing));
+    const price = priceFee(amount, feeContext(from, to, pricing), feeTable);
     return { fee: price.fee, address, rule: price.rule };
   }
 
@@ -612,7 +614,7 @@ export function createService(deps: Deps, now: () => number = Date.now) {
     const flat = flatFee(from, to, amount, pricing);
     const fee = flat?.fee ?? 0n;
     const minimum = flat
-      ? amountForBurnUnder(feeRuleFor(feeContext(from, to, pricing)), minBurn)
+      ? amountForBurnUnder(feeRuleFor(feeContext(from, to, pricing), feeTable), minBurn)
       : minBurn;
     const quote = quoteOf(
       from,

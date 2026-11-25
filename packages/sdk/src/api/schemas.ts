@@ -56,7 +56,7 @@ export const RoutesSchema = z
 export const ProductSchema = z.enum(["transfer", "rebalance"]).meta({
   id: "Product",
   description:
-    "What the transfer is for. `rebalance` is a market maker moving its own USDC between chains: with an API key it is priced at 0.01% capped at 2 USDC a move, plus 0.01. Without a key it is priced as a transfer.",
+    "What the transfer is for. `rebalance` is a market maker moving its own USDC between chains: with an API key Xebra has set up for market-maker rebalances it is priced at 0.01% capped at 2 USDC a move, plus 0.01. Otherwise it is priced as a transfer.",
 });
 
 export const QuoteRequestSchema = z.object({
