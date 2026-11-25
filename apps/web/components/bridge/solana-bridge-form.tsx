@@ -28,9 +28,11 @@ import {
 } from "../../lib/poll-backoff";
 import { waitForSignature } from "../../lib/solana-confirm";
 import { claimOnStellar } from "../../lib/sui-stellar/claim-client";
+import { fromClassified } from "../../lib/user-error";
 import { type ClassifiedError, classifyWalletError } from "../../lib/wallet-error";
 import { Button } from "../ui/button";
 import { DataRow } from "../ui/data-row";
+import { ErrorNotice } from "../ui/error-notice";
 import { Field, Input } from "../ui/field";
 import { InsetTray } from "../ui/glass-card";
 import { ArrowRight } from "../ui/icons";
@@ -756,20 +758,11 @@ export function SolanaBridgeForm({
             </InsetTray>
           )}
 
-          {error &&
-            (error.kind === "declined" || error.kind === "popup" ? (
-              <Notice tone="info" title="Wallet request cancelled">
-                You cancelled in your wallet. Nothing was sent.
-              </Notice>
-            ) : error.maybeSent ? (
-              <Notice tone="alarm" title="Could not confirm transfer">
-                {error.message}
-              </Notice>
-            ) : (
-              <Notice tone="alarm" title="Could not send">
-                {error.message}
-              </Notice>
-            ))}
+          {error && (
+            <ErrorNotice
+              error={fromClassified(error, { wallet: solana?.walletName, chain: "Solana" })}
+            />
+          )}
 
           <Button
             size="lg"

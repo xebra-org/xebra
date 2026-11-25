@@ -2,6 +2,7 @@ import { encodeApprove, encodeDepositForBurnWithHook, encodeWrapperBridge } from
 import { encodeFunctionData } from "viem";
 import { formatUsdc6 } from "../core/amounts.js";
 import type { EvmChain } from "../core/chains/evm.js";
+import { withAttribution } from "../core/tag.js";
 import { XebraError } from "../errors.js";
 import type { TransferStep } from "./types.js";
 
@@ -111,7 +112,8 @@ export function evmBurnCall(
         maxFee: p.maxFee,
         minFinalityThreshold: p.finality,
       });
-  return { to: evmBurnTarget(p), data };
+  // Every burn says on chain that Xebra built it (ERC-8021 suffix; see core/tag).
+  return { to: evmBurnTarget(p), data: withAttribution(data) };
 }
 
 /** The allowance the burn needs: exactly the amount, to whoever `evmBurnTarget` names. */
@@ -186,11 +188,13 @@ export function buildEvmFeeStep(p: {
       kind: "evm",
       chainId: p.source.chainId,
       to: p.source.usdcAddress as Hex,
-      data: encodeFunctionData({
-        abi: ERC20_TRANSFER,
-        functionName: "transfer",
-        args: [p.feeAddress, p.fee],
-      }),
+      data: withAttribution(
+        encodeFunctionData({
+          abi: ERC20_TRANSFER,
+          functionName: "transfer",
+          args: [p.feeAddress, p.fee],
+        }),
+      ),
       value: "0",
     },
     expiresAt: null,

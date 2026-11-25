@@ -53,7 +53,8 @@ digest. That digest is the transfer's identifier from now on.
 ### Wait for Circle
 
 Poll `getTransfer("sui", digest)` (`GET /v1/transfers/sui/{tx}`), or call `waitForDelivery`. The
-state is `pending` until Circle has attested the burn.
+state is `pending` until Circle has attested the burn. It becomes `failed` instead when the burn is
+not a transfer this route can mint; see [When it goes wrong](#when-it-goes-wrong).
 
 </Step>
 <Step>
@@ -102,6 +103,10 @@ if (status.state === "needs_claim") {
     if (step.tx.kind !== "stellar") throw new Error("expected a Stellar step");
     await signAndSubmitStellar(step.tx.xdr, step.tx.networkPassphrase);
   }
+} else if (status.state === "failed") {
+  // Attested, but not a transfer this route can mint. Keep the digest and the reason;
+  // nothing else is safe to do here. See "When it goes wrong".
+  console.error(status.reason);
 }
 ```
 
@@ -116,7 +121,121 @@ payer. Sign it in the payer's wallet and submit it to Soroban RPC. When it lands
 `delivered`. The payer does not need to be the recipient; the mint always pays the recipient the
 burn names.
 
-## When the claim is refused
+## When it goes wrong
+
+A Sui transfer has one irreversible point: the burn executing. The wallet signs and executes it in a
+single call, so a digest that comes back is proof it happened. The API's refusals come before that
+point and cost nothing. Everything after it is Circle's delivery, and the mint never needs the
+sender's wallet again.
+
+| What happened | Has money moved? | What to do |
+|---|---|---|
+| The quote or `createTransfer` refused | No | Fix what the error [`code`](/docs/errors) names, then ask again |
+| The wallet declined | No. Nothing was signed or executed | Ask again |
+| The wallet lost the network after signing | Unknown until you read the chain | Find the digest in the sender's history before anything else |
+| Your app stopped polling | Burned; the transfer waits for the next poll | Poll the same digest again; never build a new transfer |
+| The mint was sent but its answer was lost | Burned and attested; the mint landed or it did not | Look the mint's hash up before submitting again |
+| The burn landed but the mint did not | Burned and attested; not yet minted | [Claim it](/docs/guides/claim-a-stuck-transfer) through the API |
+| Tracking says `failed` | Burned and attested; not minted by this route | Keep the digest and the reason; do not send again |
+| Circle could not be read | Nothing changed; the burn is safe | Show "checking" and ask again |
+
+### Refused before anything was signed
+
+The API checks the sender's Sui address, the amount, the recipient's Stellar account
+([`invalid_recipient`](/docs/errors/invalid_recipient): it must exist and hold a USDC trustline), the
+size of the transfer ([`amount_below_minimum`](/docs/errors/amount_below_minimum),
+[`amount_above_maximum`](/docs/errors/amount_above_maximum)), the route
+([`route_unavailable`](/docs/errors/route_unavailable) while it is switched off) and the sender's USDC
+balance ([`insufficient_balance`](/docs/errors/insufficient_balance), whose `have` and `need` fields
+give the figures).
+
+Nothing was signed, so nothing moved. Fix what the problem's `detail` names and call `createTransfer`
+again; quote again first if the balance or the cap is what changed.
+
+### The wallet declined
+
+A declined prompt rejects the `sui:signAndExecuteTransaction` call: the wallet does not sign, does not
+execute, and returns no digest. Nothing moved. Show the user that the transfer was not sent and offer
+to try again.
+
+### The network failed after signing
+
+`sui:signAndExecuteTransaction` signs and executes in one step inside the wallet. When the call throws
+after the user confirmed (a dropped connection, a DNS failure such as Android's
+`UnknownHostException`, a wallet that gave up waiting for the node), the burn may still have been
+executed: the wallet may have submitted it and lost the answer. The page never sees the digest, so
+nothing else in the app knows.
+
+Do not call it failed, and do not build and sign a second burn, until you have looked:
+
+- Open the sender's address in a Sui explorer ([SuiVision](https://suivision.xyz),
+  [Suiscan](https://suiscan.xyz)) and read its most recent transactions. The burn was signed by that
+  address. The wallet's own activity list shows it too.
+- If it is there, copy its digest. That digest is the transfer, and Xebra can track it from then on.
+- If it is not there after a minute or two, the burn did not go out, and building the transfer again
+  is safe.
+
+Xebra's tracking cannot answer this for you: a digest Circle has never seen stays `pending`, exactly
+like a burn that is still on its way. A rebuilt transfer is a new transaction with its own digest, and
+both can land, which burns twice. Build again only once the first is known not to have executed.
+
+### Your app stopped polling
+
+A closed tab, a crash or a dropped connection stops your polling, not the transfer. Once the burn has
+executed, the USDC has left the sender's Sui balance, and a lost response or an unanswered poll does
+not undo it. Tracking only reads, so the burn stays attested and waits: the mint is sent on the first
+poll after Circle attests it, whenever that poll comes.
+
+Keep the digest as soon as the wallet returns it, and resume with `getTransfer("sui", digest)` or
+`waitForDelivery`. Do not build another transfer to "retry" it: that is a second burn.
+
+### The mint was sent but the answer was lost
+
+The mint's hash belongs to the signed envelope, so it can be read before submitting and does not
+depend on the answer:
+
+```ts
+import { TransactionBuilder } from "@stellar/stellar-sdk";
+
+const signed = TransactionBuilder.fromXDR(signedXdr, networkPassphrase);
+const hash = signed.hash().toString("hex"); // the mint's id, 64 hex characters
+```
+
+Look the hash up on a Stellar explorer, or with Horizon's `GET /transactions/{hash}`. If it landed,
+the transfer is `delivered` and nothing more is needed. If it did not, submit the same signed envelope
+again: Soroban RPC answers `PENDING` or `DUPLICATE` rather than minting twice, and `TRY_AGAIN_LATER`
+means the node did not queue it.
+
+The burn is attested either way, so nothing is lost while you work it out: the mint only ever pays the
+recipient the burn names, and anyone can submit it.
+
+### The burn landed but the mint did not
+
+Xebra's relayer finishes Sui to Stellar on its own: the first poll after Circle attests the burn
+hands it over, so a `needs_claim` is normally brief. Keep polling first. Claim it yourself only when
+the relayer has not finished it (`reason` says why it refused, or it stays `needs_claim`).
+
+Tracking stays at `needs_claim` while the USDC waits to be minted. It is attested, it still pays the
+recipient the burn named, and finishing it costs only the destination's network fee. On Sui `claimUrl`
+is null: there is no claim page for this route, so finish it with
+[`createClaim`](/docs/api/claims/create-claim), as in the code above. Do not send the transfer again:
+that burns a second time.
+
+See [Claim a stuck transfer](/docs/guides/claim-a-stuck-transfer) and
+[Recovery](/docs/concepts/recovery). For wording to give a user, see
+[My transfer is stuck](/docs/guides/my-transfer-is-stuck).
+
+`waitForDelivery` throws `timeout` after 30 minutes by default. The transfer may still settle, so ask
+again with `getTransfer` rather than starting a new one.
+
+### Tracking says `failed`
+
+The burn was attested but it is not a transfer this route can mint. `claimUrl` is null here too, and a
+claim is refused with [`transaction_rejected`](/docs/errors/transaction_rejected); `reason` says what
+was wrong. Keep the digest, do not burn again, and take it up with Xebra, quoting the digest: the USDC
+is Circle's to deliver to the destination the burn named.
+
+### If the claim is refused
 
 - [`not_ready`](/docs/errors/not_ready): Circle has not attested the burn yet. Ask again in a few minutes.
 - [`already_delivered`](/docs/errors/already_delivered): the USDC has already been minted. Nothing to do.
@@ -125,10 +244,6 @@ burn names.
 - [`transaction_rejected`](/docs/errors/transaction_rejected): Circle's record of the burn is not a
   transfer this route can mint (for example, it is not a USDC burn to Stellar). The problem's `detail`
   says why.
-
-A `failed` state on a Sui transfer means the same thing: Circle's record was read and refused. `reason`
-carries the explanation, and `claimUrl` is always null on Sui; finish Sui transfers with
-[`POST /v1/claims`](/docs/api/claims/create-claim).
 
 <Callout title="The mint is automatic">
   Xebra's relayer finishes the Stellar mint for transfers built through the API and the SDK, the same

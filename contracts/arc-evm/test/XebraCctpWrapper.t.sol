@@ -199,6 +199,23 @@ contract XebraCctpWrapperTest is Test {
         assertEq(c.sender, address(wrapper));
     }
 
+    function test_acceptsXebrasAttributionSuffixAndBurnsTheSame() public {
+        // The web app appends an ERC-8021 suffix ("xebra", length 5, schema 0, marker) to the
+        // calldata (packages/sdk/src/core/tag.ts). The ABI decoder reads by offset and ignores it.
+        bytes memory data = abi.encodePacked(
+            abi.encodeCall(XebraCctpWrapper.bridge, (req(10_000_000, BASE, evmRecipient, 60_000))),
+            hex"78656272610500",
+            hex"80218021802180218021802180218021"
+        );
+        vm.prank(user);
+        (bool ok, bytes memory ret) = address(wrapper).call(data);
+        assertTrue(ok, "a tagged bridge call must not revert");
+        XebraCctpWrapper.Quote memory q = abi.decode(ret, (XebraCctpWrapper.Quote));
+        assertEq(q.netBurned, 9_760_000);
+        assertEq(messenger.lastCall().amount, 9_760_000);
+        assertEq(wrapper.seq(), 1);
+    }
+
     function test_announcesTheTransfer() public {
         XebraCctpWrapper.BridgeRequest memory r = req(10_000_000, BASE, evmRecipient, 60_000);
         bytes32 id = keccak256(abi.encode(block.chainid, address(wrapper), uint64(1), user, uint256(9_760_000), BASE, evmRecipient));

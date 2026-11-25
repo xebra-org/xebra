@@ -15,3 +15,4 @@ export * from "./deep-link.js";
 export * from "./fees/evm.js";
 export * from "./fees/flat.js";
 export * from "./fees/stellar.js";
+export * from "./tag.js";

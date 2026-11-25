@@ -22,8 +22,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   type BridgeChainConfig,
   type BridgeQuote,
+  BridgeSubmitError,
   StellarTxNotFoundError,
-  classifyStellarSubmitError,
   getUsdcBalance,
   getWrapperDomains,
   getWrapperFeeParams,
@@ -37,8 +37,15 @@ import { formatError, reportError } from "../../lib/format-error";
 import { unitsToInput } from "../../lib/max-amount";
 import { type RecipientResolution, resolveRecipient } from "../../lib/solana-recipient";
 import { relayToSui, suiRelayAvailable } from "../../lib/stellar-sui-relay";
-import type { ClassifiedError } from "../../lib/wallet-error";
+import {
+  type ErrorContext,
+  type UserError,
+  describeError,
+  isReadable,
+  messageError,
+} from "../../lib/user-error";
 import { Button } from "../ui/button";
+import { ErrorNotice } from "../ui/error-notice";
 import { Field, Input } from "../ui/field";
 import { InsetTray } from "../ui/glass-card";
 import { ArrowRight } from "../ui/icons";
@@ -333,9 +340,24 @@ function pathProblem(forwarded: boolean, claimOnly: boolean, name: string): stri
   return null;
 }
 
-/** A refusal the form decided on before anything was signed, so nothing can have been sent. */
-function preSubmitError(message: string): ClassifiedError {
-  return { kind: "unknown", message, maybeSent: false, raw: message };
+/**
+ * What a failed Stellar send shows. The app's own refusals (`BridgeSubmitError`: humanized contract
+ * errors, rejected-transaction explanations) are never text-matched, so a diagnostic log that
+ * happens to contain "denied" stays an alarm; a raw Soroban log goes behind "Technical details".
+ * Everything else is a wallet or transport failure, read by `describeError`.
+ */
+function stellarSubmitError(err: unknown, ctx: ErrorContext): UserError {
+  if (err instanceof BridgeSubmitError) {
+    const title = "Stellar did not accept the transfer";
+    if (isReadable(err.message)) return messageError(err.message, { title });
+    return {
+      ...messageError("Stellar checked the transfer and refused it before anything moved.", {
+        title,
+      }),
+      detail: err.message,
+    };
+  }
+  return describeError(err, ctx);
 }
 
 export function StellarBridgeForm({
@@ -378,7 +400,10 @@ export function StellarBridgeForm({
   const [quoteError, setQuoteError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [step, setStep] = useState<string | null>(null);
-  const [submitError, setSubmitError] = useState<ClassifiedError | null>(null);
+  const [submitError, setSubmitError] = useState<UserError | null>(null);
+  /** One of this form's own reasons for stopping before anything was signed. */
+  const stopWith = (text: string, opts?: { title?: string; steps?: string[] }) =>
+    setSubmitError(messageError(text, opts));
   const [burnReceipt, setBurnReceipt] = useState<StellarBurnReceiptState | null>(null);
   const txHash =
     // An unconfirmed burn may have landed, so it keeps the form locked like a pending one.
@@ -936,20 +961,24 @@ export function StellarBridgeForm({
         latestDomains = await getWrapperDomains(wrapper);
       } catch (err) {
         reportError("reading the wrapper's destinations failed", err);
-        setSubmitError(
-          preSubmitError(
-            "We could not read the bridge contract's settings just now, so nothing was sent.",
-          ),
+        stopWith(
+          "We could not read the bridge contract's settings just now, so nothing was sent.",
+          {
+            title: "We couldn't check the bridge just now",
+            steps: ["Wait a minute, then send again."],
+          },
         );
         return;
       }
       setDomains(latestDomains);
       const latestCfg = latestDomains?.get(dest.domain);
       if (!latestCfg) {
-        setSubmitError(
-          preSubmitError(
-            `The bridge contract does not send to ${dest.name} right now, so nothing was sent.`,
-          ),
+        stopWith(
+          `The bridge contract does not send to ${dest.name} right now, so nothing was sent.`,
+          {
+            title: `${dest.name} isn't available right now`,
+            steps: ["Choose another destination, or try again later."],
+          },
         );
         return;
       }
@@ -958,18 +987,21 @@ export function StellarBridgeForm({
         const fresh = await getRouteHealth(STELLAR_CCTP_DOMAIN, dest.domain, recipientNeedsAccount);
         setHealthState({ key: healthKey, value: fresh });
         if (fresh?.status === "down") {
-          setSubmitError(
-            preSubmitError(
-              `Circle is not able to deliver to ${dest.name} right now, so nothing was sent. ${fresh.reasons[0] ?? ""}`.trim(),
-            ),
+          stopWith(
+            `Circle is not able to deliver to ${dest.name} right now, so nothing was sent. ${fresh.reasons[0] ?? ""}`.trim(),
+            {
+              title: `Circle can't deliver to ${dest.name} right now`,
+              steps: ["Try again later. This page checks every minute."],
+            },
           );
           return;
         }
         // With no relay, a transfer signed without a live delivery fee is one nobody can deliver.
         if (!fresh?.quote) {
-          setSubmitError(
-            preSubmitError("We could not get Circle's delivery fee just now, so nothing was sent."),
-          );
+          stopWith("We could not get Circle's delivery fee just now, so nothing was sent.", {
+            title: "We couldn't get the delivery fee",
+            steps: ["Wait a minute, then send again."],
+          });
           return;
         }
         choice = chooseMaxFee({
@@ -980,7 +1012,7 @@ export function StellarBridgeForm({
         });
       }
       if (!choice.ok) {
-        setSubmitError(preSubmitError(choice.reason));
+        stopWith(choice.reason);
         return;
       }
 
@@ -997,15 +1029,14 @@ export function StellarBridgeForm({
       const problem = pathProblem(latest.forwarded, dest.claimOnly, dest.name);
       if (problem) {
         setQuote(null);
-        setSubmitError(preSubmitError(`${problem} Nothing was sent.`));
+        stopWith(`${problem} Nothing was sent.`);
         return;
       }
       if (latest.fee > quote.fee) {
         setQuote(latest);
-        setSubmitError(
-          preSubmitError(
-            `Circle's delivery fee moved while you were reviewing: the fee is now ${formatUsdc(latest.fee)} USDC, was ${formatUsdc(quote.fee)}. Nothing was sent. Check the new total and confirm again.`,
-          ),
+        stopWith(
+          `Circle's delivery fee moved while you were reviewing: the fee is now ${formatUsdc(latest.fee)} USDC, was ${formatUsdc(quote.fee)}. Nothing was sent. Check the new total and confirm again.`,
+          { title: "The fee changed while you were reviewing" },
         );
         return;
       }
@@ -1059,7 +1090,13 @@ export function StellarBridgeForm({
       }
     } catch (err) {
       reportError("transfer failed", err);
-      setSubmitError(classifyStellarSubmitError(err));
+      setSubmitError(
+        stellarSubmitError(err, {
+          wallet: connections.stellar?.walletName,
+          chain: "Stellar",
+          feeToken: "XLM",
+        }),
+      );
     } finally {
       setSubmitting(false);
       setStep(null);
@@ -1317,35 +1354,17 @@ export function StellarBridgeForm({
           </Notice>
         )}
 
-        {submitError &&
-          (submitError.kind === "declined" || submitError.kind === "popup" ? (
-            <Notice tone="info" title="Wallet request cancelled" className="mt-5">
-              You cancelled in your wallet. Nothing was sent.
-            </Notice>
-          ) : submitError.maybeSent ? (
-            <Notice tone="alarm" title="Could not confirm transfer" className="mt-5">
-              <pre className="max-h-48 overflow-auto whitespace-pre-wrap break-words font-mono text-[0.75rem] leading-relaxed text-bone/60">
-                {submitError.message}
-              </pre>
-              <p className="mt-2 text-bone/35">
-                Check your wallet&rsquo;s activity first before trying again. Full detail is in the
-                browser console under <code className="font-mono">[xebra]</code>.
-              </p>
-            </Notice>
-          ) : (
-            <Notice tone="alarm" title="The transfer did not go through" className="mt-5">
-              {/* A Soroban failure's useful part is its diagnostic event log, which is
-                  long and multi-line. Rendered as flowing text it collapses into an
-                  unreadable run-on, so it gets a scrollable monospace block instead. */}
-              <pre className="max-h-48 overflow-auto whitespace-pre-wrap break-words font-mono text-[0.75rem] leading-relaxed text-bone/60">
-                {submitError.message}
-              </pre>
-              <p className="mt-2 text-bone/35">
-                No funds have moved unless a transaction hash is shown. Full detail is in the
-                browser console under <code className="font-mono">[xebra]</code>.
-              </p>
-            </Notice>
-          ))}
+        {submitError && (
+          <ErrorNotice
+            error={submitError}
+            className="mt-5"
+            txUrl={
+              submitError.txHash
+                ? stellarExplorerTxUrl(submitError.txHash, env.stellarNetworkPassphrase)
+                : undefined
+            }
+          />
+        )}
 
         {!txHash && health?.status === "down" && (
           <Notice

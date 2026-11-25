@@ -12,7 +12,9 @@ import {
 import type React from "react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { SuiTransfer, hasRememberedSuiTransfer } from "../../app/sui/sui-client";
+import { recallSuiEvm } from "../../app/sui/sui-evm";
 import { env, isCctpRailConfigured } from "../../lib/env";
+import { nextPollDelay } from "../../lib/poll-backoff";
 import { SiteFooter } from "../site/site-footer";
 import { TopBar } from "../site/top-bar";
 import { Eyebrow } from "../ui/badge";
@@ -64,42 +66,107 @@ interface SuiSource {
   solana: boolean;
 }
 
+const SUI_DIGEST = /^[1-9A-HJ-NP-Za-km-z]{32,64}$/;
+
+function recallSuiDigest(): string | null {
+  try {
+    if (typeof window === "undefined") return null;
+    const fromUrl = new URLSearchParams(window.location.search).get("tx")?.trim() ?? "";
+    if (fromUrl && SUI_DIGEST.test(fromUrl)) return fromUrl;
+    const stellarDigest = window.localStorage.getItem("xebra.sui-stellar.digest");
+    if (stellarDigest && SUI_DIGEST.test(stellarDigest)) return stellarDigest;
+    const evm = recallSuiEvm();
+    if (evm?.digest && SUI_DIGEST.test(evm.digest)) return evm.digest;
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+const aptosClaimHref = (tx: string) => `/claim?tx=${encodeURIComponent(tx)}&src=9`;
+const suiClaimHref = (tx: string) => `/claim?tx=${encodeURIComponent(tx)}&src=8`;
+const solanaClaimHref = (tx: string) => `/claim?tx=${encodeURIComponent(tx)}&src=5`;
+
+function FailedConfigNotice({
+  chain,
+  tx,
+  claimHref,
+}: {
+  chain: string;
+  tx: string;
+  claimHref: string;
+}) {
+  return (
+    <Notice tone="info" title="Your transfer is still on its way">
+      <p>
+        We can&rsquo;t reach Xebra right now, so the {chain} form is hidden. Your transfer was sent:{" "}
+        <span className="break-all font-mono text-xs text-bone/70">{tx}</span>
+      </p>
+      <p className="mt-2">
+        Track or finish it here:{" "}
+        <a href={claimHref} className="underline underline-offset-2 hover:text-bone">
+          Open the claim page
+        </a>
+      </p>
+    </Notice>
+  );
+}
+
 export function HomeClient({ children }: { children?: React.ReactNode }) {
   const { connections, stellarKit: kit, open: openWallets } = useWallets();
 
   // Aptos, like Sui, is switched on by a server setting and asked for after mounting. Until it
   // answers, or when it is off, the screen is exactly what it was.
   const [aptos, setAptos] = useState<AptosSource | null>(null);
+  const [aptosFailed, setAptosFailed] = useState(false);
   useEffect(() => {
     let live = true;
-    fetch("/api/aptos/config", { cache: "no-store" })
-      .then((r) => (r.ok ? r.json() : null))
-      .then(
-        (
-          c: {
-            enabled?: boolean;
-            destinations?: unknown;
-            maxUsdc?: string | null;
-            relayer?: boolean;
-          } | null,
-        ) => {
-          if (!live || !c?.enabled) return;
-          const destinations = Array.isArray(c.destinations)
-            ? c.destinations.filter(isAptosDestination)
-            : [];
-          if (destinations.length === 0) return;
-          setAptos({ destinations, maxUsdc: c.maxUsdc ?? null, relayer: c.relayer === true });
-          // A transfer this browser was following comes back on screen.
-          if (recallAptosTransfer() && !parseDeepLink(window.location.search).from) {
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    let failures = 0;
+
+    const load = async () => {
+      try {
+        const r = await fetch("/api/aptos/config", { cache: "no-store" });
+        if (!r.ok) {
+          throw new Error(`HTTP ${r.status}`);
+        }
+        const c: {
+          enabled?: boolean;
+          destinations?: unknown;
+          maxUsdc?: string | null;
+          relayer?: boolean;
+        } | null = await r.json();
+
+        if (!live || !c?.enabled) return;
+        const destinations = Array.isArray(c.destinations)
+          ? c.destinations.filter(isAptosDestination)
+          : [];
+        if (destinations.length === 0) return;
+        setAptos({ destinations, maxUsdc: c.maxUsdc ?? null, relayer: c.relayer === true });
+        setAptosFailed(false);
+        failures = 0;
+        // A transfer this browser was following comes back on screen.
+        if (recallAptosTransfer() && !parseDeepLink(window.location.search).from) {
+          setFrom("aptos");
+        }
+      } catch {
+        if (!live) return;
+        if (recallAptosTransfer()) {
+          setAptosFailed(true);
+          if (!parseDeepLink(window.location.search).from) {
             setFrom("aptos");
           }
-        },
-      )
-      .catch(() => {
-        // Off, or offline: the Aptos source simply is not offered.
-      });
+          failures += 1;
+          if (timer) clearTimeout(timer);
+          timer = setTimeout(load, nextPollDelay(failures - 1));
+        }
+      }
+    };
+
+    void load();
     return () => {
       live = false;
+      if (timer) clearTimeout(timer);
     };
   }, []);
 
@@ -108,85 +175,123 @@ export function HomeClient({ children }: { children?: React.ReactNode }) {
   // Sui is switched on by a server setting, so it is asked for after mounting. Until it answers, or
   // when it is off, the screen is exactly what it was.
   const [sui, setSui] = useState<SuiSource | null>(null);
+  const [suiFailed, setSuiFailed] = useState(false);
   useEffect(() => {
     let live = true;
-    fetch("/api/sui-stellar/config", { cache: "no-store" })
-      .then((r) => (r.ok ? r.json() : null))
-      .then(
-        (
-          c: {
-            enabled?: boolean;
-            relayer?: boolean;
-            maxUsdc?: string | null;
-            evm?: unknown;
-            solana?: unknown;
-          } | null,
-        ) => {
-          if (!live || !c?.enabled) return;
-          setSui({
-            relayer: c.relayer === true,
-            maxUsdc: c.maxUsdc ?? null,
-            // Only names this build knows: a newer server cannot make the page render a chain it lacks.
-            evm: Array.isArray(c.evm)
-              ? c.evm.filter((id): id is EvmChainId => typeof id === "string" && isEvmChainId(id))
-              : [],
-            solana: c.solana === true,
-          });
-          // A transfer this browser was following comes back on screen, as it does on /sui.
-          if (hasRememberedSuiTransfer() && !parseDeepLink(window.location.search).from) {
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    let failures = 0;
+
+    const load = async () => {
+      try {
+        const r = await fetch("/api/sui-stellar/config", { cache: "no-store" });
+        if (!r.ok) {
+          throw new Error(`HTTP ${r.status}`);
+        }
+        const c: {
+          enabled?: boolean;
+          relayer?: boolean;
+          maxUsdc?: string | null;
+          evm?: unknown;
+          solana?: unknown;
+        } | null = await r.json();
+
+        if (!live || !c?.enabled) return;
+        setSui({
+          relayer: c.relayer === true,
+          maxUsdc: c.maxUsdc ?? null,
+          // Only names this build knows: a newer server cannot make the page render a chain it lacks.
+          evm: Array.isArray(c.evm)
+            ? c.evm.filter((id): id is EvmChainId => typeof id === "string" && isEvmChainId(id))
+            : [],
+          solana: c.solana === true,
+        });
+        setSuiFailed(false);
+        failures = 0;
+        // A transfer this browser was following comes back on screen, as it does on /sui.
+        if (hasRememberedSuiTransfer() && !parseDeepLink(window.location.search).from) {
+          setFrom("sui");
+        }
+      } catch {
+        if (!live) return;
+        if (hasRememberedSuiTransfer()) {
+          setSuiFailed(true);
+          if (!parseDeepLink(window.location.search).from) {
             setFrom("sui");
           }
-        },
-      )
-      .catch(() => {
-        // Off, or offline: the Sui source simply is not offered.
-      });
+          failures += 1;
+          if (timer) clearTimeout(timer);
+          timer = setTimeout(load, nextPollDelay(failures - 1));
+        }
+      }
+    };
+
+    void load();
     return () => {
       live = false;
+      if (timer) clearTimeout(timer);
     };
   }, []);
 
   // Solana is switched on by `SOLANA_SENDS_TO`, asked for the same way as Sui.
   const [solana, setSolana] = useState<SolanaSourceConfig | null>(null);
+  const [solanaFailed, setSolanaFailed] = useState(false);
   useEffect(() => {
     let live = true;
-    fetch("/api/solana-source/config", { cache: "no-store" })
-      .then((r) => (r.ok ? r.json() : null))
-      .then(
-        (
-          c: {
-            enabled?: boolean;
-            evm?: unknown;
-            stellar?: boolean;
-            relayer?: boolean;
-            maxUsdc?: string | null;
-            stellarMinUsdc?: string;
-          } | null,
-        ) => {
-          if (!live || !c?.enabled) return;
-          // Only names this build knows: a newer server cannot make the page render a chain it lacks.
-          const evm = Array.isArray(c.evm)
-            ? c.evm.filter((id): id is EvmChainId => typeof id === "string" && isEvmChainId(id))
-            : [];
-          if (evm.length === 0 && c.stellar !== true) return;
-          setSolana({
-            evm,
-            stellar: c.stellar === true,
-            relayer: c.relayer === true,
-            maxUsdc: c.maxUsdc ?? null,
-            stellarMinUsdc: c.stellarMinUsdc ?? "1",
-          });
-          // A transfer this browser was following comes back on screen.
-          if (recallSolanaTransfer() && !parseDeepLink(window.location.search).from) {
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    let failures = 0;
+
+    const load = async () => {
+      try {
+        const r = await fetch("/api/solana-source/config", { cache: "no-store" });
+        if (!r.ok) {
+          throw new Error(`HTTP ${r.status}`);
+        }
+        const c: {
+          enabled?: boolean;
+          evm?: unknown;
+          stellar?: boolean;
+          relayer?: boolean;
+          maxUsdc?: string | null;
+          stellarMinUsdc?: string;
+        } | null = await r.json();
+
+        if (!live || !c?.enabled) return;
+        // Only names this build knows: a newer server cannot make the page render a chain it lacks.
+        const evm = Array.isArray(c.evm)
+          ? c.evm.filter((id): id is EvmChainId => typeof id === "string" && isEvmChainId(id))
+          : [];
+        if (evm.length === 0 && c.stellar !== true) return;
+        setSolana({
+          evm,
+          stellar: c.stellar === true,
+          relayer: c.relayer === true,
+          maxUsdc: c.maxUsdc ?? null,
+          stellarMinUsdc: c.stellarMinUsdc ?? "1",
+        });
+        setSolanaFailed(false);
+        failures = 0;
+        // A transfer this browser was following comes back on screen.
+        if (recallSolanaTransfer() && !parseDeepLink(window.location.search).from) {
+          setFrom("solana");
+        }
+      } catch {
+        if (!live) return;
+        if (recallSolanaTransfer()) {
+          setSolanaFailed(true);
+          if (!parseDeepLink(window.location.search).from) {
             setFrom("solana");
           }
-        },
-      )
-      .catch(() => {
-        // Off, or offline: the Solana source simply is not offered.
-      });
+          failures += 1;
+          if (timer) clearTimeout(timer);
+          timer = setTimeout(load, nextPollDelay(failures - 1));
+        }
+      }
+    };
+
+    void load();
     return () => {
       live = false;
+      if (timer) clearTimeout(timer);
     };
   }, []);
   // The top bar's wallet modal: a Sui tab too once Sui is a source here.
@@ -202,15 +307,29 @@ export function HomeClient({ children }: { children?: React.ReactNode }) {
     [openWallets, sui, aptos],
   );
 
+  const aptosTransfer = aptosFailed ? recallAptosTransfer() : null;
+  const suiDigest = suiFailed ? recallSuiDigest() : null;
+  const solanaTransfer = solanaFailed ? recallSolanaTransfer() : null;
+
   const sources = useMemo<SourceId[]>(
     () => [
       "stellar",
-      ...(sui ? (["sui"] as const) : []),
-      ...(solana ? (["solana"] as const) : []),
-      ...(aptos ? (["aptos"] as const) : []),
+      ...(sui || (suiFailed && suiDigest) ? (["sui"] as const) : []),
+      ...(solana || (solanaFailed && solanaTransfer) ? (["solana"] as const) : []),
+      ...(aptos || (aptosFailed && aptosTransfer) ? (["aptos"] as const) : []),
       ...evmSources(env.evmRoutes),
     ],
-    [sui, solana, aptos],
+    [
+      sui,
+      suiFailed,
+      suiDigest,
+      solana,
+      solanaFailed,
+      solanaTransfer,
+      aptos,
+      aptosFailed,
+      aptosTransfer,
+    ],
   );
   const manyRoutes = sources.length > 1;
   const [from, setFrom] = useState<SourceId>("stellar");
@@ -300,6 +419,33 @@ export function HomeClient({ children }: { children?: React.ReactNode }) {
                 you approve it in your wallet.
               </Notice>
             )}
+            {aptosFailed && aptosTransfer && from !== "aptos" && (
+              <div className="mb-6">
+                <FailedConfigNotice
+                  chain="Aptos"
+                  tx={aptosTransfer.tx}
+                  claimHref={aptosClaimHref(aptosTransfer.tx)}
+                />
+              </div>
+            )}
+            {suiFailed && suiDigest && from !== "sui" && (
+              <div className="mb-6">
+                <FailedConfigNotice
+                  chain="Sui"
+                  tx={suiDigest}
+                  claimHref={suiClaimHref(suiDigest)}
+                />
+              </div>
+            )}
+            {solanaFailed && solanaTransfer && from !== "solana" && (
+              <div className="mb-6">
+                <FailedConfigNotice
+                  chain="Solana"
+                  tx={solanaTransfer.tx}
+                  claimHref={solanaClaimHref(solanaTransfer.tx)}
+                />
+              </div>
+            )}
             {from === "stellar" ? (
               <StellarBridgeForm
                 sourcePicker={sourcePicker}
@@ -316,15 +462,48 @@ export function HomeClient({ children }: { children?: React.ReactNode }) {
                 sourcePicker={sourcePicker}
                 onBusyChange={setBusy}
               />
-            ) : from === "sui" ? null : from === "solana" && solana ? (
+            ) : from === "sui" ? (
+              suiFailed && suiDigest ? (
+                <div className="px-5 py-6 sm:px-6">
+                  {sourcePicker}
+                  <FailedConfigNotice
+                    chain="Sui"
+                    tx={suiDigest}
+                    claimHref={suiClaimHref(suiDigest)}
+                  />
+                </div>
+              ) : null
+            ) : from === "solana" && solana ? (
               <SolanaBridgeForm
                 config={solana}
                 sourcePicker={sourcePicker}
                 onBusyChange={setBusy}
               />
-            ) : from === "solana" ? null : from === "aptos" && aptos ? (
+            ) : from === "solana" ? (
+              solanaFailed && solanaTransfer ? (
+                <div className="px-5 py-6 sm:px-6">
+                  {sourcePicker}
+                  <FailedConfigNotice
+                    chain="Solana"
+                    tx={solanaTransfer.tx}
+                    claimHref={solanaClaimHref(solanaTransfer.tx)}
+                  />
+                </div>
+              ) : null
+            ) : from === "aptos" && aptos ? (
               <AptosBridgeForm source={aptos} sourcePicker={sourcePicker} onBusyChange={setBusy} />
-            ) : from === "aptos" ? null : (
+            ) : from === "aptos" ? (
+              aptosFailed && aptosTransfer ? (
+                <div className="px-5 py-6 sm:px-6">
+                  {sourcePicker}
+                  <FailedConfigNotice
+                    chain="Aptos"
+                    tx={aptosTransfer.tx}
+                    claimHref={aptosClaimHref(aptosTransfer.tx)}
+                  />
+                </div>
+              ) : null
+            ) : (
               // Keyed by source: a different chain is a different transfer, and nothing typed for
               // one (least of all a receipt) should survive into another.
               <EvmBridgeForm
