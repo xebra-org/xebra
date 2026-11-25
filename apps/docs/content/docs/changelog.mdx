@@ -7,6 +7,15 @@ description: What changed in the Xebra API and SDK, newest first.
 
 **API**:
 
+- Market-maker rebalances: `GET /v1/quote` and `POST /v1/transfers` take an optional
+  `product`, `"transfer"` (the default) or `"rebalance"`. A rebalance with a valid API key is
+  priced at 0.01% capped at 2 USDC a move, plus 0.01 USDC: 100,000 USDC costs 2.01 instead of
+  10.01, 1,000 USDC still 0.11. Without a key it is priced as a transfer. Every other price is
+  unchanged. See [Fees](/docs/concepts/fees#market-maker-rebalances).
+- Quotes (and the quote in a build) carry `feeRule`, the fee rule that priced Xebra's fee:
+  `"default"`, `"rebalance-capped"`, or null where a Xebra contract prices it on-chain (Stellar
+  sources, EVM sources through Xebra's contract).
+
 - Every route without a Xebra fee contract carries Xebra's fee: 0.01 USDC plus 0.01% of the
   amount, whether the transfer arrives by itself (Circle's Forwarding Service, or Xebra's relayer
   into Stellar) or the recipient claims it. `fees.xebra` shows it; `amount` is what leaves the wallet
@@ -25,6 +34,17 @@ description: What changed in the Xebra API and SDK, newest first.
   off, and `POST /v1/claims` still finishes it. No new call, field or state.
 
 **SDK**, `@xebra/sdk`:
+
+- `createRebalancer` asks for the rebalance price: its quotes and builds send
+  `product: "rebalance"`, and with an API key on the Xebra client (`createXebraClient({ apiKey })`)
+  a move costs Xebra 0.01% capped at 2 USDC, plus 0.01. `estimate` returns `feeRule`.
+- `QuoteRequest` and `TransferRequest` take `product`; `Quote` has `feeRule` (optional, so answers
+  from an older server still parse). `ProductSchema`.
+- `@xebra/sdk/core` (additive): the fee table, `FEE_TABLE`, and the function that prices from it,
+  `priceFee(amount, { product, partner, from, to })`, which returns the fee and the rule's id. Also
+  `feeRuleFor`, `feeUnder`, `amountForBurnUnder`, `checkFeeTable`. `flatFeeFor` and
+  `amountForBurn` now price through the table's default rule, with the same results.
+- The intents router's `buildDeposit` takes `product`.
 
 - `planEvmFee` takes `xebraFee`; `FeePlan` gains `burn`. `XEBRA_FLAT_FEE`, `flatFeeFor`,
   `flatFeeKind`, `CLAIM_ONLY_DOMAINS`; `buildEvmFeeStep`, `buildAptosFeeStep`.

@@ -11,8 +11,10 @@ own, higher limit and is not counted with everyone else's.
 | No key | 60 requests | The calling address |
 | With a key | 600 requests | The key |
 
-Both limits apply to every `/v1` endpoint. A key changes the limit and nothing else: the API stays
-non-custodial, still builds unsigned transactions, and never asks for or accepts a private key.
+Both limits apply to every `/v1` endpoint. A key changes the limit and, for a market maker's
+rebalance (`product: "rebalance"`), the price: 0.01% capped at 2 USDC a move, plus 0.01 (see
+[Fees](/docs/concepts/fees#market-maker-rebalances)). Nothing else: the API stays non-custodial,
+still builds unsigned transactions, and never asks for or accepts a private key.
 
 ## Get a key
 

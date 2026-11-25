@@ -39,6 +39,7 @@ export function quoteToWire(q: Quote): WireQuote {
     maximum: q.maximum === null ? null : amount(q.maximum),
     circleStatus: q.circleStatus,
     expiresAt: q.expiresAt,
+    feeRule: q.feeRule,
   };
 }
 

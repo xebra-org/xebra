@@ -53,6 +53,12 @@ export const RoutesSchema = z
   })
   .meta({ id: "Routes" });
 
+export const ProductSchema = z.enum(["transfer", "rebalance"]).meta({
+  id: "Product",
+  description:
+    "What the transfer is for. `rebalance` is a market maker moving its own USDC between chains: with an API key it is priced at 0.01% capped at 2 USDC a move, plus 0.01. Without a key it is priced as a transfer.",
+});
+
 export const QuoteRequestSchema = z.object({
   from: ChainIdSchema,
   to: ChainIdSchema,
@@ -62,6 +68,7 @@ export const QuoteRequestSchema = z.object({
     description:
       "Optional. For Solana, pass it: a wallet with no USDC account yet costs more to deliver to, and the quote includes that.",
   }),
+  product: ProductSchema.optional(),
 });
 
 export const FeesSchema = z
@@ -102,6 +109,15 @@ export const QuoteSchema = z
     circleStatus: z.enum(["ok", "degraded"]).nullable(),
     /** ISO 8601. Fees move; after this, ask again. */
     expiresAt: z.iso.datetime(),
+    /**
+     * The fee rule that priced Xebra's fee, such as "default" or "rebalance-capped", or null where
+     * a Xebra contract prices it on-chain (Stellar sources, EVM sources through Xebra's contract).
+     */
+    feeRule: z.string().nullable().optional().meta({
+      description:
+        "The fee rule that priced Xebra's fee (default, rebalance-capped), or null where a Xebra contract prices it on-chain.",
+      example: "default",
+    }),
   })
   .meta({ id: "Quote" });
 
@@ -170,6 +186,7 @@ export const TransferRequestSchema = z
     maxTotalFee: AmountOutSchema.optional().meta({
       description: "Refuse if fees have risen above this, typically the total you showed.",
     }),
+    product: ProductSchema.optional(),
   })
   .meta({ id: "TransferRequest" });
 

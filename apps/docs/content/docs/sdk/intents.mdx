@@ -16,7 +16,8 @@ import { createXebraClient } from "@xebra/sdk";
 import { createRebalancer } from "@xebra/sdk/intents";
 
 const rb = createRebalancer({
-  xebra: createXebraClient(),
+  // Your Xebra API key earns the rebalance price (below).
+  xebra: createXebraClient({ apiKey: "xk_live_your Xebra key" }),
   oneClick: { apiKey: "your 1Click partner key" },
 });
 ```
@@ -39,6 +40,23 @@ The withdrawal is the only step that needs a 1Click partner API key: `generate-i
 `oneClick.apiKey` and only ever sent to 1Click. Quotes, estimates and the deposit step work
 without it.
 
+## What Xebra charges
+
+Every quote and burn the rebalancer asks Xebra for says `product: "rebalance"`. With a
+[Xebra API key](/docs/guides/api-keys) on the client, Xebra prices it as a rebalance: **0.01% of
+the amount capped at 2 USDC a move, plus 0.01 USDC**. Without a key it is an ordinary transfer,
+0.01% plus 0.01 with no cap.
+
+| Move | With a Xebra API key | Without |
+|---|---|---|
+| 100,000 USDC | 2.01 | 10.01 |
+| 50,000 USDC | 2.01 | 5.01 |
+| 1,000 USDC | 0.11 | 0.11 |
+
+That is Xebra's part of `fees.cctp`; Circle's delivery fee and NEAR Intents' withdrawal are on top.
+`estimate` names the rule that priced it in `feeRule`: `"rebalance-capped"` with a key,
+`"default"` without. See [Fees](/docs/concepts/fees#market-maker-rebalances).
+
 ## The request
 
 `estimate`, `startWithdrawal` and `prepareDeposit` all take the same `RebalanceRequest`.
@@ -49,7 +67,7 @@ without it.
 
 | Option | Type | Meaning |
 |---|---|---|
-| `xebra` | `Pick<XebraClient, "routes" \| "quote" \| "createTransfer">` | A client from `createXebraClient()`. Its `routes()` decides whether the route is offered. |
+| `xebra` | `Pick<XebraClient, "routes" \| "quote" \| "createTransfer">` | A client from `createXebraClient()`. Its `routes()` decides whether the route is offered; its API key earns the rebalance price. |
 | `oneClick.apiKey` | `string` | Your 1Click partner key. Needed to withdraw, and only sent to 1Click. |
 | `oneClick.baseUrl` | `string` | Where 1Click answers. Default `https://1click.chaindefuser.com`. |
 | `oneClick.referral` | `string` | The distribution-channel tag in NEAR Intents' records. Default `"xebra"`. |
@@ -80,6 +98,7 @@ const e = await rb.estimate(req);
 
 console.log(`${e.amount} out of ${e.to}, ${e.arrives} back on ${e.to}`);
 console.log(`withdrawal ${e.fees.withdraw}, CCTP ${e.fees.cctp}, total ${e.fees.total}`);
+console.log(`Xebra's fee priced by the ${e.feeRule} rule`);
 console.log(`about ${Math.round(e.seconds / 60)} minutes end to end, ${e.better} is cheaper`);
 
 if (e.direct.arrives === null) console.log(`no market maker quotes it: ${e.direct.reason}`);

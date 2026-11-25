@@ -93,6 +93,26 @@ smallest amount is about 1.0102.
 Out of Arc, while Xebra's fee contract there is switched on for the site, the contract's own rule
 applies, the same as Stellar's above, and there is no flat fee.
 
+### Market-maker rebalances
+
+A market maker moving its own USDC between chains (the SDK's
+[rebalancer](/docs/sdk/intents)) pays **0.01% capped at 2 USDC a move, plus 0.01 USDC**, on these
+same routes. It is never free.
+
+```text
+xebra    = 0.01 + min(0.01% × amount, 2)
+```
+
+The capped price needs both: the request says `product: "rebalance"` (on `GET /v1/quote` and
+`POST /v1/transfers`), and it carries a valid [API key](/docs/guides/api-keys). A rebalance
+without a key is priced as any other transfer. 100,000 USDC costs 2.01 instead of 10.01; up to
+20,000 USDC the two prices are the same.
+
+Every quote names the rule that priced Xebra's fee in `feeRule` (`"default"` or
+`"rebalance-capped"`; null where a Xebra contract prices it), and the build charges the fee the
+same request is quoted. Pass `maxTotalFee` to refuse a build whose fees rose above what you were
+shown.
+
 ## Circle's delivery fee
 
 Circle's Forwarding Service charges for minting on the destination and paying the gas there. It

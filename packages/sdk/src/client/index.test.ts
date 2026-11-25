@@ -60,6 +60,17 @@ describe("createXebraClient", () => {
     );
   });
 
+  it("sends the product, so a keyed rebalance can be priced as one", async () => {
+    const fetch = vi.fn(async () => json(200, {}));
+    const client = createXebraClient({ baseUrl: "https://example.test", apiKey: "k", fetch });
+    await client
+      .quote({ from: "base", to: "arbitrum", amount: "100000", product: "rebalance" })
+      .catch(() => {});
+    expect((fetch.mock.calls[0] as unknown as [string])[0]).toBe(
+      "https://example.test/v1/quote?from=base&to=arbitrum&amount=100000&product=rebalance",
+    );
+  });
+
   it("turns a problem into an XebraApiError carrying its code and figures", async () => {
     const client = createXebraClient({
       fetch: async () => problem(422, "amount_above_maximum", { maximum: "100" }),

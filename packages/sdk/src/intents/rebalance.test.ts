@@ -224,6 +224,24 @@ describe("estimate", () => {
     for (const c of one.calls.filter((c) => c.path === "/v0/quote")) expect(c.body?.dry).toBe(true);
   });
 
+  it("asks Xebra for the rebalance price and names the rule that priced it", async () => {
+    const one = fake1Click();
+    const x = fakeXebra();
+    x.quote.mockImplementation(async (q: { amount: string }) => ({
+      ...xebraQuote(q.amount),
+      feeRule: "rebalance-capped",
+    }));
+    const rb = createRebalancer({ xebra: x, fetch: one.fetch, now: () => NOW });
+    const e = await rb.estimate(REQ);
+    expect(x.quote).toHaveBeenCalledWith(
+      expect.objectContaining({ from: "base", to: "avalanche", product: "rebalance" }),
+    );
+    expect(e.feeRule).toBe("rebalance-capped");
+    // A server too old to name the rule: null, not a guess.
+    x.quote.mockImplementation(async (q: { amount: string }) => xebraQuote(q.amount));
+    expect((await rb.estimate(REQ)).feeRule).toBeNull();
+  });
+
   it("says when one swap inside NEAR Intents leaves more", async () => {
     const one = fake1Click({ directSwap: "99999990000" });
     const rb = createRebalancer({ xebra: fakeXebra(), fetch: one.fetch, now: () => NOW });
@@ -423,7 +441,10 @@ describe("prepareDeposit", () => {
       sender: REQ.fromWallet,
       recipient: "0xdep",
       maxTotalFee: "0.0625",
+      product: "rebalance",
     });
+    // The quote it priced the burn from asked for the rebalance price too.
+    expect(x.quote).toHaveBeenCalledWith(expect.objectContaining({ product: "rebalance" }));
   });
 
   it("refuses when CCTP fees rose above the cap, before any deposit address is issued", async () => {
