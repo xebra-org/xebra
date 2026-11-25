@@ -73,6 +73,10 @@ contract XebraEscrow is EIP712, ReentrancyGuard {
     uint256 public constant BPS_DENOMINATOR = 10_000;
     /// @dev 25 USDC, 6 decimals — spec's "minimum 25 USDC equivalent".
     uint256 public constant MIN_BOND = 25e6;
+    /// @dev How long a challenge may wait for the arbiter before anyone can unwind it
+    ///      (`expireChallenge`): the user gets the escrowed USDC back and each side its own bond.
+    ///      A backstop for a lost or absent arbiter key, so no escrow can stay frozen forever.
+    uint256 public constant RESOLVE_TIMEOUT = 30 days;
 
     // ---------------------------------------------------------------------
     // Immutable config
@@ -97,6 +101,13 @@ contract XebraEscrow is EIP712, ReentrancyGuard {
 
     mapping(bytes32 intentHash => EscrowEntry) public escrows;
     mapping(address user => uint256 lastNonce) public lastNonce;
+    /// @notice When each escrow was challenged; starts the `RESOLVE_TIMEOUT` clock. Kept out of
+    ///         `EscrowEntry` so the `escrows` getter's shape stays the same for existing readers.
+    mapping(bytes32 intentHash => uint64 challengedAt) public challengedAt;
+    /// @notice Native bonds each address can withdraw. Bonds are credited here, never pushed,
+    ///         so an address that refuses payment can only block its own withdrawal, never a
+    ///         ruling, a finalize, or a user's refund (GHSA-fc4m-748v-rffc).
+    mapping(address account => uint256 amount) public bondsOwed;
 
     // ---------------------------------------------------------------------
     // Events
@@ -125,6 +136,9 @@ contract XebraEscrow is EIP712, ReentrancyGuard {
     event IntentResolved(bytes32 indexed intentHash, bool claimValid);
     event IntentFinalized(bytes32 indexed intentHash, address indexed solver, uint256 sourceAmount);
     event IntentRefunded(bytes32 indexed intentHash, address indexed to, uint256 sourceAmount);
+    event ChallengeExpired(bytes32 indexed intentHash);
+    event BondCredited(bytes32 indexed intentHash, address indexed account, uint256 amount);
+    event BondsWithdrawn(address indexed account, address indexed to, uint256 amount);
 
     // ---------------------------------------------------------------------
     // Errors
@@ -145,6 +159,8 @@ contract XebraEscrow is EIP712, ReentrancyGuard {
     error ChallengeWindowOpen();
     error NotArbiter();
     error NativeTransferFailed();
+    error ResolveTimeoutNotReached();
+    error NothingOwed();
 
     // ---------------------------------------------------------------------
     // Constructor
@@ -247,12 +263,14 @@ contract XebraEscrow is EIP712, ReentrancyGuard {
         e.status = Status.Challenged;
         e.challenger = msg.sender;
         e.challengerBond = msg.value;
+        challengedAt[intentHash] = uint64(block.timestamp);
 
         emit IntentChallenged(intentHash, msg.sender, msg.value);
     }
 
     /// @notice v1's single trusted role. Only invoked when a challenge actually lands. Pays the
-    ///         escrow + loser's bond to the honest side. Every claim is publicly Horizon-
+    ///         escrowed USDC to the honest side and credits it both bonds (withdrawn separately,
+    ///         see `bondsOwed`), so the ruling never depends on anyone agreeing to be paid. Every claim is publicly Horizon-
     ///         verifiable, so a dishonest resolution here is provably dishonest, in public,
     ///         permanently (see spec "Trust model").
     function resolve(bytes32 intentHash, bool claimValid) external nonReentrant {
@@ -273,8 +291,8 @@ contract XebraEscrow is EIP712, ReentrancyGuard {
             e.solverBond = 0;
             e.challengerBond = 0;
 
+            _creditBond(intentHash, solver, bondPayout);
             IERC20(sourceToken).safeTransfer(solver, sourceAmount);
-            _sendNative(solver, bondPayout);
 
             emit IntentFinalized(intentHash, solver, sourceAmount);
         } else {
@@ -289,8 +307,8 @@ contract XebraEscrow is EIP712, ReentrancyGuard {
             e.solverBond = 0;
             e.challengerBond = 0;
 
+            _creditBond(intentHash, challenger, bondPayout);
             IERC20(sourceToken).safeTransfer(user, sourceAmount);
-            _sendNative(challenger, bondPayout);
 
             emit IntentRefunded(intentHash, user, sourceAmount);
         }
@@ -311,10 +329,51 @@ contract XebraEscrow is EIP712, ReentrancyGuard {
         e.status = Status.Finalized;
         e.solverBond = 0;
 
+        _creditBond(intentHash, solver, bond);
         IERC20(sourceToken).safeTransfer(solver, sourceAmount);
-        _sendNative(solver, bond);
 
         emit IntentFinalized(intentHash, solver, sourceAmount);
+    }
+
+    /// @notice If the arbiter has not ruled `RESOLVE_TIMEOUT` after a challenge, anyone may
+    ///         unwind it: the escrowed USDC goes back to the user and each side is credited its
+    ///         own bond. Nobody is slashed, because nobody ruled.
+    function expireChallenge(bytes32 intentHash) external nonReentrant {
+        EscrowEntry storage e = escrows[intentHash];
+        if (e.status != Status.Challenged) revert NotChallenged();
+        if (block.timestamp <= uint256(challengedAt[intentHash]) + RESOLVE_TIMEOUT) {
+            revert ResolveTimeoutNotReached();
+        }
+
+        address user = e.user;
+        address sourceToken = e.sourceToken;
+        uint256 sourceAmount = e.sourceAmount;
+        uint256 solverBond = e.solverBond;
+        uint256 challengerBond = e.challengerBond;
+
+        e.status = Status.Refunded;
+        e.solverBond = 0;
+        e.challengerBond = 0;
+
+        _creditBond(intentHash, e.solver, solverBond);
+        _creditBond(intentHash, e.challenger, challengerBond);
+        IERC20(sourceToken).safeTransfer(user, sourceAmount);
+
+        emit ChallengeExpired(intentHash);
+        emit IntentRefunded(intentHash, user, sourceAmount);
+    }
+
+    /// @notice Sends every bond credited to the caller to `to`. A contract that cannot receive
+    ///         native payments can name another address.
+    function withdrawBonds(address payable to) external nonReentrant {
+        if (to == address(0)) revert ZeroAddress();
+        uint256 amount = bondsOwed[msg.sender];
+        if (amount == 0) revert NothingOwed();
+
+        bondsOwed[msg.sender] = 0;
+        _sendNative(to, amount);
+
+        emit BondsWithdrawn(msg.sender, to, amount);
     }
 
     /// @notice After expiry with no live claim, anyone may return the escrowed USDC to the
@@ -375,6 +434,12 @@ contract XebraEscrow is EIP712, ReentrancyGuard {
     // ---------------------------------------------------------------------
     // Internal
     // ---------------------------------------------------------------------
+
+    function _creditBond(bytes32 intentHash, address account, uint256 amount) private {
+        if (amount == 0) return;
+        bondsOwed[account] += amount;
+        emit BondCredited(intentHash, account, amount);
+    }
 
     function _sendNative(address to, uint256 amount) private {
         if (amount == 0) return;
