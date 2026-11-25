@@ -133,6 +133,7 @@ sender's wallet again.
 | The quote or `createTransfer` refused | No | Fix what the error [`code`](/docs/errors) names, then ask again |
 | The wallet declined | No. Nothing was signed or executed | Ask again |
 | The wallet lost the network after signing | Unknown until you read the chain | Find the digest in the sender's history before anything else |
+| Your app stopped polling | Burned; the transfer waits for the next poll | Poll the same digest again; never build a new transfer |
 | The mint was sent but its answer was lost | Burned and attested; the mint landed or it did not | Look the mint's hash up before submitting again |
 | The burn landed but the mint did not | Burned and attested; not yet minted | [Claim it](/docs/guides/claim-a-stuck-transfer) through the API |
 | Tracking says `failed` | Burned and attested; not minted by this route | Keep the digest and the reason; do not send again |
@@ -177,6 +178,16 @@ Do not call it failed, and do not build and sign a second burn, until you have l
 Xebra's tracking cannot answer this for you: a digest Circle has never seen stays `pending`, exactly
 like a burn that is still on its way. A rebuilt transfer is a new transaction with its own digest, and
 both can land, which burns twice. Build again only once the first is known not to have executed.
+
+### Your app stopped polling
+
+A closed tab, a crash or a dropped connection stops your polling, not the transfer. Once the burn has
+executed, the USDC has left the sender's Sui balance, and a lost response or an unanswered poll does
+not undo it. Tracking only reads, so the burn stays attested and waits: the mint is sent on the first
+poll after Circle attests it, whenever that poll comes.
+
+Keep the digest as soon as the wallet returns it, and resume with `getTransfer("sui", digest)` or
+`waitForDelivery`. Do not build another transfer to "retry" it: that is a second burn.
 
 ### The mint was sent but the answer was lost
 
