@@ -23,30 +23,7 @@ const xebra = createXebraClient({
 });
 ```
 
-<TypeTable
-  type={{
-    baseUrl: {
-      type: 'string',
-      description: 'Where the API answers.',
-      default: '"https://api.xebra.exchange"',
-    },
-    apiKey: {
-      type: 'string',
-      description:
-        'Sent as `Authorization: Bearer <apiKey>`. Optional. API keys are not issued yet; the API answers without one.',
-    },
-    fetch: {
-      type: 'typeof fetch',
-      description: 'A fetch to use instead of the global one, for tests or a custom agent.',
-      default: 'globalThis.fetch',
-    },
-    timeoutMs: {
-      type: 'number',
-      description: 'How long one request may take before it fails with code `timeout`.',
-      default: '15000',
-    },
-  }}
-/>
+<AutoTypeTable path="../../packages/sdk/src/index.ts" name="XebraClientOptions" />
 
 ## Methods
 
@@ -96,49 +73,7 @@ const quote = await xebra.quote({
 For Solana, pass `recipient`. A wallet with no USDC account yet costs more to deliver to, and the
 quote includes that only if it knows the recipient.
 
-<TypeTable
-  type={{
-    from: { type: 'ChainId', description: 'The chain the transfer starts on.', required: true },
-    to: { type: 'ChainId', description: 'The chain it ends on.', required: true },
-    speed: {
-      type: '"standard" | "fast"',
-      description: 'Echoes the speed priced.',
-      required: true,
-    },
-    amount: { type: 'string', description: 'What the sender sends, in USDC.', required: true },
-    recipientGets: {
-      type: 'string',
-      description: 'What arrives: `amount` minus `fees.total`.',
-      required: true,
-    },
-    fees: {
-      type: '{ xebra, circle, delivery, total }',
-      description:
-        "What Xebra keeps, Circle's transfer fee (Fast only), what Circle is paid to deliver, and their sum. All strings of USDC.",
-      required: true,
-    },
-    minimum: {
-      type: 'string',
-      description: 'The smallest amount this route takes right now, with a margin for fees moving.',
-      required: true,
-    },
-    maximum: {
-      type: 'string | null',
-      description: 'The largest amount, or null when the route sets none.',
-      required: true,
-    },
-    circleStatus: {
-      type: '"ok" | "degraded" | null',
-      description: "Circle's own health, when it could be read.",
-      required: true,
-    },
-    expiresAt: {
-      type: 'string',
-      description: 'ISO 8601. Fees move; after this, ask again.',
-      required: true,
-    },
-  }}
-/>
+<AutoTypeTable path="../../packages/sdk/src/index.ts" name="Quote" />
 
 ### createTransfer(r)
 
@@ -168,32 +103,7 @@ before anyone is asked to sign.
 
 Each step:
 
-<TypeTable
-  type={{
-    id: {
-      type: '"approve" | "burn" | "open_account" | "claim"',
-      description: 'What this signature does.',
-      required: true,
-    },
-    chain: { type: 'ChainId', description: 'The chain the transaction is for.', required: true },
-    description: {
-      type: 'string',
-      description: 'One sentence a person can read before signing.',
-      required: true,
-    },
-    tx: {
-      type: 'UnsignedTx',
-      description:
-        'The transaction, by `kind`: `stellar` (`xdr`, `networkPassphrase`), `evm` (`chainId`, `to`, `data`, `value: "0"`), `sui` (`json`), `solana` (`transaction`, base64, unsigned).',
-      required: true,
-    },
-    expiresAt: {
-      type: 'string | null',
-      description: 'When the transaction stops being valid (ISO 8601), or null when it does not expire.',
-      required: true,
-    },
-  }}
-/>
+<AutoTypeTable path="../../packages/sdk/src/index.ts" name="TransferStep" />
 
 Ask the wallet for each step in order, and wait for each to confirm before the next. An `approve`
 must be included on chain before the `burn` that spends it.
@@ -224,32 +134,7 @@ declare const burnHash: string;
 const status = await xebra.getTransfer("base", burnHash);
 ```
 
-<TypeTable
-  type={{
-    state: {
-      type: '"pending" | "delivering" | "delivered" | "needs_claim" | "failed"',
-      description: 'See [Track a transfer](/docs/guides/track-a-transfer).',
-      required: true,
-    },
-    chain: { type: 'ChainId', description: 'The chain the burn was made on.', required: true },
-    tx: { type: 'string', description: "The burn's hash, as asked.", required: true },
-    deliveryTx: {
-      type: 'string | null',
-      description: 'The mint on the destination, once Circle has delivered it.',
-      required: true,
-    },
-    reason: {
-      type: 'string | null',
-      description: "Circle's own words when delivery did not complete, shortened.",
-      required: true,
-    },
-    claimUrl: {
-      type: 'string | null',
-      description: 'Where the recipient can finish a delivery that did not complete on its own.',
-      required: true,
-    },
-  }}
-/>
+<AutoTypeTable path="../../packages/sdk/src/index.ts" name="TransferStatus" />
 
 ### waitForDelivery(chain, tx, opts?)
 
@@ -327,27 +212,7 @@ Where two copies of the SDK may be installed, as in a monorepo or a framework th
 server and client builds apart, `instanceof` can miss an error thrown by the other copy. Use
 `isXebraApiError(err)` instead: it narrows the same way and works across copies.
 
-<TypeTable
-  type={{
-    status: {
-      type: 'number',
-      description: 'The HTTP status, or 0 when no answer came back.',
-      required: true,
-    },
-    code: {
-      type: 'XebraErrorCode',
-      description:
-        'Stable. `ApiErrorCode` or one of `CLIENT_ERROR_CODES`. The API codes are listed on [Errors](/docs/errors).',
-      required: true,
-    },
-    detail: { type: 'string', description: 'A sentence for a person.', required: true },
-    extra: {
-      type: 'Partial<Pick<Problem, "minimum" | "maximum" | "have" | "need" | "total" | "limit" | "needs">> & Record<string, unknown>',
-      description: "The problem's other fields. The amounts and `needs` are typed as strings.",
-      required: true,
-    },
-  }}
-/>
+<AutoTypeTable path="./lib/sdk-types.ts" name="XebraApiErrorFields" />
 
 Some codes come from the client itself, rather than coming from an API problem response. They are
 exported as `CLIENT_ERROR_CODES`:
@@ -384,21 +249,7 @@ const quote = await xebra.quote(
 );
 ```
 
-<TypeTable
-  type={{
-    signal: {
-      type: 'AbortSignal',
-      description:
-        "Stops the call. It rejects with the signal's reason, not with an `XebraApiError`.",
-    },
-    timeoutMs: {
-      type: 'number',
-      description:
-        "How long this one call may take before it fails with code `timeout`, in place of the client's `timeoutMs`.",
-      default: "the client's timeoutMs",
-    },
-  }}
-/>
+<AutoTypeTable path="../../packages/sdk/src/index.ts" name="XebraCallOptions" />
 
 A call given only a signal is still bound by the client's timeout: whichever comes first ends the
 request. `timeoutMs` applies to that call alone, and can be shorter or longer than the client's.

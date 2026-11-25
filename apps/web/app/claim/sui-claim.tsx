@@ -1,9 +1,10 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Notice } from "../../components/ui/notice";
 import { useWallets } from "../../components/wallet/wallet-provider";
 import { reportError } from "../../lib/format-error";
+import { relayToSui, suiRelayAvailable } from "../../lib/stellar-sui-relay";
 import { signAndExecuteSui } from "../../lib/wallets/sui";
 
 /** What `/api/attestation` reads from a Sui-bound message. */
@@ -32,10 +33,16 @@ export function SuiClaim({
   message,
   attestation,
   target,
+  stellarTx,
 }: {
   message: string;
   attestation: string;
   target: SuiClaimTarget;
+  /**
+   * The Stellar burn, when the transfer started on Stellar. Xebra's relayer can then finish it and
+   * pay the gas, so the person needs no Sui wallet at all.
+   */
+  stellarTx?: string | undefined;
 }) {
   const { sui: signer, open } = useWallets();
   const account = signer?.account ?? null;
@@ -43,6 +50,43 @@ export function SuiClaim({
   const [error, setError] = useState<string | null>(null);
   const [digest, setDigest] = useState<string | null>(null);
   const [alreadyMinted, setAlreadyMinted] = useState(false);
+  const [relayOffered, setRelayOffered] = useState(false);
+
+  useEffect(() => {
+    if (!stellarTx) return;
+    let cancelled = false;
+    void suiRelayAvailable().then((on) => {
+      if (!cancelled) setRelayOffered(on);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [stellarTx]);
+
+  /** Asks Xebra's relayer to mint it and pay the gas. Nothing to sign. */
+  async function relay() {
+    if (!stellarTx) return;
+    setError(null);
+    setBusy("Xebra is finishing it on Sui…");
+    try {
+      const r = await relayToSui(stellarTx);
+      if (r.status === "known" && r.state === "delivered") {
+        if (r.forwardTxHash) setDigest(r.forwardTxHash);
+        else setAlreadyMinted(true);
+      } else if (r.status === "known" && r.state === "claimable") {
+        setRelayOffered(false);
+        setError(
+          r.reason
+            ? `${r.reason} You can still finish it with your own Sui wallet below.`
+            : "Xebra could not finish this one. You can still finish it with your own Sui wallet below.",
+        );
+      } else {
+        setError("Xebra could not reach Sui just now. Try again in a moment.");
+      }
+    } finally {
+      setBusy(null);
+    }
+  }
 
   async function claim() {
     if (!signer || !account) return;
@@ -109,6 +153,22 @@ export function SuiClaim({
         gas, usually under 0.01 SUI.
       </Notice>
 
+      {relayOffered && (
+        <>
+          <button
+            type="button"
+            onClick={relay}
+            disabled={Boolean(busy)}
+            className="w-full rounded-tray bg-bone px-4 py-3 font-semibold text-obsidian transition-all duration-200 ease-haptic hover:bg-bone/90 active:scale-[0.99] disabled:cursor-not-allowed disabled:bg-bone/10 disabled:text-bone/30"
+          >
+            {busy ?? "Let Xebra finish it and pay the gas"}
+          </button>
+          <p className="-mt-2 text-center text-xs text-bone/35">
+            Free, nothing to sign. Or claim it with your own Sui wallet:
+          </p>
+        </>
+      )}
+
       <section className="rounded-tray bg-bone/[0.03] px-4 py-4">
         <div className="flex items-center justify-between gap-4">
           <span className="text-xs font-medium uppercase tracking-wider text-bone/40">
@@ -136,9 +196,13 @@ export function SuiClaim({
         type="button"
         onClick={claim}
         disabled={!account || Boolean(busy)}
-        className="w-full rounded-tray bg-bone px-4 py-3 font-semibold text-obsidian transition-all duration-200 ease-haptic hover:bg-bone/90 active:scale-[0.99] disabled:cursor-not-allowed disabled:bg-bone/10 disabled:text-bone/30"
+        className={
+          relayOffered
+            ? "w-full rounded-tray px-4 py-3 font-medium text-bone ring-1 ring-inset ring-bone/20 transition-all duration-200 ease-haptic hover:bg-bone/5 active:scale-[0.99] disabled:cursor-not-allowed disabled:text-bone/30"
+            : "w-full rounded-tray bg-bone px-4 py-3 font-semibold text-obsidian transition-all duration-200 ease-haptic hover:bg-bone/90 active:scale-[0.99] disabled:cursor-not-allowed disabled:bg-bone/10 disabled:text-bone/30"
+        }
       >
-        {busy ?? "Claim on Sui"}
+        {relayOffered ? "Claim with my Sui wallet" : (busy ?? "Claim on Sui")}
       </button>
 
       {error && (

@@ -8,7 +8,7 @@ Every issue here starts from that.
 | Component | Address / location | Notes |
 |---|---|---|
 | `XebraCctpWrapper` v2 (Soroban) | `CCPVTWII2TW6VVSVA4JQ2KFHICGBG4QVAHPIGUPSIW3E4VNPUI4Y2WQR` (see [`deployments/mainnet.json`](./deployments/mainnet.json)) | live on Stellar mainnet, takes a fee and hands the burn to Circle's CCTP, with Circle's forwarding hook, in one transaction |
-| `XebraCctpWrapper` v1 (Soroban) | `CCNWLGFMILJU476RZHDA2PSUH2WH3LIPERHS6BYPCRVDDYYNNUIKZMTJ` | retired: the app no longer sends to it, but it is still deployed and not paused |
+| `XebraCctpWrapper` v1 (Soroban) | `CCNWLGFMILJU476RZHDA2PSUH2WH3LIPERHS6BYPCRVDDYYNNUIKZMTJ` | retired: the app no longer sends to it, still deployed, paused since 2026-11-25 |
 | Iris rate counter (`apps/web/convex/`) | production Convex deployment | one shared counter; holds no keys and no funds |
 | `XebraCctpWrapper` (EVM, `contracts/arc-evm`) | Arc mainnet `0x11b30470DAE40B2Fc27b7AA90dc58e6B4fE9f4c3` (see [`deployments/mainnet.json`](./deployments/mainnet.json)); deployed 2026-10-15, not yet used by the page | takes Xebra's fee on a transfer out of Arc and burns the rest through Circle with the forwarding hook; unlike the Soroban wrapper, the principal passes through it inside the transaction |
 | Frontend (`apps/web`) | [xebra.exchange](https://xebra.exchange/) | builds the signed request the wallet submits; on the routes between Arc and the EVM chains it calls Circle's `TokenMessengerV2` directly, or the EVM wrapper above once one is pinned and switched on |

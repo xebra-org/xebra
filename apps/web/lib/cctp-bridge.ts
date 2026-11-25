@@ -11,6 +11,7 @@ import {
 import { INCLUSION_FEE, buildStellarBridge } from "@xebra/sdk/build";
 import type { DomainForwardConfig, FeeParams } from "@xebra/sdk/core";
 import { formatError } from "./format-error";
+import { type ClassifiedError, classifyWalletError } from "./wallet-error";
 
 /**
  * Client for `contracts/stellar-cctp-wrapper-v2` — Stellar to Solana and to every EVM chain the
@@ -100,7 +101,8 @@ export async function quoteBridge(
    *  *is* the price, so the price cannot be quoted without it. */
   maxFee: bigint,
 ): Promise<BridgeQuote> {
-  if (!config.wrapperContractId) throw new Error("The bridge contract is not configured.");
+  if (!config.wrapperContractId)
+    throw new BridgeSubmitError("The bridge contract is not configured.");
 
   const server = new rpc.Server(config.sorobanRpcUrl);
   const contract = new Contract(config.wrapperContractId);
@@ -124,9 +126,9 @@ export async function quoteBridge(
 
   const sim = await server.simulateTransaction(tx);
   if (rpc.Api.isSimulationError(sim)) {
-    throw new Error(humanizeContractError(sim.error, config.wrapperContractId));
+    throw new BridgeSubmitError(humanizeContractError(sim.error, config.wrapperContractId));
   }
-  if (!sim.result) throw new Error("The bridge did not return a quote.");
+  if (!sim.result) throw new BridgeSubmitError("The bridge did not return a quote.");
 
   const raw = scValToNative(sim.result.retval) as {
     amount: bigint;
@@ -290,7 +292,7 @@ export async function submitBridge(
   if (!config.wrapperContractId) {
     // There is no direct path to fall back to: a burn that skips the wrapper skips the forwarding
     // hook, and nobody would deliver it.
-    throw new Error("The bridge contract is not configured.");
+    throw new BridgeSubmitError("The bridge contract is not configured.");
   }
   const server = new rpc.Server(config.sorobanRpcUrl);
 
@@ -302,9 +304,11 @@ export async function submitBridge(
       { ...input, user: userAddress, destinationDomain: config.destinationDomain },
     );
   } catch (err) {
-    throw new Error(humanizeContractError(formatError(err), config.wrapperContractId));
+    // Humanized or not (an unmatched Soroban error comes back raw, event log and all), this is
+    // the app's own answer: it must reach the user intact, never via the wallet classifier.
+    throw new BridgeSubmitError(humanizeContractError(formatError(err), config.wrapperContractId));
   }
-  if (step.tx.kind !== "stellar") throw new Error("expected a Stellar transaction");
+  if (step.tx.kind !== "stellar") throw new BridgeSubmitError("expected a Stellar transaction");
 
   // Name the account the transaction was built for. Without `address` the wallet signs with
   // whichever account is active now, so a switch in Freighter after connecting yields a
@@ -376,6 +380,21 @@ export class UncertainSubmitError extends Error {
   }
 }
 
+/**
+ * An error `quoteBridge` / `submitBridge` / `submitSigned` raise themselves: a humanized contract
+ * error, the raw Soroban fallback with its diagnostic event log, a missing quote, or a
+ * rejected-transaction explanation. Its message is already the answer to show, so
+ * `classifyStellarSubmitError` passes it through unchanged instead of matching words like "denied"
+ * or "cancelled" in it. Nothing was sent. (`quoteBridge` is included because the form re-quotes
+ * inside the same `try` as the submit.)
+ */
+export class BridgeSubmitError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "BridgeSubmitError";
+  }
+}
+
 export interface SubmitSignedOptions {
   horizonUrl?: string;
   recoveryTimeoutMs?: number;
@@ -439,11 +458,11 @@ export async function submitSigned(
       // Already in the mempool from a previous attempt — the same hash, so polling is valid.
       return { txHash: result.hash };
     case "TRY_AGAIN_LATER":
-      throw new Error(
+      throw new BridgeSubmitError(
         `The network declined to queue the ${what} right now (TRY_AGAIN_LATER). Nothing has moved. Wait a few seconds and try again.`,
       );
     default:
-      throw new Error(describeRejectedTransaction(result, what, account));
+      throw new BridgeSubmitError(describeRejectedTransaction(result, what, account));
   }
 }
 
@@ -677,4 +696,35 @@ export function humanizeContractError(raw: string, wrapperContractId?: string | 
     return "Your USDC balance is too low for this transfer.";
   }
   return raw;
+}
+
+/**
+ * Classifies errors caught during Stellar burn submission:
+ * - `UncertainSubmitError` keeps its message (including the tx hash) with `maybeSent: true` so the
+ *   UI never claims "No funds have moved" or hides the hash.
+ * - `BridgeSubmitError`, the app's own answers from `quoteBridge` / `submitBridge` /
+ *   `submitSigned` (humanized contract errors, the raw Soroban fallback, a missing quote,
+ *   rejected-transaction explanations), passes through unchanged with `maybeSent: false`. Its text is never matched, so a diagnostic log containing
+ *   "denied" or "cancelled" stays an alarm with its full event log, and rewording a message cannot
+ *   quietly change how it is classified.
+ * - Everything else is a wallet or transport error and goes to `classifyWalletError`.
+ */
+export function classifyStellarSubmitError(err: unknown): ClassifiedError {
+  if (err instanceof UncertainSubmitError) {
+    return {
+      kind: "network",
+      message: err.message,
+      maybeSent: true,
+      raw: err.message,
+    };
+  }
+  if (err instanceof BridgeSubmitError) {
+    return {
+      kind: "unknown",
+      message: err.message,
+      maybeSent: false,
+      raw: err.message,
+    };
+  }
+  return classifyWalletError(err);
 }

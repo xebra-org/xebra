@@ -43,11 +43,20 @@ export type UnsignedTx =
 
 /** One signature in a transfer, in the order the wallet should be asked. */
 export interface TransferStep {
-  /** `fee`: Xebra's flat fee, a USDC transfer to Xebra's fee address on the source chain. */
+  /**
+   * What this signature does. `fee`: Xebra's flat fee, a USDC transfer to Xebra's fee address on
+   * the source chain.
+   */
   id: "approve" | "burn" | "fee" | "open_account" | "claim";
+  /** The chain the transaction is for. */
   chain: ChainId;
   /** One sentence a person can read before signing. */
   description: string;
+  /**
+   * The transaction, by `kind`: `stellar` (`xdr`, `networkPassphrase`), `evm` (`chainId`, `to`,
+   * `data`, `value: "0"`), `sui` (`json`), `solana` (`transaction`, base64, unsigned), `aptos`
+   * and `aptos_call`.
+   */
   tx: UnsignedTx;
   /** When the transaction stops being valid (ISO 8601), or null when it does not expire. */
   expiresAt: string | null;

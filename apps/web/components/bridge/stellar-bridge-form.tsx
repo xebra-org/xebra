@@ -22,6 +22,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   type BridgeChainConfig,
   type BridgeQuote,
+  BridgeSubmitError,
   StellarTxNotFoundError,
   getUsdcBalance,
   getWrapperDomains,
@@ -35,7 +36,14 @@ import { env, isCctpRailConfigured } from "../../lib/env";
 import { formatError, reportError } from "../../lib/format-error";
 import { unitsToInput } from "../../lib/max-amount";
 import { type RecipientResolution, resolveRecipient } from "../../lib/solana-recipient";
-import { type UserError, describeError, messageError } from "../../lib/user-error";
+import {
+  type ErrorContext,
+  type UserError,
+  describeError,
+  isReadable,
+  messageError,
+} from "../../lib/user-error";
+import { relayToSui, suiRelayAvailable } from "../../lib/stellar-sui-relay";
 import { Button } from "../ui/button";
 import { ErrorNotice } from "../ui/error-notice";
 import { Field, Input } from "../ui/field";
@@ -305,6 +313,13 @@ const CLAIM_ONLY_RECEIPT = {
   claimableLine: "Circle has signed it. One Sui transaction finishes it.",
 };
 
+/** The receipt when Xebra finishes the Sui side and pays its gas (the box on the Sui panel). */
+const SUI_RELAYED_RECEIPT = {
+  intro:
+    "Circle signs the transfer within a few minutes, then Xebra finishes it on Sui and pays the gas. Nothing else to do. If Xebra cannot finish it, the link below lets any Sui wallet do it, and your USDC is safe and still yours until then.",
+  claimableLine: "Xebra could not finish it on Sui. One Sui transaction from any wallet does.",
+};
+
 /** Which kind of address a destination takes, for the recipient field and the wallet button. */
 function addressFamily(id: DestinationId): "solana" | "sui" | "evm" {
   return id === "solana" || id === "sui" ? id : "evm";
@@ -323,6 +338,26 @@ function pathProblem(forwarded: boolean, claimOnly: boolean, name: string): stri
     return `Automatic delivery to ${name} is not available for this transfer right now.`;
   }
   return null;
+}
+
+/**
+ * What a failed Stellar send shows. The app's own refusals (`BridgeSubmitError`: humanized contract
+ * errors, rejected-transaction explanations) are never text-matched, so a diagnostic log that
+ * happens to contain "denied" stays an alarm; a raw Soroban log goes behind "Technical details".
+ * Everything else is a wallet or transport failure, read by `describeError`.
+ */
+function stellarSubmitError(err: unknown, ctx: ErrorContext): UserError {
+  if (err instanceof BridgeSubmitError) {
+    const title = "Stellar did not accept the transfer";
+    if (isReadable(err.message)) return messageError(err.message, { title });
+    return {
+      ...messageError("Stellar checked the transfer and refused it before anything moved.", {
+        title,
+      }),
+      detail: err.message,
+    };
+  }
+  return describeError(err, ctx);
 }
 
 export function StellarBridgeForm({
@@ -355,6 +390,11 @@ export function StellarBridgeForm({
   // What the receipt describes. Fixed at the moment of signing, so switching the picker
   // afterwards cannot rewrite where an already-burned transfer says it is going.
   const [sentTo, setSentTo] = useState<DestinationId>("solana");
+  // Xebra's Sui relayer: whether this deployment runs it, whether the person ticked the box, and
+  // whether the transfer on the receipt was sent with it.
+  const [suiRelayOffered, setSuiRelayOffered] = useState(false);
+  const [paySuiGas, setPaySuiGas] = useState(false);
+  const [sentRelayed, setSentRelayed] = useState(false);
   const [quote, setQuote] = useState<BridgeQuote | null>(null);
   const [quoting, setQuoting] = useState(false);
   const [quoteError, setQuoteError] = useState<string | null>(null);
@@ -726,7 +766,10 @@ export function StellarBridgeForm({
     const startedAt = Date.now();
 
     const poll = async () => {
-      const result = await getDelivery(confirmedTxHash);
+      // Sui with the box ticked: asking the relayer is also what makes it finish the transfer.
+      const result = sentRelayed
+        ? await relayToSui(confirmedTxHash)
+        : await getDelivery(confirmedTxHash);
       if (cancelled) return;
 
       if (result.status === "known") {
@@ -767,7 +810,19 @@ export function StellarBridgeForm({
       cancelled = true;
       clearTimeout(timer);
     };
-  }, [confirmedTxHash]);
+  }, [confirmedTxHash, sentRelayed]);
+
+  // Whether to offer "Pay the Sui network fee for me": only where the relayer runs.
+  useEffect(() => {
+    if (!dest.claimOnly) return;
+    let cancelled = false;
+    void suiRelayAvailable().then((on) => {
+      if (!cancelled) setSuiRelayOffered(on);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [dest.claimOnly]);
 
   // Ask whether Circle can carry this transfer before anyone is invited to sign it.
   //
@@ -892,6 +947,7 @@ export function StellarBridgeForm({
     if (!kit || !address || !quote || !mintRecipient) return;
     setSubmitting(true);
     setSentTo(destId);
+    setSentRelayed(dest.claimOnly && suiRelayOffered && paySuiGas);
     setSubmitError(null);
     setBurnReceipt(null);
     setPollError(null);
@@ -1035,7 +1091,7 @@ export function StellarBridgeForm({
     } catch (err) {
       reportError("transfer failed", err);
       setSubmitError(
-        describeError(err, {
+        stellarSubmitError(err, {
           wallet: connections.stellar?.walletName,
           chain: "Stellar",
           feeToken: "XLM",
@@ -1183,7 +1239,19 @@ export function StellarBridgeForm({
         )}
 
         {dest.claimOnly ? (
-          <SuiRecipientPanel address={destination.trim()} valid={destinationCheck.ok} />
+          <SuiRecipientPanel
+            address={destination.trim()}
+            valid={destinationCheck.ok}
+            {...(suiRelayOffered
+              ? {
+                  gas: {
+                    on: paySuiGas,
+                    onChange: setPaySuiGas,
+                    disabled: submitting || Boolean(txHash),
+                  },
+                }
+              : {})}
+          />
         ) : dest.needsAccountResolution ? (
           <RecipientPanel
             resolving={resolving}
@@ -1324,7 +1392,11 @@ export function StellarBridgeForm({
               delivery={delivery}
               destination={stellarDestination(sentTo)}
               route={{
-                ...(stellarDestination(sentTo).claimOnly ? CLAIM_ONLY_RECEIPT : {}),
+                ...(stellarDestination(sentTo).claimOnly
+                  ? sentRelayed
+                    ? SUI_RELAYED_RECEIPT
+                    : CLAIM_ONLY_RECEIPT
+                  : {}),
                 burnUrl: burnReceipt.explorerUrl,
               }}
             />
