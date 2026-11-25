@@ -36,6 +36,7 @@ import { env, isCctpRailConfigured } from "../../lib/env";
 import { formatError, reportError } from "../../lib/format-error";
 import { unitsToInput } from "../../lib/max-amount";
 import { type RecipientResolution, resolveRecipient } from "../../lib/solana-recipient";
+import { relayToSui, suiRelayAvailable } from "../../lib/stellar-sui-relay";
 import {
   type ErrorContext,
   type UserError,
@@ -43,7 +44,6 @@ import {
   isReadable,
   messageError,
 } from "../../lib/user-error";
-import { relayToSui, suiRelayAvailable } from "../../lib/stellar-sui-relay";
 import { Button } from "../ui/button";
 import { ErrorNotice } from "../ui/error-notice";
 import { Field, Input } from "../ui/field";
