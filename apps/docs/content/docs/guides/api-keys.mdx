@@ -11,8 +11,11 @@ own, higher limit and is not counted with everyone else's.
 | No key | 60 requests | The calling address |
 | With a key | 600 requests | The key |
 
-Both limits apply to every `/v1` endpoint. A key changes the limit and nothing else: the API stays
-non-custodial, still builds unsigned transactions, and never asks for or accepts a private key.
+Both limits apply to every `/v1` endpoint. A key changes the limit. A key that Xebra sets up for a
+market maker also changes the price of that market maker's rebalances (`product: "rebalance"`):
+0.01% capped at 2 USDC a move, plus 0.01 (see [Fees](/docs/concepts/fees#market-maker-rebalances)).
+Say so when you ask for the key; other keys pay the ordinary price. Nothing else: the API stays non-custodial,
+still builds unsigned transactions, and never asks for or accepts a private key.
 
 ## Get a key
 
