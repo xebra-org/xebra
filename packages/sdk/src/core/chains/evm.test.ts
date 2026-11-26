@@ -16,12 +16,16 @@ import {
   evmChainForChainId,
   evmChainForDomain,
   evmDestinationsFrom,
+  evmSendsToStellar,
+  evmSendsToSui,
   evmSources,
   hasEvmRoutes,
   parseArcReceivesFrom,
   parseArcSendsTo,
   parseEvmMesh,
   parseEvmToSolana,
+  parseEvmToStellar,
+  parseEvmToSui,
   parseStellarSendsTo,
 } from "./evm.js";
 
@@ -149,6 +153,34 @@ describe("EVM chains to Solana", () => {
     expect(parseEvmToSolana(undefined)).toEqual([]);
     expect(() => parseEvmToSolana("arc")).toThrow(/NEXT_PUBLIC_EVM_TO_SOLANA/);
     expect(() => parseEvmToSolana("solana")).toThrow();
+  });
+});
+
+describe("EVM chains to Stellar and Sui", () => {
+  it("are off unless named", () => {
+    expect(parseEvmToStellar(undefined)).toEqual([]);
+    expect(parseEvmToSui("")).toEqual([]);
+    expect(evmSendsToStellar("arc", NO_ROUTES)).toBe(false);
+    expect(evmSendsToSui("arc", NO_ROUTES)).toBe(false);
+    expect(hasEvmRoutes(NO_ROUTES)).toBe(false);
+  });
+
+  it("take Arc, and make Arc a source by themselves", () => {
+    const routes = { arcSendsTo: [], arcReceivesFrom: [], evmToSui: parseEvmToSui("arc") };
+    expect(routes.evmToSui).toEqual(["arc"]);
+    expect(evmSendsToSui("arc", routes)).toBe(true);
+    expect(evmSendsToSui("base", routes)).toBe(false);
+    expect(evmSources(routes)).toEqual(["arc"]);
+    expect(hasEvmRoutes(routes)).toBe(true);
+    // Sui and Stellar are added by the callers, never by the EVM table.
+    expect(evmDestinationsFrom("arc", routes)).toEqual([]);
+    const both = { ...routes, evmToStellar: parseEvmToStellar("arc, base") };
+    expect(evmSources(both)).toEqual(["base", "arc"]);
+  });
+
+  it("fail loudly on a name they do not know", () => {
+    expect(() => parseEvmToSui("arc,sui")).toThrow(/NEXT_PUBLIC_EVM_TO_SUI names "sui"/);
+    expect(() => parseEvmToStellar("stellar")).toThrow(/NEXT_PUBLIC_EVM_TO_STELLAR/);
   });
 });
 

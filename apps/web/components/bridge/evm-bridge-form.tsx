@@ -14,6 +14,7 @@ import {
   checkSolanaAddress,
   evmDestinationsFrom,
   evmSendsToStellar,
+  evmSendsToSui,
   explorerTxUrl,
   flatFeeFor,
   formatUsdc6,
@@ -151,10 +152,13 @@ export function EvmBridgeForm({
   );
   const [destId, setDestId] = useState<RouteDestinationId>(destinations[0]?.id ?? "arc");
   const dest = useMemo(() => routeDestination(destId), [destId]);
-  // Stellar is offered beside the others but sent by its own panel: no Circle delivery to price,
-  // and Xebra's relayer finishes it.
+  // Stellar and Sui are offered beside the others but sent by their own panel: no Circle delivery
+  // to price, and Xebra's relayers finish them.
   const stellarOffered = evmSendsToStellar(source.id, routes);
-  const [toStellar, setToStellar] = useState(destinations.length === 0 && stellarOffered);
+  const suiOffered = evmSendsToSui(source.id, routes);
+  const [relayedTo, setRelayedTo] = useState<"stellar" | "sui" | null>(
+    destinations.length > 0 ? null : stellarOffered ? "stellar" : suiOffered ? "sui" : null,
+  );
 
   // Xebra's wrapper on this chain, when the build uses it, and its live settings: `undefined` while
   // the first read is out, null when it could not be read. A transfer is never priced without them.
@@ -654,9 +658,10 @@ export function EvmBridgeForm({
       ? speedFeeFor(amount, health.tiers.fast.minimumFeePpb)
       : null;
 
-  const pickerOptions: Array<{ id: RouteDestinationId | "stellar"; name: string }> = [
+  const pickerOptions: Array<{ id: RouteDestinationId | "stellar" | "sui"; name: string }> = [
     ...destinations,
     ...(stellarOffered ? [{ id: "stellar" as const, name: "Stellar" }] : []),
+    ...(suiOffered ? [{ id: "sui" as const, name: "Sui" }] : []),
   ];
   const destinationPicker = pickerOptions.length > 1 && (
     <div className="mt-6">
@@ -665,12 +670,12 @@ export function EvmBridgeForm({
         legend="Destination chain"
         name="evm-destination-chain"
         options={pickerOptions}
-        value={toStellar ? "stellar" : destId}
+        value={relayedTo ?? destId}
         onChange={(id) => {
-          if (id === "stellar") {
-            setToStellar(true);
+          if (id === "stellar" || id === "sui") {
+            setRelayedTo(id);
           } else {
-            setToStellar(false);
+            setRelayedTo(null);
             chooseDestination(id);
           }
         }}
@@ -679,22 +684,24 @@ export function EvmBridgeForm({
     </div>
   );
 
-  // Where Circle does not deliver (Stellar, or a chain the recipient claims on), its own panel.
+  // Where Circle does not deliver (Stellar, Sui, or a chain the recipient claims on), its own panel.
   const claimedOn =
-    !toStellar && dest.evm && CLAIM_ONLY_DOMAINS.includes(dest.cctpDomainId) ? dest.evm : null;
-  if (toStellar || claimedOn) {
+    !relayedTo && dest.evm && CLAIM_ONLY_DOMAINS.includes(dest.cctpDomainId) ? dest.evm : null;
+  if (relayedTo || claimedOn) {
     return (
       <>
         <h2 id="bridge-heading" className="sr-only">
-          Bridge USDC from {source.name} to {claimedOn ? claimedOn.name : "Stellar"}
+          Bridge USDC from {source.name} to{" "}
+          {claimedOn ? claimedOn.name : relayedTo === "sui" ? "Sui" : "Stellar"}
         </h2>
         <div className="px-5 py-6 sm:px-6">
           {sourcePicker}
           {destinationPicker}
           <EvmStellarPanel
-            key={claimedOn?.id ?? "stellar"}
+            key={claimedOn?.id ?? relayedTo ?? "stellar"}
             source={source}
             to={claimedOn}
+            toSui={!claimedOn && relayedTo === "sui"}
             {...(onBusyChange ? { onBusyChange } : {})}
           />
         </div>

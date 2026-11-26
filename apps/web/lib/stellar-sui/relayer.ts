@@ -250,32 +250,46 @@ export async function relayStellarToSui(txHash: string, deps: RelayDeps): Promis
     const problem = burnProblem(await (deps.wrapperBurnIn ?? wrapperBurnIn)(txHash), message);
     if (problem) return { status: "refused", reason: problem };
 
-    const client = deps.client ?? suiClient();
-    const build = deps.buildSuiMint ?? buildSuiMint;
-    const sender = deps.key.toSuiAddress();
-    const args = { sender, message: att.message, attestation: att.attestation };
-
-    let built: Awaited<ReturnType<typeof buildSuiMint>>;
-    try {
-      built = await build(client, args);
-    } catch (err) {
-      if (err instanceof AlreadyMintedError) return { status: "delivered" };
-      if (err instanceof SuiCctpPausedError) return { status: "pending", reason: err.message };
-      throw err;
-    }
-
-    const sent = await (deps.execute ?? executeMint)(client, deps.key, built.transaction);
-    if (sent.ok) return { status: "submitted", hash: sent.digest };
-
-    // Lost a race to another instance or to the recipient: the USDC is there all the same.
-    try {
-      await build(client, args);
-    } catch (err) {
-      if (err instanceof AlreadyMintedError) return { status: "delivered" };
-    }
-    console.error("stellar-sui relay mint failed", sent.digest, sent.error);
-    return { status: "failed", hash: sent.digest, reason: "The Sui mint did not go through." };
+    return await submitSuiMint(att, deps, "stellar-sui");
   } finally {
     inFlight.delete(key);
   }
+}
+
+/**
+ * Builds, simulates and sends Circle's mint on Sui for an attested message the caller has already
+ * decided to pay for, from the relayer's key. Shared by every relayer into Sui. `delivered` when it
+ * was minted already (here or by a racing instance or the recipient), `pending` while Circle has
+ * CCTP on Sui paused, `submitted` with the digest, or `failed`.
+ */
+export async function submitSuiMint(
+  att: { message: string; attestation: string },
+  deps: Omit<RelayDeps, "wrapperBurnIn" | "readAttestation">,
+  label: string,
+): Promise<CompleteResult> {
+  const client = deps.client ?? suiClient();
+  const build = deps.buildSuiMint ?? buildSuiMint;
+  const sender = deps.key.toSuiAddress();
+  const args = { sender, message: att.message, attestation: att.attestation };
+
+  let built: Awaited<ReturnType<typeof buildSuiMint>>;
+  try {
+    built = await build(client, args);
+  } catch (err) {
+    if (err instanceof AlreadyMintedError) return { status: "delivered" };
+    if (err instanceof SuiCctpPausedError) return { status: "pending", reason: err.message };
+    throw err;
+  }
+
+  const sent = await (deps.execute ?? executeMint)(client, deps.key, built.transaction);
+  if (sent.ok) return { status: "submitted", hash: sent.digest };
+
+  // Lost a race to another instance or to the recipient: the USDC is there all the same.
+  try {
+    await build(client, args);
+  } catch (err) {
+    if (err instanceof AlreadyMintedError) return { status: "delivered" };
+  }
+  console.error(`${label} relay mint failed`, sent.digest, sent.error);
+  return { status: "failed", hash: sent.digest, reason: "The Sui mint did not go through." };
 }

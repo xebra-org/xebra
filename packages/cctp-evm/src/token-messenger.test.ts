@@ -4,6 +4,7 @@ import {
   FINALITY,
   FORWARD_HOOK,
   NO_FORWARD_EVM_DOMAINS,
+  SUI_DOMAIN,
   ZERO_BYTES32,
   addressToBytes32,
   encodeDepositForBurnWithHook,
@@ -207,6 +208,60 @@ describe("a burn to Stellar", () => {
   });
 });
 
+describe("a burn to Sui", () => {
+  const SUI = `0x${"a1".repeat(32)}` as const;
+  const toSui = { kind: "sui", address: SUI } as const;
+
+  it("is a plain depositForBurn to domain 8, minting to the Sui address with any caller", () => {
+    const data = burn({ destinationDomain: SUI_DOMAIN, recipient: toSui, maxFee: 0n });
+    const { functionName, args } = decodeFunctionData({ abi: tokenMessengerAbi, data });
+    expect(functionName).toBe("depositForBurn");
+    expect(args[1]).toBe(8);
+    expect(args[2]).toBe(SUI);
+    expect(args[4]).toBe(ZERO_BYTES32);
+  });
+
+  it("lower-cases a mixed-case Sui address", () => {
+    const data = burn({
+      destinationDomain: SUI_DOMAIN,
+      recipient: { kind: "sui", address: `0x${"A1".repeat(32)}` },
+      maxFee: 0n,
+    });
+    expect(decodeFunctionData({ abi: tokenMessengerAbi, data }).args[2]).toBe(SUI);
+  });
+
+  it("refuses an EVM address or a Solana account as a Sui recipient: nobody could mint it", () => {
+    expect(() => burn({ destinationDomain: SUI_DOMAIN, recipient: RECIPIENT, maxFee: 0n })).toThrow(
+      /Sui/,
+    );
+    expect(() =>
+      burn({
+        destinationDomain: SUI_DOMAIN,
+        recipient: { kind: "solana", tokenAccount: SUI },
+        maxFee: 0n,
+      }),
+    ).toThrow();
+  });
+
+  it("refuses a Sui recipient anywhere but Sui, a zero address, and a short one", () => {
+    expect(() => burn({ destinationDomain: 6, recipient: toSui })).toThrow(/Sui/);
+    expect(() =>
+      burn({
+        destinationDomain: SUI_DOMAIN,
+        recipient: { kind: "sui", address: ZERO_BYTES32 },
+        maxFee: 0n,
+      }),
+    ).toThrow(/non-zero/);
+    expect(() =>
+      burn({
+        destinationDomain: SUI_DOMAIN,
+        recipient: { kind: "sui", address: `0x${"a1".repeat(31)}` },
+        maxFee: 0n,
+      }),
+    ).toThrow(/32-byte/);
+  });
+});
+
 describe("a burn to a chain Circle does not deliver to", () => {
   it("is a plain depositForBurn with no hook and no caller, to Injective, Morph and Pharos", () => {
     for (const domain of NO_FORWARD_EVM_DOMAINS) {
@@ -224,6 +279,19 @@ describe("a burn to a chain Circle does not deliver to", () => {
       expect(args[1]).toBe(domain);
       expect(args[4]).toBe(ZERO_BYTES32);
     }
+  });
+
+  it("treats Sui as its own kind: an EVM-style recipient is refused there", () => {
+    expect(() =>
+      encodeDepositForBurnWithHook({
+        amount: 5_000_000n,
+        destinationDomain: SUI_DOMAIN,
+        recipient: "0x1111111111111111111111111111111111111111",
+        burnToken: "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
+        maxFee: 0n,
+        minFinalityThreshold: 2000,
+      }),
+    ).toThrow(/Sui/);
   });
 
   it("still asks Circle to forward everywhere else", () => {

@@ -68,6 +68,13 @@ export function encodeWrapperBridge(args: WrapperBridgeArgs): Hex {
       "Xebra's wrapper cannot send to Stellar; burn to Circle directly",
     );
   }
+  // Nor to Sui: the wrapper always adds the forward hook, and Circle does not deliver to Sui.
+  if (typeof args.recipient !== "string" && args.recipient.kind === "sui") {
+    throw new CctpEvmError(
+      "invalid_recipient",
+      "Xebra's wrapper cannot send to Sui; burn to Circle directly",
+    );
+  }
   if (NO_FORWARD_EVM_DOMAINS.includes(args.destinationDomain)) {
     throw new Error("Circle does not deliver to that chain, so the wrapper cannot send there");
   }

@@ -73,4 +73,15 @@ describe("encodeWrapperBridge", () => {
     ).toThrow(/Finality/i);
     expect(() => encodeWrapperBridge({ ...base, destinationDomain: 5 })).toThrow(/Solana/);
   });
+
+  it("refuses Sui: the wrapper always asks Circle to forward, and Circle does not deliver there", () => {
+    expect(() =>
+      encodeWrapperBridge({
+        ...base,
+        destinationDomain: 8,
+        recipient: { kind: "sui", address: TOKEN_ACCOUNT },
+      }),
+    ).toThrow(/cannot send to Sui/);
+    expect(() => encodeWrapperBridge({ ...base, destinationDomain: 8 })).toThrow(/Sui/);
+  });
 });

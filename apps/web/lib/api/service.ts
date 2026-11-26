@@ -29,6 +29,7 @@ import {
   evmChainForDomain,
   evmDestinationsFrom,
   evmSendsToStellar,
+  evmSendsToSui,
   evmSources,
   feeRuleFor,
   formatUsdc,
@@ -55,8 +56,10 @@ import { termsFor } from "../evm-wrapper";
 import { formatError } from "../format-error";
 import { feeDestination, routeDestination } from "../route-destination";
 import { SUI_CCTP_DOMAIN } from "../sui-stellar/config";
-import type { Deps } from "./deps";
+import type { Deps, StellarRoutes } from "./deps";
 import { ApiError } from "./errors";
+
+type StellarRoutesDomains = StellarRoutes["domains"];
 
 /**
  * Routes, prices and status, once, for every surface that answers them: the public API (`/v1`),
@@ -66,7 +69,7 @@ import { ApiError } from "./errors";
 
 export type Speed = "standard" | "fast";
 export type SourceId = "stellar" | "sui" | "solana" | "aptos" | EvmChainId;
-export type DestId = "stellar" | "solana" | EvmChainId;
+export type DestId = "stellar" | "sui" | "solana" | EvmChainId;
 
 export interface RouteGroup {
   from: SourceId;
@@ -266,13 +269,19 @@ const SOURCE_NAME = (id: SourceId): string =>
           ? "Aptos"
           : EVM_CHAINS[id].name;
 const DEST_NAME = (id: DestId): string =>
-  id === "stellar" ? "Stellar" : id === "solana" ? "Solana" : EVM_CHAINS[id].name;
+  id === "stellar"
+    ? "Stellar"
+    : id === "sui"
+      ? "Sui"
+      : id === "solana"
+        ? "Solana"
+        : EVM_CHAINS[id].name;
 
 export function isSourceId(v: string): v is SourceId {
   return v === "stellar" || v === "sui" || v === "solana" || v === "aptos" || isEvmChainId(v);
 }
 export function isDestId(v: string): v is DestId {
-  return v === "stellar" || v === "solana" || isEvmChainId(v);
+  return v === "stellar" || v === "sui" || v === "solana" || isEvmChainId(v);
 }
 
 const ceilToUnits = (stroops: bigint) => (stroops + STROOPS_PER_UNIT - 1n) / STROOPS_PER_UNIT;
@@ -283,13 +292,30 @@ const WRAPPER_DEADLINE_SECS = 1_800;
 
 export function createService(deps: Deps, now: () => number = Date.now) {
   const feeTable = deps.feeTable ?? FEE_TABLE;
+
+  /** Stellar to Sui is on: the page's switch, and domain 8 committed without forwarding. */
+  function stellarSendsToSui(stellar: { domains: StellarRoutesDomains }): boolean {
+    const cfg = stellar.domains?.get(SUI_CCTP_DOMAIN);
+    return deps.stellarToSui === true && cfg !== undefined && !cfg.forward;
+  }
   async function routes(): Promise<{ routes: RouteGroup[]; stellarContractRead: boolean }> {
     const stellar = await deps.stellarRoutes();
     const groups: RouteGroup[] = [
       {
         from: "stellar",
         name: "Stellar",
-        to: stellar.destinations.map((d) => ({ id: d.id, name: d.name, speeds: ["standard"] })),
+        to: [
+          ...stellar.destinations.map((d) => ({
+            id: d.id as DestId,
+            name: d.name,
+            speeds: ["standard"] as Speed[],
+          })),
+          // Sui, as the bridge page offers it: switched on, and committed on the wrapper as a
+          // destination it does not forward to (Circle does not deliver to Sui).
+          ...(stellarSendsToSui(stellar)
+            ? [{ id: "sui" as const, name: DEST_NAME("sui"), speeds: ["standard"] as Speed[] }]
+            : []),
+        ],
       },
     ];
     for (const source of evmSources(deps.evmRoutes)) {
@@ -312,6 +338,10 @@ export function createService(deps: Deps, now: () => number = Date.now) {
                   speeds: ["standard"] as Speed[],
                 },
               ]
+            : []),
+          // Minted by Xebra's Sui relayer or the recipient; Circle does not deliver there either.
+          ...(evmSendsToSui(source, deps.evmRoutes)
+            ? [{ id: "sui" as const, name: DEST_NAME("sui"), speeds: ["standard"] as Speed[] }]
             : []),
         ],
       });
@@ -444,7 +474,7 @@ export function createService(deps: Deps, now: () => number = Date.now) {
     needsAccount: boolean,
   ): Promise<QuoteOption> {
     const speed: Speed = "standard";
-    const dest = stellarDestination(to as Exclude<DestId, "stellar">);
+    const dest = stellarDestination(to as Exclude<DestId, "stellar" | "sui">);
     const [{ domains }, params] = await Promise.all([deps.stellarRoutes(), deps.feeParams()]);
     if (!params) {
       throw new ApiError(
@@ -552,6 +582,87 @@ export function createService(deps: Deps, now: () => number = Date.now) {
     };
   }
 
+  /**
+   * Stellar to Sui through the wrapper, as the bridge page prices it: no delivery fee (`max_fee`
+   * 0, the contract must not forward), the contract's own fee and limits. The recipient, or Xebra's
+   * Sui relayer paying the gas, submits the mint on Sui.
+   */
+  async function stellarSuiOption(units: bigint): Promise<QuoteOption> {
+    const speed: Speed = "standard";
+    const [stellar, params] = await Promise.all([deps.stellarRoutes(), deps.feeParams()]);
+    if (!params) {
+      throw new ApiError(
+        "upstream_unavailable",
+        "The bridge contract's fee schedule could not be read just now. Try again shortly.",
+      );
+    }
+    if (!stellarSendsToSui(stellar)) {
+      throw new ApiError("route_unavailable", "The bridge contract does not send to Sui yet.");
+    }
+    const amount = units * STROOPS_PER_UNIT;
+    const minimum = params.minTransfer !== undefined ? ceilToUnits(params.minTransfer) : 1n;
+    const maximum = params.maxTransfer !== undefined ? floorToUnits(params.maxTransfer) : null;
+    if (params.minTransfer !== undefined && amount < params.minTransfer) {
+      return {
+        speed,
+        ok: false,
+        error: new ApiError(
+          "amount_below_minimum",
+          `The bridge contract takes at least ${formatUsdc(params.minTransfer)} USDC per transfer.`,
+          { minimum },
+        ),
+      };
+    }
+    if (params.maxTransfer !== undefined && amount > params.maxTransfer) {
+      return {
+        speed,
+        ok: false,
+        error: new ApiError(
+          "amount_above_maximum",
+          `The bridge contract takes at most ${formatUsdc(params.maxTransfer)} USDC per transfer.`,
+          { maximum },
+        ),
+      };
+    }
+    // The contract's split with Circle's share at zero.
+    const pct = (amount * params.feeBps) / 10_000n;
+    const fee = pct > params.minFee ? pct : params.minFee;
+    if (fee >= amount) {
+      return {
+        speed,
+        ok: false,
+        error: new ApiError(
+          "amount_below_minimum",
+          `Xebra's fee would take all of this transfer. Send more than ${formatUsdc(fee)} USDC.`,
+          { minimum },
+        ),
+      };
+    }
+    const after = amount - fee;
+    const burned = after - (after % STROOPS_PER_UNIT);
+    return {
+      speed,
+      ok: true,
+      priced: {
+        quote: quoteOf(
+          "stellar",
+          "sui",
+          speed,
+          units,
+          {
+            recipientGets: floorToUnits(burned),
+            fees: { xebra: ceilToUnits(fee), circle: 0n, delivery: 0n },
+            minimum,
+            maximum,
+          },
+          null,
+        ),
+        stellar: { amount, fee, deliveryFee: 0n, received: burned },
+        evm: null,
+      },
+    };
+  }
+
   /** Where Xebra's flat fee is paid from: null where a Xebra contract takes its own fee. */
   function feeFamily(from: SourceId): "evm" | "solana" | "sui" | "aptos" | null {
     if (from === "stellar") return null;
@@ -562,6 +673,7 @@ export function createService(deps: Deps, now: () => number = Date.now) {
   function isClaimOnly(to: DestId): boolean {
     return (
       to !== "stellar" &&
+      to !== "sui" &&
       to !== "solana" &&
       CLAIM_ONLY_DOMAINS.includes(EVM_CHAINS[to].cctpDomainId)
     );
@@ -569,6 +681,7 @@ export function createService(deps: Deps, now: () => number = Date.now) {
 
   function destinationDomain(to: DestId): number {
     if (to === "stellar") return STELLAR_CCTP_DOMAIN;
+    if (to === "sui") return SUI_CCTP_DOMAIN;
     if (to === "solana") return SOLANA_DOMAIN;
     return EVM_CHAINS[to].cctpDomainId;
   }
@@ -679,7 +792,7 @@ export function createService(deps: Deps, now: () => number = Date.now) {
     wrapper: { address: string; terms: WrapperTerms } | null,
     pricing: Pricing,
   ): QuoteOption {
-    const dest = routeDestination(to as Exclude<DestId, "stellar">);
+    const dest = routeDestination(to as Exclude<DestId, "stellar" | "sui">);
     const destination = feeDestination(dest, opensAccount);
     const flat = wrapper ? null : flatFee(from, to, units, pricing);
     const xebraFee = flat?.fee ?? 0n;
@@ -752,7 +865,7 @@ export function createService(deps: Deps, now: () => number = Date.now) {
         `Xebra's contract on ${chain.name} could not be read just now, so no price can be given. Try again shortly.`,
       );
     }
-    const dest = routeDestination(to as Exclude<DestId, "stellar">);
+    const dest = routeDestination(to as Exclude<DestId, "stellar" | "sui">);
     return { address, terms: termsFor(settings, dest.cctpDomainId) };
   }
 
@@ -851,12 +964,22 @@ export function createService(deps: Deps, now: () => number = Date.now) {
       // within a tenth of the amount, so about 0.10 at least with Xebra's 0.01.
       return unforwarded(q.from, q.to, q.amount, CLAIM_ONLY_MIN_BURN, null, pricing);
     }
+    if (q.to === "sui" && q.from !== "stellar") {
+      // An EVM chain into Sui (the only sources that list it): no Circle fee, Standard only, never
+      // through the wrapper (it always asks Circle to forward). Xebra's Sui relayer submits the
+      // mint from a 1 USDC burn; the recipient can always mint it at /claim.
+      return unforwarded(q.from, "sui", q.amount, RELAYED_MIN_UNITS, null, pricing);
+    }
     if (q.to === "stellar" && q.from !== "stellar") {
       // An EVM chain into Stellar: no Circle fee, Standard only; Xebra's relayer completes it from
       // a 1 USDC burn. Never through the wrapper, whose burn cannot name Stellar's forwarder.
       return relayedToStellar(q.from, q.amount, RELAYED_MIN_UNITS, null, pricing);
     }
 
+    if (q.from === "stellar" && q.to === "sui") {
+      // Circle is paid nothing (it does not deliver to Sui), so it is not asked.
+      return { health: null, options: [await stellarSuiOption(q.amount)] };
+    }
     const health = await circleFor(q.from, q.to, opensAccount);
     if (q.from === "stellar") {
       return { health, options: [await stellarOption(q.to, q.amount, health, opensAccount)] };
@@ -994,7 +1117,7 @@ export function createService(deps: Deps, now: () => number = Date.now) {
     }
     const circleState = String(answer.state ?? "unknown");
     if (circleState !== "complete" || typeof answer.refusal === "string") return null;
-    return {
+    const status: TransferStatus = {
       state: answer.delivered === true ? "delivered" : "needs_claim",
       chain,
       tx,
@@ -1006,6 +1129,72 @@ export function createService(deps: Deps, now: () => number = Date.now) {
           : `${deps.siteUrl}/claim?tx=${tx}&src=${EVM_CHAINS[chain].cctpDomainId}`,
       circleState,
     };
+    // As for Sui: a burn built through /v1 or the SDK is finished by the poll that sees it attested.
+    const relay = deps.stellarInboundRelay;
+    return status.state === "needs_claim" && relay
+      ? relayedStatus(status, () => relay(tx, EVM_CHAINS[chain].cctpDomainId))
+      : status;
+  }
+
+  /**
+   * An EVM burn into Sui, read from Circle's attestation, or null when it is not one. Attested and
+   * not yet minted, it is handed to Xebra's Sui relayer (which re-reads the mint, so a repeat poll
+   * never pays twice); without the relayer, or when it refuses, the recipient claims it at /claim.
+   */
+  async function evmSuiStatus(chain: EvmChainId, tx: string): Promise<TransferStatus | null> {
+    if (!evmSendsToSui(chain, deps.evmRoutes) || !deps.suiInboundStatus) return null;
+    if (!/^0x[0-9a-f]{64}$/.test(tx)) return null;
+    const domain = EVM_CHAINS[chain].cctpDomainId;
+    const answer = await deps.suiInboundStatus(tx, domain);
+    if (!answer) {
+      throw new ApiError(
+        "upstream_unavailable",
+        "Circle's status could not be read just now. That does not mean the transfer failed. Try again shortly.",
+      );
+    }
+    const circleState = String(answer.state ?? "unknown");
+    // Not attested yet, or not a burn to Sui: Circle's own record answers, as for any EVM burn.
+    if (circleState !== "complete" || typeof answer.refusal === "string") return null;
+    const status: TransferStatus = {
+      state: "needs_claim",
+      chain,
+      tx,
+      deliveryTx: null,
+      reason: null,
+      claimUrl: `${deps.siteUrl.replace(/\/+$/, "")}/claim?tx=${tx}&src=${domain}`,
+      circleState,
+    };
+    const relay = deps.suiInboundRelay;
+    if (!relay) return status;
+    const relayed = await relayedStatus(status, () => relay(tx, domain));
+    return relayed.state === "delivered" ? { ...relayed, claimUrl: null } : relayed;
+  }
+
+  /**
+   * A transfer waiting at `needs_claim`, after asking the relayer to finish it. The relayer's word
+   * moves it on (`delivered`, `submitted`, `scheduled`, `pending`); a refusal keeps `needs_claim`
+   * with the reason; anything else (off, failed, unreadable) leaves it as it was. Never throws: a
+   * status read must not become an error because the relayer is down.
+   */
+  async function relayedStatus(
+    status: TransferStatus,
+    run: () => Promise<Record<string, unknown> | null>,
+  ): Promise<TransferStatus> {
+    let answer: Record<string, unknown> | null = null;
+    try {
+      answer = await run();
+    } catch {
+      return status;
+    }
+    const word = typeof answer?.status === "string" ? answer.status : "";
+    const hash = typeof answer?.hash === "string" ? answer.hash : null;
+    if (word === "delivered") return { ...status, state: "delivered" };
+    if (word === "submitted") return { ...status, state: "delivering", deliveryTx: hash };
+    if (word === "scheduled" || word === "pending") return { ...status, state: "delivering" };
+    if (word === "refused" && typeof answer?.reason === "string") {
+      return { ...status, reason: answer.reason.slice(0, 200) };
+    }
+    return status;
   }
 
   async function transferStatus(r: { chain: SourceId; tx: string }): Promise<TransferStatus> {
@@ -1018,6 +1207,8 @@ export function createService(deps: Deps, now: () => number = Date.now) {
     if (r.chain !== "stellar" && r.chain !== "aptos" && isEvmChainId(r.chain)) {
       const stellar = await evmStellarStatus(r.chain, r.tx.trim().toLowerCase());
       if (stellar) return stellar;
+      const sui = await evmSuiStatus(r.chain, r.tx.trim().toLowerCase());
+      if (sui) return sui;
     }
     return circleStatus(r.chain, r.tx.trim().toLowerCase());
   }
@@ -1091,7 +1282,7 @@ export function createService(deps: Deps, now: () => number = Date.now) {
               ? "failed"
               : "pending";
     const claimable = state === "needs_claim" || state === "failed";
-    return {
+    const status: TransferStatus = {
       state,
       chain: r.chain,
       tx,
@@ -1103,6 +1294,19 @@ export function createService(deps: Deps, now: () => number = Date.now) {
         : null,
       circleState,
     };
+    // A Stellar burn to Sui, attested and waiting for its mint: Xebra's Sui relayer finishes it
+    // (it pays only for burns made through Xebra's wrapper), as the bridge page asks it to.
+    const relay = deps.stellarSuiRelay;
+    if (
+      r.chain === "stellar" &&
+      state === "needs_claim" &&
+      answer.destinationDomain === SUI_CCTP_DOMAIN &&
+      relay
+    ) {
+      const relayed = await relayedStatus(status, () => relay(tx));
+      return relayed.state === "delivered" ? { ...relayed, claimUrl: null } : relayed;
+    }
+    return status;
   }
 
   /**
@@ -1196,6 +1400,17 @@ export function createService(deps: Deps, now: () => number = Date.now) {
           "That Stellar account has no USDC trustline. Add one, then try again.",
         );
       }
+    } else if (r.to === "sui") {
+      // The burn mints to these 32 bytes as they are: an EVM address here would be a well-formed
+      // Sui address nobody holds the key to.
+      if (!SUI_ADDRESS.test(recipient) || /^0x0+$/.test(recipient)) {
+        throw new ApiError(
+          "invalid_recipient",
+          "The recipient must be a Sui address: 0x followed by 64 hex characters.",
+        );
+      }
+      // What the Stellar wrapper signs as `mint_recipient`; an EVM burn takes the hex itself.
+      mintRecipient = Uint8Array.from(Buffer.from(recipient.slice(2), "hex"));
     } else {
       const check = checkAddressOn(EVM_CHAINS[r.to], recipient);
       if (!check.ok || !check.bytes) {
@@ -1312,7 +1527,7 @@ export function createService(deps: Deps, now: () => number = Date.now) {
       // names the token account, and asks Circle to open it when the quote priced that.
       const plan = priced.evm;
       if (!plan) throw new Error("a Sui forwarded quote without its fee plan");
-      const dest = routeDestination(r.to as Exclude<DestId, "stellar">);
+      const dest = routeDestination(r.to as Exclude<DestId, "stellar" | "sui">);
       try {
         const step = await upstream("The Sui node", () =>
           b.suiForwardBurn({
@@ -1383,7 +1598,10 @@ export function createService(deps: Deps, now: () => number = Date.now) {
         const step = await buildStellarBridge(b.stellarRpc(), b.stellarWrapper, {
           user: sender,
           amount: figures.amount,
-          destinationDomain: stellarDestination(r.to as Exclude<DestId, "stellar">).domain,
+          destinationDomain:
+            r.to === "sui"
+              ? SUI_CCTP_DOMAIN
+              : stellarDestination(r.to as Exclude<DestId, "stellar" | "sui">).domain,
           mintRecipient,
           maxFee: figures.deliveryFee,
           // Pins the fee in this quote: if it rises before the transaction lands, the contract
@@ -1413,21 +1631,27 @@ export function createService(deps: Deps, now: () => number = Date.now) {
     // An EVM source: through Xebra's wrapper where the quote priced one, else straight to Circle.
     const source = EVM_CHAINS[r.from];
     const toStellar = r.to === "stellar";
+    const toSui = r.to === "sui";
     // Not delivered by Circle: no fee plan, no wrapper, a burn with nothing for Circle.
     const claimOnly = isClaimOnly(r.to);
-    const via = toStellar || claimOnly ? null : (priced.evmVia ?? null);
+    const via = toStellar || toSui || claimOnly ? null : (priced.evmVia ?? null);
     const plan = priced.evm;
-    if (!plan && !toStellar && !claimOnly) throw new Error("an EVM quote without its fee plan");
+    if (!plan && !toStellar && !toSui && !claimOnly) {
+      throw new Error("an EVM quote without its fee plan");
+    }
     const burnRecipient: BurnRecipient = toStellar
       ? // Mint recipient and caller both Circle's Stellar forwarder, the hook naming the account.
         stellarBurnRecipient(recipient)
-      : solana
-        ? {
-            kind: "solana",
-            tokenAccount: bytesToHex(solana.tokenAccount),
-            createAccountFor: opensAccount ? bytesToHex(solana.owner) : undefined,
-          }
-        : recipient;
+      : toSui
+        ? // The Sui address itself, no hook, any caller: the relayer or the recipient mints it.
+          { kind: "sui", address: recipient.toLowerCase() as `0x${string}` }
+        : solana
+          ? {
+              kind: "solana",
+              tokenAccount: bytesToHex(solana.tokenAccount),
+              createAccountFor: opensAccount ? bytesToHex(solana.owner) : undefined,
+            }
+          : recipient;
     const { balance, allowance } = await upstream(`The sender's USDC on ${source.name}`, () =>
       b.evmUsdc(source, sender, via ? via.address : source.tokenMessengerAddress),
     );
@@ -1446,7 +1670,9 @@ export function createService(deps: Deps, now: () => number = Date.now) {
       destination: {
         cctpDomainId: toStellar
           ? STELLAR_CCTP_DOMAIN
-          : routeDestination(r.to as Exclude<DestId, "stellar">).cctpDomainId,
+          : toSui
+            ? SUI_CCTP_DOMAIN
+            : routeDestination(r.to as Exclude<DestId, "stellar" | "sui">).cctpDomainId,
       },
       recipient: burnRecipient,
       // The burn; Xebra's flat fee, if any, leaves the wallet in its own step after it.
@@ -1471,17 +1697,23 @@ export function createService(deps: Deps, now: () => number = Date.now) {
               expiresAt: null,
               description: `Burn USDC on ${source.name}; Circle attests it, and the mint on Stellar is completed by Xebra's relayer or by POST /v1/claims.`,
             }
-          : claimOnly
+          : toSui
             ? {
                 ...step,
                 expiresAt: null,
-                description: `Burn USDC on ${source.name}; Circle attests it, and the recipient claims it on ${DEST_NAME(r.to)} (POST /v1/claims, or ${deps.siteUrl}/claim): Circle does not deliver there.`,
+                description: `Burn USDC on ${source.name}; Circle attests it, and the mint on Sui is submitted by Xebra's relayer, or by the recipient (POST /v1/claims, or ${deps.siteUrl}/claim): Circle does not deliver to Sui.`,
               }
-            : {
-                ...step,
-                expiresAt: priced.quote.expiresAt,
-                description: `${step.description} Signed after ${priced.quote.expiresAt}, build it again first: the fee may have moved.`,
-              },
+            : claimOnly
+              ? {
+                  ...step,
+                  expiresAt: null,
+                  description: `Burn USDC on ${source.name}; Circle attests it, and the recipient claims it on ${DEST_NAME(r.to)} (POST /v1/claims, or ${deps.siteUrl}/claim): Circle does not deliver there.`,
+                }
+              : {
+                  ...step,
+                  expiresAt: priced.quote.expiresAt,
+                  description: `${step.description} Signed after ${priced.quote.expiresAt}, build it again first: the fee may have moved.`,
+                },
     );
     if (flat) {
       steps.push(
@@ -1814,6 +2046,31 @@ export function createService(deps: Deps, now: () => number = Date.now) {
           },
         ],
       };
+    }
+
+    // A burn into Sui: Circle's four-call mint, signed by any Sui wallet that pays the gas. The USDC
+    // goes to the address the burn names, whoever signs.
+    if (destinationDomain === SUI_CCTP_DOMAIN) {
+      const suiMint = b.suiMint;
+      if (!suiMint) {
+        throw new ApiError("route_unavailable", "Claims into Sui are not configured here.");
+      }
+      if (!SUI_ADDRESS.test(payer)) {
+        throw new ApiError(
+          "invalid_request",
+          "payer must be the Sui address (0x + 64 hex) that pays the gas.",
+        );
+      }
+      const minted = await upstream("The Sui node", () =>
+        suiMint({ sender: payer.toLowerCase(), message, attestation }),
+      );
+      if (minted.state === "delivered") {
+        throw new ApiError("already_delivered", "This transfer has already been delivered.");
+      }
+      if (minted.state === "refused") {
+        throw new ApiError("transaction_rejected", `Sui would reject this mint: ${minted.reason}`);
+      }
+      return { steps: [minted.step] };
     }
 
     const evm = evmChainForDomain(destinationDomain);

@@ -122,7 +122,7 @@ export async function buildBurn(
  * (never the wallet) plus, when that account does not exist yet, the wallet Circle should open it
  * for. The same shape, and the same checks, as a burn from an EVM chain (`@xebra/cctp-evm`).
  */
-export type SuiForwardRecipient = Exclude<BurnRecipient, { kind: "stellar" }>;
+export type SuiForwardRecipient = Exclude<BurnRecipient, { kind: "stellar" } | { kind: "sui" }>;
 
 /**
  * The three burn arguments that depend on the destination, for a burn Circle's Forwarding Service
