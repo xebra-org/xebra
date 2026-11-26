@@ -36,6 +36,10 @@ description: What changed in the Xebra API and SDK, newest first.
 
 **SDK**, `@xebra/sdk`:
 
+- CommonJS code on Node 22.12 or later can `require("@xebra/sdk")` and its subpaths; before, only
+  `import` resolved them.
+- `createRebalancer({ oneClick: { jwt } })` (additive): a 1Click partner JWT works for the
+  withdrawal, as an API key does. It is sent as `Authorization: Bearer`.
 - `createRebalancer` asks for the rebalance price: its quotes and builds send
   `product: "rebalance"`, and with a market-maker API key on the Xebra client
   (`createXebraClient({ apiKey })`) a move costs Xebra 0.01% capped at 2 USDC, plus 0.01. `estimate` returns `feeRule`.
