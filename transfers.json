@@ -1,15 +1,15 @@
 {
   "about": "Every Xebra transfer found on chain: Stellar and Arc from Xebra's contract events; Solana, Sui and other EVM chains from payments into Xebra's fee address (in the burn's own transaction on Solana and Sui, tagged with Xebra's ERC-8021 code on EVM). Each row links to its transaction. Written by apps/web/scripts/transfers-record.mjs.",
-  "updatedAt": "2026-11-26T02:59:27.220Z",
+  "updatedAt": "2026-11-26T12:39:54.708Z",
   "totals": {
-    "transfers": 5,
-    "usdcSent": 11.880293,
-    "xebraFees": 0.086172,
+    "transfers": 6,
+    "usdcSent": 19.880293,
+    "xebraFees": 0.096172,
     "bySource": {
       "stellar": {
-        "transfers": 4,
-        "usdcSent": 9.080293,
-        "xebraFees": 0.04
+        "transfers": 5,
+        "usdcSent": 17.080293,
+        "xebraFees": 0.05
       },
       "arc": {
         "transfers": 1,
@@ -19,13 +19,29 @@
     }
   },
   "cursors": {
-    "arc": "33177527",
-    "stellar": "65675180"
+    "arc": "33247009",
+    "stellar": "65682146"
   },
   "coverage": {
     "stellar": "2026-11-19T02:59:03.000Z"
   },
   "transfers": [
+    {
+      "id": "stellar:0x54d9c7163ae6d1e5a1e74b887fcc9dff7244a1f2bfa5ec745f43b3eacaf16eaa",
+      "source": "stellar",
+      "proof": "contract",
+      "sourceTx": "0ac0ff7ec46c77f606be382c6ac11be6627dae73bfa2052a211e94e9f9eeb912",
+      "sourceTxUrl": "https://stellar.expert/explorer/public/tx/0ac0ff7ec46c77f606be382c6ac11be6627dae73bfa2052a211e94e9f9eeb912",
+      "at": "2026-11-26T09:58:41Z",
+      "sender": "GDD2WH6JZLRINPPRIU5U5TJ2IXGSR7ZINS5CSQMJ27JVACHYHXWR2LWB",
+      "domain": 8,
+      "mintRecipient": "0xc38bb6275219b5c559d1c098622c3b3c2f883772cf1ae7038e58ad661e86285e",
+      "recipientOwner": "0x0000000000000000000000000000000000000000000000000000000000000000",
+      "amount": 8,
+      "xebraFee": 0.01,
+      "circleFee": 0,
+      "to": "sui"
+    },
     {
       "id": "stellar:0xc961722c667d7be9345d5a1c405cd9bbb6299032618381617c1c699686679ece",
       "source": "stellar",
