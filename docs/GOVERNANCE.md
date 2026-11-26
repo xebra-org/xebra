@@ -34,9 +34,10 @@ Every admin action except pausing follows the same two-step, 48-hour pattern
 
 `cancel_pending` lets `ADMIN` or `PAUSER` withdraw every pending proposal before it commits.
 `tighten_params` and `tighten_domain` are the exceptions: they can only make limits *stricter*
-(lower `max_transfer`, higher `min_fee`, forwarding off, a lower forward-fee cap, etc.), never looser,
-so they skip the timelock — a safety ratchet, not a bypass. `remove_domain` is instant for the same
-reason.
+(a lower `max_transfer`, a higher `min_transfer`, a lower `fee_bps`, `min_fee` or `account_fee`, a lower
+forward-fee cap, forwarding off, etc.), never looser, so they skip the timelock — a safety ratchet,
+not a bypass. A lower fee counts as stricter because it can only cost the sender less, which is what
+the timelock protects. `remove_domain` is instant for the same reason.
 
 **Pausing is immediate and untimelocked, on purpose.** `pause(caller)` checks `caller` is either
 `ADMIN` or `PAUSER` and takes effect in the same transaction. Everything else that is not a

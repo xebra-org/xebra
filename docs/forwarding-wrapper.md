@@ -160,10 +160,10 @@ $1.13, live Iris quotes).
 - `tighten_domain(caller, domain, forward, max_forward_fee, account_creation,
   max_forward_fee_new_account)`: instant, admin **or pauser**, may only turn things off or lower a cap,
   never the reverse. Account creation rides on forwarding, so turning `forward` off turns it off too
-  and zeroes its cap: the kill switch is one call and cannot leave a half-configured domain. This is
-  the switch if Circle's service misbehaves or the hook format changes: forwarding
-  stops, and new transfers on that domain must be refused by the web app until it is turned back on
-  (they would burn with nobody to mint them).
+  and zeroes its cap, which cannot leave a half-configured domain. **It is not a kill switch:** with
+  `forward` off, `bridge` still accepts transfers to that domain and burns them on the plain path,
+  which nobody mints, so each recipient has to claim at `/claim`. To stop transfers to a domain,
+  use `remove_domain` (admin or pauser, instant) or `pause`.
 
 ## Failure modes
 
@@ -171,7 +171,7 @@ $1.13, live Iris quotes).
 |---|---|---|
 | `M` below Circle's requirement (quote moved) | Iris `FAILED / INSUFFICIENT_FEE`, no fee, unminted | owner claims at `/claim` |
 | Circle's forwarder is down or slow | burn attested, unminted | owner claims at `/claim` |
-| Circle changes the hook format | forwards fail like the above | `tighten_domain(forward=false)` stops new transfers; owners of affected ones claim |
+| Circle changes the hook format | forwards fail like the above | `remove_domain` (or `pause`) stops new transfers; owners of affected ones claim |
 | Owner and Circle both mint the same message | second reverts on `used_nonce`, costs ~1 cent | none needed |
 | User overpays `M` | recipient pays the difference | bounded by the caps above |
 

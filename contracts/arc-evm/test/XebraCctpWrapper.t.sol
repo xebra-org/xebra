@@ -8,6 +8,7 @@ import {ITokenMessengerV2, XebraCctpWrapper} from "../src/XebraCctpWrapper.sol";
 import {MockTokenMessengerV2, ReentrantTokenMessengerV2} from "./mocks/MockTokenMessengerV2.sol";
 import {MockUSDC} from "./mocks/MockUSDC.sol";
 import {ShortChangeUSDC} from "./mocks/ShortChangeUSDC.sol";
+import {ClawbackUSDC, SeizingTokenMessengerV2} from "./mocks/ClawbackUSDC.sol";
 
 contract XebraCctpWrapperTest is Test {
     uint32 internal constant ARC = 26;
@@ -606,6 +607,114 @@ contract XebraCctpWrapperTest is Test {
         wrapper.proposeDomain(baseCfg());
         vm.expectRevert(XebraCctpWrapper.NotAuthorized.selector);
         wrapper.proposeAdmin(pauser);
+        vm.stopPrank();
+    }
+
+    // ---------------------------------------------------------------------------------------------
+    // Edges the earlier tests left unexercised (audit prep, 2026-11-25)
+    // ---------------------------------------------------------------------------------------------
+
+    function test_computeSplitRefusesImpossibleInputs() public {
+        vm.expectRevert(XebraCctpWrapper.AmountNotPositive.selector);
+        wrapper.computeSplit(0, 10, 300_000, 100_000);
+        vm.expectRevert(XebraCctpWrapper.FeeBpsTooHigh.selector);
+        wrapper.computeSplit(1_000_000, 101, 300_000, 100_000);
+        vm.expectRevert(XebraCctpWrapper.MinFeeTooHigh.selector);
+        wrapper.computeSplit(10_000_000, 10, 5_000_001, 100_000);
+        vm.expectRevert(XebraCctpWrapper.ForwardFeeZero.selector);
+        wrapper.computeSplit(1_000_000, 10, 300_000, 0);
+        // The floor alone would take the whole amount.
+        vm.expectRevert(XebraCctpWrapper.MaxFeeExceedsNet.selector);
+        wrapper.computeSplit(1_000_000, 10, 1_000_000, 100_000);
+    }
+
+    function test_quoteRefusesWhatBridgeRefuses() public {
+        vm.expectRevert(XebraCctpWrapper.AmountBelowMin.selector);
+        wrapper.quote(999_999, BASE, 100_000, 2000, false);
+        vm.expectRevert(XebraCctpWrapper.AmountAboveMax.selector);
+        wrapper.quote(100_000_001, BASE, 100_000, 2000, false);
+        vm.expectRevert(XebraCctpWrapper.DomainNotAllowed.selector);
+        wrapper.quote(10_000_000, POLYGON, 100_000, 2000, false);
+        vm.expectRevert(XebraCctpWrapper.BadFinalityThreshold.selector);
+        wrapper.quote(10_000_000, BASE, 100_000, 1500, false);
+        vm.expectRevert(XebraCctpWrapper.RecipientOwnerUnexpected.selector);
+        wrapper.quote(10_000_000, BASE, 100_000, 2000, true);
+    }
+
+    function test_refusesZeroAddressesForEveryRole() public {
+        vm.startPrank(admin);
+        vm.expectRevert(XebraCctpWrapper.ZeroAddress.selector);
+        wrapper.proposeAdmin(address(0));
+        vm.expectRevert(XebraCctpWrapper.ZeroAddress.selector);
+        wrapper.proposePauser(address(0));
+        vm.expectRevert(XebraCctpWrapper.ZeroAddress.selector);
+        wrapper.proposeFeeRecipient(address(0));
+        vm.stopPrank();
+    }
+
+    function test_tightenAndRemoveNeedAListedDomain() public {
+        vm.startPrank(pauser);
+        vm.expectRevert(XebraCctpWrapper.DomainNotAllowed.selector);
+        wrapper.tightenDomain(POLYGON, 100_000, false, 0);
+        vm.expectRevert(XebraCctpWrapper.DomainNotAllowed.selector);
+        wrapper.removeDomain(POLYGON);
+        vm.stopPrank();
+    }
+
+    function test_refusesAnAccountCapAboveTheCeiling() public {
+        XebraCctpWrapper.DomainCfg memory cfg = solanaCfg();
+        cfg.maxForwardFeeNewAccount = wrapper.MAX_FORWARD_FEE_CEILING() + 1;
+        vm.prank(admin);
+        vm.expectRevert(XebraCctpWrapper.BadForwardConfig.selector);
+        wrapper.proposeDomain(cfg);
+    }
+
+    function test_proposedParamsMeetEveryCeiling() public {
+        XebraCctpWrapper.Params memory p = params();
+        vm.startPrank(admin);
+        p.minFee = wrapper.MAX_MIN_FEE_CEILING() + 1;
+        vm.expectRevert(XebraCctpWrapper.MinFeeTooHigh.selector);
+        wrapper.proposeParams(p);
+        p = params();
+        p.maxTransfer = wrapper.MAX_TRANSFER_CEILING() + 1;
+        vm.expectRevert(XebraCctpWrapper.MaxTransferTooHigh.selector);
+        wrapper.proposeParams(p);
+        p = params();
+        p.minTransfer = p.maxTransfer;
+        vm.expectRevert(XebraCctpWrapper.BadTransferRange.selector);
+        wrapper.proposeParams(p);
+        vm.stopPrank();
+    }
+
+    function test_pendingChangesAreReadable() public {
+        address next = makeAddr("next");
+        vm.startPrank(admin);
+        uint64 eta = wrapper.proposeAdmin(next);
+        wrapper.proposePauser(next);
+        wrapper.proposeFeeRecipient(next);
+        XebraCctpWrapper.DomainCfg memory cfg = baseCfg();
+        cfg.domain = POLYGON;
+        wrapper.proposeDomain(cfg);
+        vm.stopPrank();
+        assertEq(wrapper.pendingAdmin().addr, next);
+        assertEq(wrapper.pendingAdmin().eta, eta);
+        assertEq(wrapper.pendingPauser().addr, next);
+        assertEq(wrapper.pendingFeeRecipient().addr, next);
+        assertEq(wrapper.pendingDomain().cfg.domain, POLYGON);
+        assertEq(wrapper.pendingDomain().eta, eta);
+    }
+
+    /// Circle's FiatToken cannot seize, but if any token ever took USDC from the wrapper during a
+    /// burn, the wrapper must refuse rather than carry on owing more than it holds.
+    function test_failsClosedIfItsBalanceDropsBelowWhatItOwes() public {
+        ClawbackUSDC token = new ClawbackUSDC();
+        SeizingTokenMessengerV2 tm = new SeizingTokenMessengerV2(ARC);
+        XebraCctpWrapper w = deploy(IERC20(address(token)), ITokenMessengerV2(address(tm)));
+        token.mint(user, 100_000_000);
+        vm.startPrank(user);
+        token.approve(address(w), type(uint256).max);
+        vm.expectRevert(XebraCctpWrapper.InvariantViolated.selector);
+        w.bridge(req(10_000_000, BASE, evmRecipient, 100_000));
         vm.stopPrank();
     }
 
