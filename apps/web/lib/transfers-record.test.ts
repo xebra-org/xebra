@@ -23,6 +23,7 @@ describe("the transfers record", () => {
         row({
           id: "base:0x1",
           source: "base",
+          to: null,
           proof: "fee-payment",
           tagged: true,
           amount: null,
@@ -32,7 +33,13 @@ describe("the transfers record", () => {
       ],
     });
     expect(r?.transfers.map((t) => t.id)).toEqual(["base:0x1", "stellar:0xab"]);
-    expect(r?.totals).toEqual({ transfers: 2, usdcSent: 1000, xebraFees: 0.058 });
+    expect(r?.totals).toEqual({
+      transfers: 2,
+      usdcSent: 1000,
+      xebraFees: 0.058,
+      chains: 2,
+      routes: 1,
+    });
     expect(r?.transfers[0]?.tagged).toBe(true);
     expect(r?.coverage).toEqual({});
   });
@@ -59,6 +66,56 @@ describe("the transfers record", () => {
       ],
     });
     expect(r?.transfers.map((t) => t.id)).toEqual(["ok"]);
+  });
+
+  it("keeps relayed and listed rows with their mint link, and counts chains and routes", () => {
+    const r = parseRecord({
+      updatedAt: "2026-11-26T17:00:00Z",
+      transfers: [
+        row(),
+        row({
+          id: "sui:8ErR",
+          source: "sui",
+          to: "stellar",
+          proof: "relayed",
+          sourceTx: "8ErR",
+          sourceTxUrl: "https://suiscan.xyz/mainnet/tx/8ErR",
+          deliveryTx: "9d76",
+          deliveryTxUrl: "https://stellar.expert/explorer/public/tx/9d76",
+          amount: 30,
+          xebraFee: null,
+        }),
+        row({
+          id: "sui:F7qi",
+          source: "sui",
+          to: "monad",
+          proof: "listed",
+          sourceTx: "F7qi",
+          sourceTxUrl: "https://suiscan.xyz/mainnet/tx/F7qi",
+          deliveryTx: "0xc0",
+          deliveryTxUrl: "javascript:alert(1)",
+          amount: 5,
+          xebraFee: null,
+        }),
+      ],
+    });
+    expect(r?.transfers.map((t) => t.proof).sort()).toEqual(["contract", "listed", "relayed"]);
+    expect(r?.transfers.find((t) => t.id === "sui:8ErR")?.deliveryTxUrl).toBe(
+      "https://stellar.expert/explorer/public/tx/9d76",
+    );
+    // An unsafe mint link is dropped; the row stays.
+    expect(r?.transfers.find((t) => t.id === "sui:F7qi")?.deliveryTx).toBeUndefined();
+    // stellar, base, sui, monad; stellar>base, sui>stellar, sui>monad.
+    expect(r?.totals).toMatchObject({ transfers: 3, usdcSent: 1035, chains: 4, routes: 3 });
+  });
+
+  it("compares each contract's own count with the contract rows it shows", () => {
+    const r = parseRecord({
+      updatedAt: "2026-11-26T17:00:00Z",
+      contracts: { stellar: { counted: 21, listed: 99 }, arc: { counted: "x" } },
+      transfers: [row()],
+    });
+    expect(r?.contracts).toEqual({ stellar: { counted: 21, listed: 1 } });
   });
 
   it("refuses a file that is not a record", () => {

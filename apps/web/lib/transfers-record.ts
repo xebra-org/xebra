@@ -8,8 +8,12 @@ export const TRANSFERS_RECORD_URL =
   process.env.TRANSFERS_RECORD_URL ??
   "https://raw.githubusercontent.com/xebra-org/xebra/proof-data/transfers.json";
 
-/** How a row proves Xebra made it. */
-export type Proof = "contract" | "fee-in-burn" | "fee-payment";
+/**
+ * How a row proves Xebra made it: Xebra's contract recorded it, Xebra's fee was paid in the burn
+ * itself or beside it, Xebra's relayer signed the mint, or (`listed`) an early transfer from before
+ * any of those existed, checked against Circle's record with its burn and mint linked.
+ */
+export type Proof = "contract" | "fee-in-burn" | "fee-payment" | "relayed" | "listed";
 
 export interface RecordedTransfer {
   id: string;
@@ -22,17 +26,32 @@ export interface RecordedTransfer {
   tagged?: boolean;
   sourceTx: string;
   sourceTxUrl: string;
+  /** The mint on the destination chain, when the record has it. */
+  deliveryTx?: string;
+  deliveryTxUrl?: string;
   at: string;
   /** USDC sent, when the chain says it (EVM fee payments do not). */
   amount: number | null;
   xebraFee: number | null;
 }
 
+export interface Totals {
+  transfers: number;
+  usdcSent: number;
+  xebraFees: number;
+  /** Chains a listed transfer left or reached. */
+  chains: number;
+  /** Distinct from-to pairs among transfers whose destination is known. */
+  routes: number;
+}
+
 export interface TransfersRecord {
   updatedAt: string;
-  /** Sources whose record starts later than their first transfer, with the date it starts. */
+  /** Sources whose record starts later than their first transfer, with the date it starts (older files). */
   coverage: Record<string, string>;
-  totals: { transfers: number; usdcSent: number; xebraFees: number };
+  /** Per chain, how many transfers Xebra's contracts counted and how many of them are listed. */
+  contracts: Record<string, { counted: number; listed: number }>;
+  totals: Totals;
   transfers: RecordedTransfer[];
 }
 
@@ -40,7 +59,7 @@ export type RecordResult =
   | { ok: true; record: TransfersRecord }
   | { ok: false; reason: "unavailable" | "malformed" };
 
-const PROOFS: readonly Proof[] = ["contract", "fee-in-burn", "fee-payment"];
+const PROOFS: readonly Proof[] = ["contract", "fee-in-burn", "fee-payment", "relayed", "listed"];
 const num = (v: unknown): number | null => (typeof v === "number" && Number.isFinite(v) ? v : null);
 const str = (v: unknown): string | null => (typeof v === "string" && v !== "" ? v : null);
 
@@ -64,6 +83,8 @@ export function parseRecord(raw: unknown): TransfersRecord | null {
     const proof = PROOFS.find((p) => p === t.proof);
     if (!id || !source || !sourceTx || !sourceTxUrl || !at || !proof) continue;
     if (!sourceTxUrl.startsWith("https://") || Number.isNaN(Date.parse(at))) continue;
+    const deliveryTx = str(t.deliveryTx);
+    const deliveryTxUrl = str(t.deliveryTxUrl);
     transfers.push({
       id,
       source,
@@ -72,6 +93,8 @@ export function parseRecord(raw: unknown): TransfersRecord | null {
       ...(typeof t.tagged === "boolean" ? { tagged: t.tagged } : {}),
       sourceTx,
       sourceTxUrl,
+      // A mint link is shown only when it is a real https link.
+      ...(deliveryTx && deliveryTxUrl?.startsWith("https://") ? { deliveryTx, deliveryTxUrl } : {}),
       at,
       amount: num(t.amount),
       xebraFee: num(t.xebraFee),
@@ -86,13 +109,29 @@ export function parseRecord(raw: unknown): TransfersRecord | null {
       if (typeof v === "string" && !Number.isNaN(Date.parse(v))) coverage[k] = v;
     }
   }
+  const contracts: TransfersRecord["contracts"] = {};
+  if (r.contracts && typeof r.contracts === "object") {
+    for (const [k, v] of Object.entries(r.contracts as Record<string, unknown>)) {
+      const c = v as Record<string, unknown> | null;
+      const counted = num(c?.counted);
+      if (counted === null) continue;
+      // Listed is counted again from the rows shown, not taken from the file.
+      const listed = transfers.filter((t) => t.proof === "contract" && t.source === k).length;
+      contracts[k] = { counted, listed };
+    }
+  }
+  const chains = new Set(transfers.flatMap((t) => [t.source, t.to]).filter(Boolean));
+  const routes = new Set(transfers.filter((t) => t.to).map((t) => `${t.source}>${t.to}`));
   return {
     updatedAt: r.updatedAt,
     coverage,
+    contracts,
     totals: {
       transfers: transfers.length,
       usdcSent: sum((t) => t.amount),
       xebraFees: sum((t) => t.xebraFee),
+      chains: chains.size,
+      routes: routes.size,
     },
     transfers,
   };

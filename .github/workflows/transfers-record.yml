@@ -1,17 +1,31 @@
 name: transfers record
 
 # Keeps the public record of Xebra's transfers (`transfers.json` on the `proof-data` branch) up to
-# date from the chains, hourly. Read-only on every chain, no keys: the only write is the commit to
+# date from the chains. Read-only on every chain, no keys: the only write is the commit to
 # `proof-data`, which sits outside the main/dev rulesets. Stellar's public RPC keeps about seven
 # days of events, so a missed day is fine; a missed week leaves a gap the file records.
 #
+# GitHub runs scheduled workflows late or not at all when it is busy, most often near the top of
+# the hour, so this asks three times an hour at odd minutes: one run an hour is still likely to
+# start. Runs never overlap (concurrency below), and each reads only what is new.
+#
 # Fee addresses are public repository variables (Settings → Secrets and variables → Actions →
-# Variables): XEBRA_FEE_ADDRESS_EVM, XEBRA_FEE_ADDRESS_SOLANA, XEBRA_FEE_ADDRESS_SUI — the same
-# values as the site's NEXT_PUBLIC_XEBRA_FEE_ADDRESS_*. A family without one is skipped.
+# Variables): XEBRA_FEE_ADDRESS_EVM, _SOLANA, _SUI, _APTOS — the same values as the site's
+# NEXT_PUBLIC_XEBRA_FEE_ADDRESS_*. Without one, the script reads the address the live site uses and
+# puts a warning on the run's page.
 
 on:
   schedule:
-    - cron: "17 * * * *"
+    - cron: "7,27,47 * * * *"
+  # A release to main can change what is read: refresh the record right away.
+  push:
+    branches: [main]
+    paths:
+      - apps/web/scripts/transfers-record.mjs
+      - apps/web/scripts/transfers-backfill.mjs
+      - apps/web/scripts/lib/**
+      - apps/web/scripts/data/transfers-backfill.json
+      - .github/workflows/transfers-record.yml
   workflow_dispatch:
 
 permissions:
@@ -69,16 +83,20 @@ jobs:
           NEXT_PUBLIC_XEBRA_FEE_ADDRESS_EVM: ${{ vars.XEBRA_FEE_ADDRESS_EVM }}
           NEXT_PUBLIC_XEBRA_FEE_ADDRESS_SOLANA: ${{ vars.XEBRA_FEE_ADDRESS_SOLANA }}
           NEXT_PUBLIC_XEBRA_FEE_ADDRESS_SUI: ${{ vars.XEBRA_FEE_ADDRESS_SUI }}
+          NEXT_PUBLIC_XEBRA_FEE_ADDRESS_APTOS: ${{ vars.XEBRA_FEE_ADDRESS_APTOS }}
         run: node scripts/transfers-record.mjs --out ../../record/transfers.json
 
       - name: Commit the record
         working-directory: record
         run: |
-          git add transfers.json
-          if git diff --cached --quiet; then
+          # A run that found nothing changes only `updatedAt`: not worth a commit.
+          if git cat-file -e HEAD:transfers.json 2>/dev/null &&
+             diff -q <(git show HEAD:transfers.json | jq -S 'del(.updatedAt)') \
+                     <(jq -S 'del(.updatedAt)' transfers.json) >/dev/null; then
             echo "nothing new"
             exit 0
           fi
+          git add transfers.json
           git -c user.name="xebra-record" \
               -c user.email="41898282+github-actions[bot]@users.noreply.github.com" \
               commit -m "Record of Xebra transfers, $(date -u +%Y-%m-%dT%H:%MZ)"
