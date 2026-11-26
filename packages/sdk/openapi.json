@@ -160,6 +160,13 @@
               "maxLength": 128
             },
             "description": "Optional. For Solana, pass it: a wallet with no USDC account yet costs more to deliver to, and the quote includes that."
+          },
+          {
+            "in": "query",
+            "name": "product",
+            "schema": {
+              "$ref": "#/components/schemas/Product"
+            }
           }
         ],
         "responses": {
@@ -612,6 +619,14 @@
         ],
         "description": "Standard waits for finality; Fast is attested sooner for Circle's fee."
       },
+      "Product": {
+        "type": "string",
+        "enum": [
+          "transfer",
+          "rebalance"
+        ],
+        "description": "What the transfer is for. `rebalance` is a market maker moving its own USDC between chains: with an API key Xebra has set up for market-maker rebalances it is priced at 0.01% capped at 2 USDC a move, plus 0.01. Otherwise it is priced as a transfer."
+      },
       "TransferRequest": {
         "type": "object",
         "properties": {
@@ -642,6 +657,9 @@
           "maxTotalFee": {
             "description": "Refuse if fees have risen above this, typically the total you showed.",
             "$ref": "#/components/schemas/AmountOut"
+          },
+          "product": {
+            "$ref": "#/components/schemas/Product"
           }
         },
         "required": [
@@ -888,6 +906,14 @@
             "type": "string",
             "format": "date-time",
             "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+          },
+          "feeRule": {
+            "description": "The fee rule that priced Xebra's fee (default, rebalance-capped), or null where a Xebra contract prices it on-chain.",
+            "example": "default",
+            "type": [
+              "string",
+              "null"
+            ]
           }
         },
         "required": [

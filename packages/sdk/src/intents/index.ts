@@ -176,6 +176,11 @@ export interface DepositRequest {
   amount: string;
   /** Refuse to build if Xebra's and Circle's fees together exceed this decimal USDC amount. */
   maxTotalFee?: string;
+  /**
+   * What the transfer is for. `createRebalancer` sends "rebalance", priced by the capped rule when
+   * the Xebra client carries an API key. Default: an ordinary transfer.
+   */
+  product?: "transfer" | "rebalance";
 }
 
 export function createIntentsRouter(opts: IntentsRouterOptions) {
@@ -248,6 +253,7 @@ export function createIntentsRouter(opts: IntentsRouterOptions) {
       sender: r.sender,
       recipient: r.depositAddress,
       ...(r.maxTotalFee !== undefined ? { maxTotalFee: r.maxTotalFee } : {}),
+      ...(r.product ? { product: r.product } : {}),
     });
   }
 

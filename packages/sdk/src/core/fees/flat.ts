@@ -9,7 +9,13 @@
  *
  * The Arc and Stellar contracts take their own fee and are not priced here.
  * All amounts are 6-decimal USDC units.
+ *
+ * These figures are the fee table's default rule (`FEE_TABLE` in `table.ts`); `flatFeeFor` prices
+ * an ordinary transfer through it. A market maker's rebalance, with its API key, is priced by its
+ * own rule: call `priceFee` with the request's context instead.
  */
+
+import { amountForBurnUnder, feeRuleFor, priceFee } from "./table.js";
 
 /** The fixed part of Xebra's fee, 0.01 USDC, by kind. */
 export const XEBRA_FLAT_FEE = {
@@ -39,8 +45,7 @@ export function flatFeeKind(destinationDomain: number): FlatFeeKind {
  * fixed part alone.
  */
 export function flatFeeFor(destinationDomain: number, amount = 0n): bigint {
-  const pct = amount > 0n ? (amount * XEBRA_FEE_BPS) / 10_000n : 0n;
-  return XEBRA_FLAT_FEE[flatFeeKind(destinationDomain)] + pct;
+  return priceFee(amount, { to: destinationDomain }).fee;
 }
 
 /**
@@ -48,10 +53,5 @@ export function flatFeeFor(destinationDomain: number, amount = 0n): bigint {
  * is taken out of it. For minimums: `burn + 0.01` alone falls short by the 0.01% part.
  */
 export function amountForBurn(destinationDomain: number, burn: bigint): bigint {
-  const fixed = XEBRA_FLAT_FEE[flatFeeKind(destinationDomain)];
-  let amount = ((burn + fixed) * 10_000n) / (10_000n - XEBRA_FEE_BPS);
-  while (amount - flatFeeFor(destinationDomain, amount) < burn) amount += 1n;
-  while (amount > 0n && amount - 1n - flatFeeFor(destinationDomain, amount - 1n) >= burn)
-    amount -= 1n;
-  return amount;
+  return amountForBurnUnder(feeRuleFor({ to: destinationDomain }), burn);
 }

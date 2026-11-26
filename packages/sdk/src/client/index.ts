@@ -381,7 +381,7 @@ export function createXebraClient(opts: XebraClientOptions = {}) {
     quote: async (q: QuoteRequest, o?: XebraCallOptions): Promise<Quote> => {
       checkInput(QuoteRequestSchema, q);
       return call(
-        `/v1/quote?${query({ from: q.from, to: q.to, amount: q.amount, speed: q.speed, recipient: q.recipient })}`,
+        `/v1/quote?${query({ from: q.from, to: q.to, amount: q.amount, speed: q.speed, recipient: q.recipient, product: q.product })}`,
         QuoteSchema,
         passed(o),
       );
