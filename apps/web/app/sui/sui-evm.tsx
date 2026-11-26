@@ -30,6 +30,7 @@ import {
   routeDestination,
 } from "../../lib/route-destination";
 import { type RecipientResolution, resolveRecipient } from "../../lib/solana-recipient";
+import { findBurnAfterFailure, lastSuiBurn, sendFailureMessage } from "../../lib/sui-send-check";
 import { signAndExecuteSui } from "../../lib/wallets/sui";
 
 /**
@@ -122,6 +123,16 @@ export function SuiDestinationPicker({
   );
 }
 
+/** Shown above a transfer the wallet called failed but that Sui shows was sent. */
+export function RecoveredNotice({ className }: { className?: string }) {
+  return (
+    <Notice tone="info" title="Your transfer went through" {...(className ? { className } : {})}>
+      Your wallet reported an error, but the burn is on Sui. Do not send it again: it is on its way
+      below.
+    </Notice>
+  );
+}
+
 function parseAmount(input: string): bigint | null {
   const m = /^(\d{1,12})(?:\.(\d{1,6}))?$/.exec(input.trim());
   if (!m) return null;
@@ -159,8 +170,10 @@ export function SuiForwarded({
     key: string;
     value: CircleHealth | null;
   } | null>(null);
-  const [step, setStep] = useState<"idle" | "preparing" | "signing">("idle");
+  const [step, setStep] = useState<"idle" | "preparing" | "signing" | "checking">("idle");
   const [error, setError] = useState<string | null>(null);
+  // The wallet reported an error, but the burn was on Sui anyway.
+  const [recovered, setRecovered] = useState(false);
   const [digest, setDigest] = useState<string | null>(null);
   const [sentAt, setSentAt] = useState(0);
   const [delivery, setDelivery] = useState<DeliveryView | null>(null);
@@ -292,7 +305,12 @@ export function SuiForwarded({
   async function send() {
     if (!signer || !plan?.ok) return;
     setError(null);
+    setRecovered(false);
     setStep("preparing");
+    const sender = signer.account.address;
+    // The newest burn before this one, read alongside the build, to recognise this one after an error.
+    const before = lastSuiBurn(sender);
+    let signing = false;
     try {
       const res = await fetch("/api/sui-evm/build", {
         method: "POST",
@@ -315,21 +333,41 @@ export function SuiForwarded({
         }
         return;
       }
+      await before;
       setStep("signing");
+      signing = true;
       const tx = await signAndExecuteSui(signer.wallet, signer.account, body.transaction);
-      const at = Date.now();
-      remember({ digest: tx, chain: chain.id, at });
-      setSentAt(at);
-      setDelivery(null);
-      setDigest(tx);
+      follow(tx);
     } catch (err) {
-      setError(reportError("sui burn to evm failed", err));
+      const text = reportError("sui burn to evm failed", err);
+      if (!signing) {
+        setError(text);
+        return;
+      }
+      // Nothing is said until Sui has been checked: the wallet may have sent it before failing.
+      setStep("checking");
+      const check = await findBurnAfterFailure(sender, await before);
+      if (check.kind === "found" && check.burn.destinationDomain === chain.cctpDomainId) {
+        setRecovered(true);
+        follow(check.burn.digest);
+        return;
+      }
+      setError(sendFailureMessage(text, check.kind === "none" ? "none" : "unknown"));
     } finally {
       setStep("idle");
     }
   }
 
+  function follow(tx: string) {
+    const at = Date.now();
+    remember({ digest: tx, chain: chain.id, at });
+    setSentAt(at);
+    setDelivery(null);
+    setDigest(tx);
+  }
+
   function startOver() {
+    setRecovered(false);
     remember(null);
     setDigest(null);
     setDelivery(null);
@@ -347,6 +385,7 @@ export function SuiForwarded({
       : delivery;
     return (
       <div className="flex flex-col gap-5">
+        {recovered && <RecoveredNotice />}
         <SubmittedNotice
           txHash={digest}
           delivery={shown}
@@ -386,7 +425,9 @@ export function SuiForwarded({
       ? "Preparing"
       : step === "signing"
         ? "Confirm in your wallet"
-        : "Burn on Sui";
+        : step === "checking"
+          ? "Checking Sui"
+          : "Burn on Sui";
 
   return (
     <div className="flex flex-col gap-6">
