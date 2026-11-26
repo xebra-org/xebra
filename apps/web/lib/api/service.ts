@@ -1137,24 +1137,22 @@ export function createService(deps: Deps, now: () => number = Date.now) {
   }
 
   /**
-   * An EVM burn into Sui, read from Circle's attestation, or null when it is not one. Attested and
-   * not yet minted, it is handed to Xebra's Sui relayer (which re-reads the mint, so a repeat poll
-   * never pays twice); without the relayer, or when it refuses, the recipient claims it at /claim.
+   * An EVM burn into Sui, read from Circle's attestation (`/api/attestation`, which names the
+   * message's destination), or null when it is not one. Attested and not yet minted, it is handed to
+   * Xebra's Sui relayer (which re-reads the mint, so a repeat poll never pays twice); without the
+   * relayer, or when it refuses, the recipient claims it at /claim.
    */
   async function evmSuiStatus(chain: EvmChainId, tx: string): Promise<TransferStatus | null> {
-    if (!evmSendsToSui(chain, deps.evmRoutes) || !deps.suiInboundStatus) return null;
+    const attestation = deps.build?.attestation;
+    if (!evmSendsToSui(chain, deps.evmRoutes) || !attestation) return null;
     if (!/^0x[0-9a-f]{64}$/.test(tx)) return null;
     const domain = EVM_CHAINS[chain].cctpDomainId;
-    const answer = await deps.suiInboundStatus(tx, domain);
-    if (!answer) {
-      throw new ApiError(
-        "upstream_unavailable",
-        "Circle's status could not be read just now. That does not mean the transfer failed. Try again shortly.",
-      );
+    // Unreadable, not attested yet, or not a burn to Sui: Circle's own record answers, as for any
+    // EVM burn (and says so when Circle cannot be read).
+    const answer = await attestation(tx, domain).catch(() => null);
+    if (answer?.status !== "complete" || Number(answer.destinationDomain) !== SUI_CCTP_DOMAIN) {
+      return null;
     }
-    const circleState = String(answer.state ?? "unknown");
-    // Not attested yet, or not a burn to Sui: Circle's own record answers, as for any EVM burn.
-    if (circleState !== "complete" || typeof answer.refusal === "string") return null;
     const status: TransferStatus = {
       state: "needs_claim",
       chain,
@@ -1162,9 +1160,9 @@ export function createService(deps: Deps, now: () => number = Date.now) {
       deliveryTx: null,
       reason: null,
       claimUrl: `${deps.siteUrl.replace(/\/+$/, "")}/claim?tx=${tx}&src=${domain}`,
-      circleState,
+      circleState: "complete",
     };
-    const relay = deps.suiInboundRelay;
+    const relay = deps.suiMintRelay;
     if (!relay) return status;
     const relayed = await relayedStatus(status, () => relay(tx, domain));
     return relayed.state === "delivered" ? { ...relayed, claimUrl: null } : relayed;
@@ -1296,14 +1294,14 @@ export function createService(deps: Deps, now: () => number = Date.now) {
     };
     // A Stellar burn to Sui, attested and waiting for its mint: Xebra's Sui relayer finishes it
     // (it pays only for burns made through Xebra's wrapper), as the bridge page asks it to.
-    const relay = deps.stellarSuiRelay;
+    const relay = deps.suiMintRelay;
     if (
       r.chain === "stellar" &&
       state === "needs_claim" &&
       answer.destinationDomain === SUI_CCTP_DOMAIN &&
       relay
     ) {
-      const relayed = await relayedStatus(status, () => relay(tx));
+      const relayed = await relayedStatus(status, () => relay(tx, STELLAR_CCTP_DOMAIN));
       return relayed.state === "delivered" ? { ...relayed, claimUrl: null } : relayed;
     }
     return status;

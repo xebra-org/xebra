@@ -115,8 +115,9 @@ const suiRelay = createRelayKick({
 });
 
 /**
- * The same, for burns from an EVM chain into Stellar (`/api/stellar-inbound/complete`) and into
- * Sui (`/api/sui-inbound/complete`). Keyed `src:tx`, so one burn is relayed once per cooldown.
+ * The same, for burns from an EVM chain into Stellar (`/api/stellar-inbound/complete`) and for
+ * burns into Sui from Stellar or an EVM chain (`/api/stellar-sui/complete`). Keyed `src:tx`, so one
+ * burn is relayed once per cooldown.
  */
 function inboundRelay(path: string, load: () => Promise<(req: Request) => Promise<Response>>) {
   const kick = createRelayKick({
@@ -144,27 +145,11 @@ const stellarInboundRelay = inboundRelay(
   "/api/stellar-inbound/complete",
   async () => (await import("../../app/api/stellar-inbound/complete/route")).POST,
 );
-const suiInboundRelay = inboundRelay(
-  "/api/sui-inbound/complete",
-  async () => (await import("../../app/api/sui-inbound/complete/route")).POST,
+// Burns into Sui, from Stellar (src 27) or an EVM chain: the one Sui relayer.
+const suiMintRelay = inboundRelay(
+  "/api/stellar-sui/complete",
+  async () => (await import("../../app/api/stellar-sui/complete/route")).POST,
 );
-
-/** Stellar to Sui burns seen through `/v1`, relayed by `/api/stellar-sui/complete`. */
-const stellarSuiRelay = createRelayKick({
-  async run(tx) {
-    const { POST: stellarSuiComplete } = await import("../../app/api/stellar-sui/complete/route");
-    return readJsonAnyStatus(
-      await stellarSuiComplete(
-        new Request(`${ORIGIN}/api/stellar-sui/complete`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ tx }),
-        }),
-      ),
-    );
-  },
-  schedule: after,
-});
 
 export const liveDeps: Deps = {
   siteUrl: SITE_URL,
@@ -199,18 +184,7 @@ export const liveDeps: Deps = {
   },
   stellarInboundRelay,
   stellarToSui: env.stellarToSui,
-  stellarSuiRelay,
-  async suiInboundStatus(tx, srcDomain) {
-    const { GET: suiInboundStatus } = await import("../../app/api/sui-inbound/status/route");
-    return readJsonAnyStatus(
-      await suiInboundStatus(
-        new Request(
-          `${ORIGIN}/api/sui-inbound/status?tx=${encodeURIComponent(tx)}&src=${srcDomain}`,
-        ),
-      ),
-    );
-  },
-  suiInboundRelay,
+  suiMintRelay,
   aptos: { destinations: aptosDestinations(), maxUnits: aptosMaxUsdcBase() },
   evmRoutes: env.evmRoutes,
   feeAddresses: env.feeAddresses,

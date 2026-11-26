@@ -128,7 +128,7 @@ export function EvmStellarPanel({
       asking.current = true;
       try {
         const res = await fetch(
-          sui ? "/api/sui-inbound/complete" : "/api/stellar-inbound/complete",
+          sui ? "/api/stellar-sui/complete" : "/api/stellar-inbound/complete",
           {
             method: "POST",
             headers: { "content-type": "application/json" },

@@ -246,47 +246,62 @@ describe("Arc to Sui", () => {
     expect(evmUsdc).not.toHaveBeenCalled();
   });
 
+  // Circle's record of an Arc burn, as `/api/attestation` answers it.
+  const attested = (destinationDomain: number) => async () => ({
+    status: "complete",
+    message: "0x01",
+    attestation: "0x02",
+    destinationDomain,
+    sourceDomainId: 26,
+  });
+
   it("is waiting while Circle has not attested, from Circle's own record", async () => {
-    const suiInboundRelay = vi.fn();
+    const suiMintRelay = vi.fn();
     const delivery = vi.fn(async () => ({ status: "known", state: "pending" }));
     const s = svc(
       {},
-      {},
-      { suiInboundStatus: async () => ({ state: "pending" }), suiInboundRelay, delivery },
+      { attestation: async () => ({ status: "pending" }) },
+      { suiMintRelay, delivery },
     );
     expect((await s.transferStatus({ chain: "arc", tx: TX })).state).toBe("pending");
-    expect(suiInboundRelay).not.toHaveBeenCalled();
+    expect(suiMintRelay).not.toHaveBeenCalled();
   });
 
-  it("hands an attested burn to the Sui relayer, and reads delivered without a claim link", async () => {
-    const suiInboundRelay = vi.fn(async () => ({ status: "delivered" }));
+  it("falls back to Circle's record when the attestation cannot be read", async () => {
+    const suiMintRelay = vi.fn();
     const s = svc(
       { evmToStellar: [] },
-      {},
-      { suiInboundStatus: async () => ({ state: "complete" }), suiInboundRelay },
+      {
+        attestation: async () => {
+          throw new Error("Iris down");
+        },
+      },
+      { suiMintRelay, delivery: async () => null },
     );
+    expect((await refusal(s.transferStatus({ chain: "arc", tx: TX }))).code).toBe(
+      "upstream_unavailable",
+    );
+    expect(suiMintRelay).not.toHaveBeenCalled();
+  });
+
+  it("hands an attested burn to the existing Sui relayer, and reads delivered without a claim link", async () => {
+    const suiMintRelay = vi.fn(async () => ({ status: "delivered" }));
+    const s = svc({ evmToStellar: [] }, { attestation: attested(8) }, { suiMintRelay });
     const status = await s.transferStatus({ chain: "arc", tx: TX });
-    expect(suiInboundRelay).toHaveBeenCalledWith(TX, 26);
+    expect(suiMintRelay).toHaveBeenCalledWith(TX, 26);
     expect(status).toMatchObject({ state: "delivered", claimUrl: null });
   });
 
   it("leaves it to the recipient at /claim when the relayer is off or refuses", async () => {
-    const off = svc(
-      { evmToStellar: [] },
-      {},
-      { suiInboundStatus: async () => ({ state: "complete" }) },
-    );
+    const off = svc({ evmToStellar: [] }, { attestation: attested(8) });
     const s1 = await off.transferStatus({ chain: "arc", tx: TX });
     expect(s1).toMatchObject({ state: "needs_claim" });
     expect(s1.claimUrl).toBe(`https://xebra.exchange/claim?tx=${TX}&src=26`);
 
     const refused = svc(
       { evmToStellar: [] },
-      {},
-      {
-        suiInboundStatus: async () => ({ state: "complete" }),
-        suiInboundRelay: async () => ({ status: "refused", reason: "too small" }),
-      },
+      { attestation: attested(8) },
+      { suiMintRelay: async () => ({ status: "refused", reason: "too small" }) },
     );
     expect(await refused.transferStatus({ chain: "arc", tx: TX })).toMatchObject({
       state: "needs_claim",
@@ -295,11 +310,12 @@ describe("Arc to Sui", () => {
   });
 
   it("answers an Arc burn elsewhere from Circle's record, not as a Sui transfer", async () => {
+    const suiMintRelay = vi.fn();
     const s = svc(
       { evmToStellar: [] },
-      {},
+      { attestation: attested(6) },
       {
-        suiInboundStatus: async () => ({ state: "complete", refusal: "not Sui" }),
+        suiMintRelay,
         delivery: async () => ({ status: "known", state: "delivered", forwardTxHash: "0xf" }),
       },
     );
@@ -307,6 +323,7 @@ describe("Arc to Sui", () => {
       state: "delivered",
       deliveryTx: "0xf",
     });
+    expect(suiMintRelay).not.toHaveBeenCalled();
   });
 
   it("builds the Sui mint for a Sui payer at POST /v1/claims, and refuses other payers", async () => {
@@ -437,40 +454,40 @@ describe("Stellar to Sui", () => {
       state: "claimable",
       destinationDomain: 8,
     });
-    const stellarSuiRelay = vi.fn(
-      async (_tx: string): Promise<Record<string, unknown> | null> => ({
+    const suiMintRelay = vi.fn(
+      async (_tx: string, _src: number): Promise<Record<string, unknown> | null> => ({
         status: "submitted",
         hash: "SuiDigest",
       }),
     );
-    const s = svc({}, {}, { ...withSui(), delivery, stellarSuiRelay });
+    const s = svc({}, {}, { ...withSui(), delivery, suiMintRelay });
     expect(await s.transferStatus({ chain: "stellar", tx: STELLAR_TX })).toMatchObject({
       state: "delivering",
       deliveryTx: "SuiDigest",
     });
-    expect(stellarSuiRelay).toHaveBeenCalledWith(STELLAR_TX);
+    expect(suiMintRelay).toHaveBeenCalledWith(STELLAR_TX, 27);
 
-    stellarSuiRelay.mockResolvedValueOnce({ status: "refused", reason: "not sent through Xebra" });
+    suiMintRelay.mockResolvedValueOnce({ status: "refused", reason: "not sent through Xebra" });
     const refused = await s.transferStatus({ chain: "stellar", tx: STELLAR_TX });
     expect(refused).toMatchObject({ state: "needs_claim", reason: "not sent through Xebra" });
     expect(refused.claimUrl).toContain(`/claim?tx=${STELLAR_TX}`);
   });
 
   it("does not ask the Sui relayer about a Stellar burn bound elsewhere", async () => {
-    const stellarSuiRelay = vi.fn();
+    const suiMintRelay = vi.fn();
     const s = svc(
       {},
       {},
       {
         ...withSui(),
-        stellarSuiRelay,
+        suiMintRelay,
         delivery: async () => ({ status: "known", state: "claimable", destinationDomain: 6 }),
       },
     );
     expect((await s.transferStatus({ chain: "stellar", tx: STELLAR_TX })).state).toBe(
       "needs_claim",
     );
-    expect(stellarSuiRelay).not.toHaveBeenCalled();
+    expect(suiMintRelay).not.toHaveBeenCalled();
   });
 
   it("claims a Stellar burn to Sui with a Sui payer at POST /v1/claims", async () => {

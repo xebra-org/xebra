@@ -31,10 +31,11 @@ branch:
   refuses Sui.
 - `NEXT_PUBLIC_EVM_TO_SUI` (same shape as `NEXT_PUBLIC_EVM_TO_STELLAR`), off unless set.
 - API: `sui` as a destination (quote, build, status, `POST /v1/claims` with a Sui payer).
-- Relayer: `/api/sui-inbound/complete` and `/status`, paying the Sui gas from the same key as the
-  Stellar to Sui relayer (`SUI_RELAYER_SECRET`). It pays only for burns from chains named in
-  `NEXT_PUBLIC_EVM_TO_SUI`, of at least 1 USDC, open to any caller. Off (404) with no key or no
-  chain named.
+- Relayer: no new one. The existing Stellar to Sui relayer (`lib/stellar-sui/relayer.ts`,
+  `POST /api/stellar-sui/complete`, key `SUI_RELAYER_SECRET`) now also takes
+  `{"src": 26, "tx": "0x…"}`: an EVM burn into Sui from a chain named in `NEXT_PUBLIC_EVM_TO_SUI`,
+  of at least 1 USDC, with a zero `destinationCaller`. `{"tx": <Stellar hash>}` (or `src` 27) works
+  exactly as before, wrapper burns only. An EVM `src` not named is a 400; no key is a 404.
 - The Arc page: Sui and Stellar in the destination picker when switched on, each through the
   relayed panel; Sui falls back to a `/claim` link when the relayer is off or refuses.
 
@@ -89,7 +90,8 @@ anyway, which is exactly what the proof should show. `GET <preview>/v1/routes` m
 
 1. Same page, Sui as destination, the Sui address (0x + 64 hex).
 2. Same three signatures, burn to domain 8.
-3. Watch: the page polls `/api/sui-inbound/complete`. Expect "Delivered on Sui" and the Sui digest;
+3. Watch: the page polls `/api/stellar-sui/complete` with `src` 26. Expect "Delivered on Sui" and
+   the Sui digest;
    check suiscan.xyz for the recipient's USDC.
 4. If it says the relayer is not running, check `SUI_RELAYER_SECRET` is set on that deployment, and
    finish the transfer at `/claim?tx=<burn>&src=26` with any Sui wallet instead: the USDC is safe.
@@ -106,9 +108,9 @@ Set the same two variables on Production in Vercel and redeploy. Record the four
 (two burns, Stellar mint, Sui mint) in `evidence/`.
 
 To switch off: clear the variable and redeploy. `/claim` needs no flag, so every transfer already
-made can still be finished there. One difference: with `NEXT_PUBLIC_EVM_TO_SUI` cleared,
-`/api/sui-inbound/complete` is off too, so an Arc to Sui transfer still in flight is then minted by
-its owner at `/claim` rather than by the relayer.
+made can still be finished there. One difference: with `NEXT_PUBLIC_EVM_TO_SUI` cleared, the Sui
+relayer stops taking Arc burns (Stellar ones are unaffected), so an Arc to Sui transfer still in
+flight is then minted by its owner at `/claim` rather than by the relayer.
 
 ## Why Stellar sends to only seven chains
 

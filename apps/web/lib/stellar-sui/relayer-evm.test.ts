@@ -1,7 +1,7 @@
 import { Ed25519Keypair } from "@mysten/sui/keypairs/ed25519";
 import { AlreadyMintedError, SuiCctpPausedError, readSuiBoundMessage } from "@xebra/sdk/build";
 import { describe, expect, it, vi } from "vitest";
-import { type InboundRelayDeps, inboundProblem, relayEvmToSui } from "./relayer";
+import { type EvmRelayDeps, evmBurnProblem, relayEvmToSui } from "./relayer";
 
 /**
  * The real CCTP V2 message bound for Sui that the Stellar to Sui relayer is tested with (Sui
@@ -25,8 +25,8 @@ const parsed = (hex: string) => readSuiBoundMessage(Buffer.from(hex.slice(2), "h
 
 function deps(
   message = MESSAGE,
-  over: Partial<InboundRelayDeps> = {},
-): InboundRelayDeps & { execute: ReturnType<typeof vi.fn> } {
+  over: Partial<EvmRelayDeps> = {},
+): EvmRelayDeps & { execute: ReturnType<typeof vi.fn> } {
   const execute = vi.fn(async () => ({ digest: "SuiDigest222", ok: true }));
   return {
     key: new Ed25519Keypair(),
@@ -36,21 +36,21 @@ function deps(
     buildSuiMint: async () => ({ transaction: "{}", message: parsed(message) }),
     execute,
     ...over,
-  } as InboundRelayDeps & { execute: ReturnType<typeof vi.fn> };
+  } as EvmRelayDeps & { execute: ReturnType<typeof vi.fn> };
 }
 
-describe("inboundProblem", () => {
+describe("evmBurnProblem", () => {
   it("pays for an open burn to Sui of at least 1 USDC from the chain asked about", () => {
-    expect(inboundProblem(parsed(MESSAGE), ARC)).toBeNull();
+    expect(evmBurnProblem(parsed(MESSAGE), ARC)).toBeNull();
   });
 
   it("refuses a message from another chain than the one asked about", () => {
-    expect(inboundProblem(parsed(MESSAGE), 6)).toMatch(/different chain/);
+    expect(evmBurnProblem(parsed(MESSAGE), 6)).toMatch(/different chain/);
   });
 
   it("refuses a burn that names a caller (only that wallet can mint it)", () => {
     const named = variant((m) => m.fill(0x11, 108, 140));
-    expect(inboundProblem(parsed(named), ARC)).toMatch(/only wallet that may mint/);
+    expect(evmBurnProblem(parsed(named), ARC)).toMatch(/only wallet that may mint/);
   });
 
   it("refuses dust below the floor", () => {
@@ -59,7 +59,7 @@ describe("inboundProblem", () => {
       m.writeUInt32BE(999_999, 148 + 96);
     });
     expect(parsed(dust).amount).toBe(999_999n);
-    expect(inboundProblem(parsed(dust), ARC)).toMatch(/at least 1 USDC/);
+    expect(evmBurnProblem(parsed(dust), ARC)).toMatch(/at least 1 USDC/);
   });
 });
 

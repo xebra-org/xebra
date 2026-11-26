@@ -94,20 +94,12 @@ export interface Deps {
    */
   stellarToSui?: boolean;
   /**
-   * Hand an attested Stellar burn to Sui to Xebra's Sui relayer (`/api/stellar-sui/complete`),
-   * which pays the gas for wrapper burns only. Absent: nothing relays from a status read.
+   * Hand an attested burn into Sui to Xebra's Sui relayer (`/api/stellar-sui/complete`), from
+   * Stellar (`srcDomain` 27: wrapper burns only) or from an EVM chain named in
+   * `NEXT_PUBLIC_EVM_TO_SUI`. The relayer's word, or `scheduled` while a run this call started is
+   * going. Absent: nothing relays from a status read.
    */
-  stellarSuiRelay?(tx: string): Promise<Record<string, unknown> | null>;
-  /**
-   * A burn into Sui from an EVM chain, as `/api/sui-inbound/status` answers it: `pending`,
-   * `unknown`, or `complete` (with `refusal` when it is not a burn to Sui). Null if unreadable.
-   */
-  suiInboundStatus?(tx: string, srcDomain: number): Promise<Record<string, unknown> | null>;
-  /**
-   * Hand an attested EVM burn into Sui to Xebra's Sui relayer (`/api/sui-inbound/complete`). The
-   * relayer's word, or `scheduled` while a run this call started is going. Absent: nothing relays.
-   */
-  suiInboundRelay?(tx: string, srcDomain: number): Promise<Record<string, unknown> | null>;
+  suiMintRelay?(tx: string, srcDomain: number): Promise<Record<string, unknown> | null>;
   /** An Aptos burn to Stellar's progress, as `/api/aptos/status` answers it. Null if unreadable. */
   aptosStatus?(tx: string): Promise<Record<string, unknown> | null>;
   /** What building a transaction reads. Absent where nothing is built (the MCP tools). */

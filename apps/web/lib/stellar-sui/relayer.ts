@@ -9,6 +9,7 @@ import {
   buildSuiMint,
   readSuiBoundMessage,
 } from "@xebra/sdk/build";
+import { EVM_CHAINS } from "@xebra/sdk/core";
 import { env } from "../env";
 import { stellarDomainId } from "../server/iris";
 import { readAttestation } from "../sui-stellar/attestation";
@@ -35,6 +36,12 @@ import type { CompleteResult } from "../sui-stellar/stellar-side";
  * Self-claim keeps working whatever happens here: the wrapper always burns with a zero
  * `destination_caller`, so the recipient can still finish it at `/claim` if the relayer is off,
  * empty or refuses.
+ *
+ * The same relayer, key and route also finish transfers into Sui from an EVM chain (Arc first;
+ * `relayEvmToSui`). Those burn straight to Circle with no hook and a zero caller, so there is no
+ * wrapper event to check; instead it pays only for burns from a chain named in
+ * `NEXT_PUBLIC_EVM_TO_SUI`, of at least 1 USDC (the floor the Stellar relayer uses for EVM burns).
+ * Xebra's flat fee there is its own EVM transaction and is not checked before paying.
  */
 
 /** Sui's CCTP domain. */
@@ -292,4 +299,82 @@ export async function submitSuiMint(
   }
   console.error(`${label} relay mint failed`, sent.digest, sent.error);
   return { status: "failed", hash: sent.digest, reason: "The Sui mint did not go through." };
+}
+
+/** The smallest EVM burn into Sui the relayer pays the gas for, 6 decimals. */
+export const EVM_TO_SUI_MIN_UNITS = 1_000_000n;
+
+/** The CCTP domains of the EVM chains whose burns into Sui this relayer pays for. */
+export function evmSuiSources(): readonly number[] {
+  return (env.evmRoutes.evmToSui ?? []).map((id) => EVM_CHAINS[id].cctpDomainId);
+}
+
+/**
+ * Why we will not pay for an EVM burn into Sui, or null when we will. Pure: it must come from the
+ * chain asked about, be open to any caller, and carry at least the floor.
+ */
+export function evmBurnProblem(
+  message: SuiBoundMessage,
+  src: number,
+  minUnits: bigint = EVM_TO_SUI_MIN_UNITS,
+): string | null {
+  if (message.sourceDomain !== src) {
+    return "Circle's message was burned on a different chain than the one asked about.";
+  }
+  if (message.destinationCaller !== null) {
+    return `This transfer names ${message.destinationCaller} as the only wallet that may mint it, so Xebra cannot.`;
+  }
+  if (message.amount < minUnits) {
+    return `Xebra pays the Sui fee for transfers of at least ${Number(minUnits) / 1e6} USDC. Smaller ones can be claimed with any Sui wallet at /claim.`;
+  }
+  return null;
+}
+
+export interface EvmRelayDeps extends Omit<RelayDeps, "wrapperBurnIn"> {
+  /** The source domains paid for. Default `evmSuiSources()`. */
+  sources?: readonly number[];
+}
+
+/**
+ * Finishes one EVM to Sui transfer (Arc first) with the same key and checks as a Stellar one, less
+ * the wrapper event. Every refusal happens before any gas is spent.
+ */
+export async function relayEvmToSui(
+  tx: string,
+  src: number,
+  deps: EvmRelayDeps,
+): Promise<CompleteResult> {
+  const sources = deps.sources ?? evmSuiSources();
+  if (!sources.includes(src)) {
+    return {
+      status: "refused",
+      reason: "Xebra does not relay transfers into Sui from that chain here.",
+    };
+  }
+  const key = `${src}:${tx.toLowerCase()}`;
+  if (inFlight.has(key)) return { status: "pending", reason: "already being completed" };
+  inFlight.add(key);
+  try {
+    const att = await (deps.readAttestation ?? readAttestation)(tx, src);
+    if (att.state !== "complete") {
+      return att.state === "pending"
+        ? { status: "pending" }
+        : { status: "unknown", reason: att.reason };
+    }
+    let message: SuiBoundMessage;
+    try {
+      message = readSuiBoundMessage(Buffer.from(att.message.replace(/^0x/, ""), "hex"));
+    } catch (err) {
+      return {
+        status: "refused",
+        reason: err instanceof Error ? err.message : "not a transfer to Sui",
+      };
+    }
+    const problem = evmBurnProblem(message, src);
+    if (problem) return { status: "refused", reason: problem };
+
+    return await submitSuiMint(att, deps, "evm-sui");
+  } finally {
+    inFlight.delete(key);
+  }
 }
