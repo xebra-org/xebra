@@ -69,6 +69,7 @@ That is Xebra's part of `fees.cctp`; Circle's delivery fee and NEAR Intents' wit
 |---|---|---|
 | `xebra` | `Pick<XebraClient, "routes" \| "quote" \| "createTransfer">` | A client from `createXebraClient()`. Its `routes()` decides whether the route is offered; its API key earns the rebalance price. |
 | `oneClick.apiKey` | `string` | Your 1Click partner key. Needed to withdraw, and only sent to 1Click. |
+| `oneClick.jwt` | `string` | A 1Click partner JWT, sent as `Authorization: Bearer`. Works for the withdrawal in place of `apiKey`. |
 | `oneClick.baseUrl` | `string` | Where 1Click answers. Default `https://1click.chaindefuser.com`. |
 | `oneClick.referral` | `string` | The distribution-channel tag in NEAR Intents' records. Default `"xebra"`. |
 | `fetch` | `typeof fetch` | A fetch to use instead of the global one, for tests or a custom agent. |
@@ -285,7 +286,7 @@ exists, so a fix costs nothing but another call.
 
 `startWithdrawal` and `submitWithdrawal` also refuse to run without a key:
 
-`OneClickError: Withdrawing from NEAR Intents needs a 1Click partner API key (oneClick.apiKey).`,
+`OneClickError: Withdrawing from NEAR Intents needs a 1Click partner API key (oneClick.apiKey or oneClick.jwt).`,
 with `status` `0`. Nothing is signed; the withdrawal cannot go ahead without the partner key that
 `generate-intent` and `submit-intent` require. `estimate` and `prepareDeposit` do not need it.
 

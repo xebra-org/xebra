@@ -17,7 +17,7 @@
  * never holds anything. If the deposit address expires before Circle's mint lands, 1Click refunds
  * to `toWallet`, the market maker's own address on `to`.
  *
- * The withdrawal is the one step that needs a 1Click partner API key (`generate-intent` and
+ * The withdrawal is the one step that needs a 1Click partner API key or JWT (`generate-intent` and
  * `submit-intent` are partner endpoints). Market makers onboarded through partners.near-intents.org
  * have one; it is passed in and only ever sent to 1Click.
  *
@@ -48,6 +48,11 @@ export type IntentSigningStandard =
 export interface OneClickOptions {
   /** Partner API key from partners.near-intents.org. Needed to withdraw; quotes work without. */
   apiKey?: string;
+  /**
+   * A 1Click partner JWT, the older form of the same credential, sent as `Authorization: Bearer`.
+   * Either this or `apiKey` lets the market maker withdraw; with both, both are sent.
+   */
+  jwt?: string;
   baseUrl?: string;
   /** Distribution-channel tag shown in NEAR Intents' records. Default "xebra". */
   referral?: string;
@@ -316,13 +321,14 @@ export function createRebalancer(opts: RebalancerOptions) {
   const base = (opts.oneClick?.baseUrl ?? ONECLICK_BASE_URL).replace(/\/+$/, "");
   const referral = opts.oneClick?.referral ?? "xebra";
   const apiKey = opts.oneClick?.apiKey;
+  const jwt = opts.oneClick?.jwt;
   const router = createIntentsRouter({ client: opts.xebra });
   let tokenCache: { at: number; list: IntentsToken[] } | null = null;
 
   function requireKey(): void {
-    if (!apiKey) {
+    if (!apiKey && !jwt) {
       throw new OneClickError(
-        "Withdrawing from NEAR Intents needs a 1Click partner API key (oneClick.apiKey).",
+        "Withdrawing from NEAR Intents needs a 1Click partner API key (oneClick.apiKey or oneClick.jwt).",
         0,
         { code: "missing_api_key" },
       );
@@ -345,6 +351,7 @@ export function createRebalancer(opts: RebalancerOptions) {
           Accept: "application/json",
           ...(body !== undefined ? { "Content-Type": "application/json" } : {}),
           ...(apiKey ? { "X-API-Key": apiKey } : {}),
+          ...(jwt ? { Authorization: `Bearer ${jwt}` } : {}),
         },
         ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
         signal: AbortSignal.timeout(timeoutMs),
