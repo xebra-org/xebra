@@ -29,7 +29,6 @@ const {
   TransactionBuilder,
   nativeToScVal,
   rpc,
-  scValToNative,
   xdr,
 } = require("@stellar/stellar-sdk");
 
@@ -49,7 +48,17 @@ const dest = args.find((a) => a === "arc" || a === "solana") ?? "arc";
 const amountUsdc = Number(args.find((a) => /^\d+(\.\d+)?$/.test(a) && a !== args[0]) ?? 1);
 const SEND = args.includes("--send");
 const SAME = args.includes("--same");
-const DOMAINS = { ethereum: 0, avalanche: 1, optimism: 2, arbitrum: 3, solana: 5, base: 6, polygon: 7, unichain: 10, arc: 26 };
+const DOMAINS = {
+  ethereum: 0,
+  avalanche: 1,
+  optimism: 2,
+  arbitrum: 3,
+  solana: 5,
+  base: 6,
+  polygon: 7,
+  unichain: 10,
+  arc: 26,
+};
 const MIX = (args.find((a) => a.startsWith("mix:")) ?? "").slice(4).split(",").filter(Boolean);
 const DOMAIN = DOMAINS[dest];
 // Per transfer: [domain, chain name]. A mix ignores <count> and sends one per listed chain.
@@ -63,7 +72,10 @@ const user = kp.publicKey();
 
 function ownEvm() {
   const own = JSON.parse(readFileSync(join(ROOT, ".secrets/arc-testnet-recipient.json"), "utf8"));
-  return Buffer.concat([Buffer.alloc(12), Buffer.from((Array.isArray(own) ? own[0] : own).address.slice(2), "hex")]);
+  return Buffer.concat([
+    Buffer.alloc(12),
+    Buffer.from((Array.isArray(own) ? own[0] : own).address.slice(2), "hex"),
+  ]);
 }
 
 function recipientBytes(i, chain) {
@@ -76,7 +88,7 @@ function recipientBytes(i, chain) {
     // throwaway addresses (testnet USDC only).
     const own = JSON.parse(readFileSync(join(ROOT, ".secrets/arc-testnet-recipient.json"), "utf8"));
     const ownAddr = (Array.isArray(own) ? own[0] : own).address.slice(2);
-    const hex = SAME || i === 0 ? ownAddr : (i.toString(16).padStart(2, "0").repeat(20));
+    const hex = SAME || i === 0 ? ownAddr : i.toString(16).padStart(2, "0").repeat(20);
     return Buffer.concat([Buffer.alloc(12), Buffer.from(hex, "hex")]);
   }
   // Solana devnet: the faucet-claimant token account proven to accept forwarded mints.
@@ -155,11 +167,7 @@ for (let i = 0; i < plan.length; i++) {
 const account = await server.getAccount(user);
 const tx = new TransactionBuilder(account, { fee: "1000000", networkPassphrase: PASSPHRASE })
   .addOperation(
-    new Contract(env.ROUTER).call(
-      "batch",
-      new Address(user).toScVal(),
-      xdr.ScVal.scvVec(reqs),
-    ),
+    new Contract(env.ROUTER).call("batch", new Address(user).toScVal(), xdr.ScVal.scvVec(reqs)),
   )
   .setTimeout(300)
   .build();
@@ -167,7 +175,9 @@ const tx = new TransactionBuilder(account, { fee: "1000000", networkPassphrase: 
 const sim = await server.simulateTransaction(tx);
 const tag = `n=${plan.length} dest=${MIX.length ? MIX.join("+") : dest} amount=${amountUsdc} ${SAME ? "same" : "distinct"} maxFee=${maxFee}`;
 if (rpc.Api.isSimulationError(sim)) {
-  const m = sim.error.match(/(contract events size bytes: \d+ > \d+|Error\([A-Za-z]+, #?[A-Za-z0-9]+\)|exceeded[^"\n]*)/);
+  const m = sim.error.match(
+    /(contract events size bytes: \d+ > \d+|Error\([A-Za-z]+, #?[A-Za-z0-9]+\)|exceeded[^"\n]*)/,
+  );
   console.log(`${tag}  FAIL  ${m ? m[0] : sim.error.slice(0, 300)}`);
   process.exit(SEND ? 1 : 0);
 }
