@@ -107,6 +107,7 @@ jobs:
           workspaces: |
             contracts/stellar-cctp-wrapper -> target
             contracts/stellar-cctp-wrapper-v2 -> target
+            contracts/stellar-batch-router -> target
 
       # v1 is the retired wrapper; v2 below inherits its suite. These tests cover the fee
       # arithmetic, the parameter ceilings a compromised admin cannot exceed, and the no-hang
@@ -115,6 +116,9 @@ jobs:
       # v2 is the forwarding wrapper (docs/forwarding-wrapper.md), live on mainnet. It inherits v1's
       # suite and adds the tests that bound the one new risk: Circle charges the whole `max_fee`.
       - run: cargo test --manifest-path contracts/stellar-cctp-wrapper-v2/Cargo.toml
+      # Batch router: many transfers through the v2 wrapper in one signature, all or nothing. Runs
+      # against the wrapper WASM fetched from mainnet (contracts/stellar-batch-router/wasm/).
+      - run: cargo test --manifest-path contracts/stellar-batch-router/Cargo.toml
       - run: cargo test --manifest-path contracts/stellar-soroban/Cargo.toml
 
   evm:
