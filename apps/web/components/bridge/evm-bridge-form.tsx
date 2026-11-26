@@ -865,7 +865,9 @@ export function EvmBridgeForm({
           destinationName={dest.name}
         />
 
-        {short && balance !== null && amount !== null && (
+        {/* After a send the balance re-reads lower (the burn spent it) while the amount stays, so
+            the shortfall must not show under the receipt. */}
+        {!txHash && short && balance !== null && amount !== null && (
           <Notice tone="alarm" title="Not enough USDC" className="mt-5">
             This wallet holds <span className="tabular">{formatUsdc6(balance)}</span> USDC on{" "}
             {source.name}

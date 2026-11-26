@@ -1275,7 +1275,9 @@ export function StellarBridgeForm({
           claimOnly={dest.claimOnly}
         />
 
-        {shortfall !== null && (
+        {/* After a send the balance re-reads lower (the burn spent it) while the quote stays, so
+            the shortfall must not show under the receipt. */}
+        {!txHash && shortfall !== null && (
           <Notice tone="alarm" title="Not enough USDC" className="mt-5">
             This wallet holds <span className="tabular">{formatUsdc(balance ?? 0n)}</span> USDC, and
             this transfer needs <span className="tabular">{formatUsdc(quote?.amount ?? 0n)}</span>{" "}
