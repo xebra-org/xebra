@@ -37,6 +37,7 @@ import { formatError, reportError } from "../../lib/format-error";
 import { unitsToInput } from "../../lib/max-amount";
 import { type RecipientResolution, resolveRecipient } from "../../lib/solana-recipient";
 import { relayToSui, suiRelayAvailable } from "../../lib/stellar-sui-relay";
+import { recallStellarTransfer, rememberStellarTransfer } from "../../lib/stellar-transfer";
 import {
   type ErrorContext,
   type UserError,
@@ -405,6 +406,12 @@ export function StellarBridgeForm({
   const stopWith = (text: string, opts?: { title?: string; steps?: string[] }) =>
     setSubmitError(messageError(text, opts));
   const [burnReceipt, setBurnReceipt] = useState<StellarBurnReceiptState | null>(null);
+  // False when the browser would not save the transfer: the receipt then asks the person to keep
+  // the hash themselves, because a refresh would lose it.
+  const [saved, setSaved] = useState(true);
+  // Set when a saved transfer comes back on screen, so Horizon is asked at once instead of after
+  // the usual pause.
+  const recheckNow = useRef(false);
   const txHash =
     // An unconfirmed burn may have landed, so it keeps the form locked like a pending one.
     burnReceipt &&
@@ -463,6 +470,25 @@ export function StellarBridgeForm({
     if (target) setDestId(target);
     if (prefill.recipient && (!prefill.to || target)) setDestination(prefill.recipient);
   }, [prefill, domains, destinations]);
+
+  // A transfer this browser was following comes back on screen after a refresh or a closed tab. It
+  // re-enters as "waiting for Stellar", so the same Horizon check that follows a fresh burn decides
+  // what it is now, and a confirmed burn goes on to Circle's delivery tracking from there. A saved
+  // transfer wins over a link's prefill: the money already moving matters more than a new form.
+  useEffect(() => {
+    const r = recallStellarTransfer();
+    if (!r) return;
+    prefillApplied.current = true;
+    setSentTo(r.to);
+    // A relayed Sui transfer is only finished while the page keeps asking the relayer.
+    setSentRelayed(r.relayed === true);
+    setDestId(r.to);
+    setDestination(r.recipient);
+    recheckNow.current = true;
+    setBurnReceipt(
+      mapStellarBurnResult("timeout", r.tx, env.stellarNetworkPassphrase, r.deadlineMs),
+    );
+  }, []);
 
   // Always present. With no wrapper configured, `wrapperContractId` is null and nothing can be
   // sent: there is no direct path around the wrapper (see `lib/cctp-bridge.ts`).
@@ -730,16 +756,19 @@ export function StellarBridgeForm({
       if (cancelled) return;
       if (next.kind !== "waiting-stellar") {
         setBurnReceipt(next);
+        if (next.kind === "failed" || next.kind === "not-sent") rememberStellarTransfer(null);
         if (next.kind === "burned") {
-          const target = stellarDestination(sentTo);
-          book.remember(target.evm ? "evm" : "solana", destination);
+          // A Sui address is never saved to the address book (its family has no list).
+          const family = addressFamily(sentTo);
+          if (family !== "sui") book.remember(family, destination);
         }
         return;
       }
       timer = setTimeout(recheck, 5_000);
     };
 
-    timer = setTimeout(recheck, 5_000);
+    timer = setTimeout(recheck, recheckNow.current ? 0 : 5_000);
+    recheckNow.current = false;
     return () => {
       cancelled = true;
       clearTimeout(timer);
@@ -783,6 +812,10 @@ export function StellarBridgeForm({
         }
         setDelivery(result);
       }
+
+      // Delivered is the end: nothing left to come back for. Failed and claimable stay saved, since
+      // those still need the owner to finish them at `/claim`.
+      if (result.status === "known" && result.state === "delivered") rememberStellarTransfer(null);
 
       const settled =
         result.status === "known" &&
@@ -947,7 +980,8 @@ export function StellarBridgeForm({
     if (!kit || !address || !quote || !mintRecipient) return;
     setSubmitting(true);
     setSentTo(destId);
-    setSentRelayed(dest.claimOnly && suiRelayOffered && paySuiGas);
+    const relayed = dest.claimOnly && suiRelayOffered && paySuiGas;
+    setSentRelayed(relayed);
     setSubmitError(null);
     setBurnReceipt(null);
     setPollError(null);
@@ -1063,6 +1097,18 @@ export function StellarBridgeForm({
         // contract rejects rather than charging more than was displayed.
         maxWrapperFee: quote.fee,
       });
+      // Saved before Stellar confirms it: a burn that lands while this tab waits, or after it is
+      // closed, must still be on screen when the person comes back.
+      setSaved(
+        rememberStellarTransfer({
+          tx: hash,
+          to: destId,
+          recipient: destination.trim(),
+          at: Date.now(),
+          ...(maxTimeMs === undefined ? {} : { deadlineMs: maxTimeMs }),
+          ...(relayed ? { relayed: true } : {}),
+        }),
+      );
       // Soroban `PENDING` only guarantees queueing. Wait for Horizon ledger confirmation before
       // handing the hash to Circle so an on-chain `FAILED` tx never sits at "Waiting for Circle".
       setStep("Waiting for Stellar to confirm");
@@ -1082,6 +1128,10 @@ export function StellarBridgeForm({
         maxTimeMs,
       );
       setBurnReceipt(nextReceipt);
+      // Stellar refused it or it never went out: no USDC moved, so there is nothing to come back to.
+      if (nextReceipt.kind === "failed" || nextReceipt.kind === "not-sent") {
+        rememberStellarTransfer(null);
+      }
       if (nextReceipt.kind === "burned") {
         // Remembered once the burn is on chain, not when the field is filled: only an address that was
         // actually sent to belongs in the list.
@@ -1102,6 +1152,22 @@ export function StellarBridgeForm({
       setStep(null);
     }
   }
+
+  // Clears the receipt for a new transfer. The address and amount stay, so sending the same again is
+  // one click. Only offered once the burn is confirmed on Stellar: before that the form stays locked,
+  // because a second send could move the USDC twice.
+  function startOver() {
+    rememberStellarTransfer(null);
+    setSaved(true);
+    setBurnReceipt(null);
+    setDelivery(null);
+    setPollError(null);
+    setStalled(false);
+    setSubmitError(null);
+  }
+
+  const delivered = delivery?.status === "known" && delivery.state === "delivered";
+
   return (
     <>
       <h2 id="bridge-heading" className="sr-only">
@@ -1315,23 +1381,28 @@ export function StellarBridgeForm({
                 Check it on stellar.expert
               </a>
             </p>
-            <Button
-              size="sm"
-              variant="secondary"
-              className="mt-3"
-              onClick={() =>
-                setBurnReceipt(
-                  mapStellarBurnResult(
-                    "timeout",
-                    burnReceipt.txHash,
-                    env.stellarNetworkPassphrase,
-                    burnReceipt.deadlineMs,
-                  ),
-                )
-              }
-            >
-              Check Stellar again
-            </Button>
+            <div className="mt-3 flex flex-wrap items-center gap-2">
+              <Button
+                size="sm"
+                variant="secondary"
+                onClick={() =>
+                  setBurnReceipt(
+                    mapStellarBurnResult(
+                      "timeout",
+                      burnReceipt.txHash,
+                      env.stellarNetworkPassphrase,
+                      burnReceipt.deadlineMs,
+                    ),
+                  )
+                }
+              >
+                Check Stellar again
+              </Button>
+              {/* The way out once stellar.expert has answered: a refresh no longer clears this. */}
+              <Button size="sm" variant="quiet" onClick={startOver}>
+                Start over
+              </Button>
+            </div>
           </Notice>
         )}
 
@@ -1425,6 +1496,31 @@ export function StellarBridgeForm({
                 </p>
               </Notice>
             )}
+            <div className="mt-3 flex items-center justify-between gap-3">
+              {!delivered &&
+                (saved ? (
+                  <p className="max-w-[18rem] text-xs leading-relaxed text-bone/35">
+                    Safe to close this tab. Come back on the same browser and it picks up where it
+                    left off.
+                  </p>
+                ) : (
+                  <p className="max-w-[20rem] text-xs leading-relaxed text-bone/45">
+                    This browser could not save your transfer. Keep this hash to find it again:{" "}
+                    <span className="tabular font-mono text-bone/70">
+                      {burnReceipt.txHash.slice(0, 6)}...{burnReceipt.txHash.slice(-4)}
+                    </span>{" "}
+                    <CopyButton value={burnReceipt.txHash} label="transaction hash" />
+                  </p>
+                ))}
+              <Button
+                variant={delivered ? "primary" : "quiet"}
+                size="sm"
+                onClick={startOver}
+                className={delivered ? "ml-auto" : ""}
+              >
+                {delivered ? "Send another" : "Start over"}
+              </Button>
+            </div>
           </>
         ) : burnReceipt?.kind === "waiting-stellar" ? (
           <div className="mt-6">
