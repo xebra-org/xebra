@@ -46,6 +46,8 @@ contracts/stellar-cctp-wrapper/target/
 contracts/stellar-cctp-wrapper/test_snapshots/
 contracts/stellar-cctp-wrapper-v2/target/
 contracts/stellar-cctp-wrapper-v2/test_snapshots/
+contracts/stellar-batch-router/target/
+contracts/stellar-batch-router/test_snapshots/
 
 # solana
 test-ledger/
