@@ -157,7 +157,8 @@ export async function handle<I, O>(
     from: "none" | "query" | "body" | "params";
     params?: Record<string, string>;
     input?: Parser<I>;
-    run(input: I): Promise<O>;
+    /** `gate` is who the guard says is asking: a valid API key's id, or null without one. */
+    run(input: I, gate: Gate): Promise<O>;
     output: Parser<O>;
     /** `Cache-Control` for a success. */
     cache?: string;
@@ -167,7 +168,8 @@ export async function handle<I, O>(
 ): Promise<Response> {
   let gate: Gate | null = null;
   try {
-    gate = await opts.guard(req);
+    const caller = await opts.guard(req);
+    gate = caller;
     let raw: unknown = {};
     if (opts.from === "query") raw = Object.fromEntries(new URL(req.url).searchParams);
     if (opts.from === "body") raw = await readBody(req);
@@ -179,7 +181,7 @@ export async function handle<I, O>(
       input = parsed.data;
     }
 
-    const result = await opts.run(input);
+    const result = await opts.run(input, caller);
     const checked = opts.output.safeParse(result);
     if (!checked.success) {
       // Our bug, not the caller's: say so plainly, and log what was wrong.

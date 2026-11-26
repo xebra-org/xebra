@@ -11,11 +11,18 @@ import {
   TransferRequestSchema,
   TransferStatusSchema,
 } from "@xebra/sdk";
-import { parseUsdcAmount } from "@xebra/sdk/core";
-import type { Guard } from "./auth";
+import { type FeeProduct, parseUsdcAmount } from "@xebra/sdk/core";
+import type { Gate, Guard } from "./auth";
 import { ApiError } from "./errors";
 import { handle } from "./http";
-import { type DestId, type Service, type SourceId, isDestId, isSourceId } from "./service";
+import {
+  type DestId,
+  type Pricing,
+  type Service,
+  type SourceId,
+  isDestId,
+  isSourceId,
+} from "./service";
 import { buildToWire, claimToWire, quoteToWire, routesToWire, statusToWire } from "./wire";
 
 /**
@@ -41,6 +48,15 @@ function route(from: string, to: string): { from: SourceId; to: DestId } {
     });
   }
   return { from, to };
+}
+
+/**
+ * Who is asking and for what, for Xebra's fee table. The partner is the id of the caller's valid
+ * API key, as the guard found it; a request without one is priced as anyone's, whatever it says it
+ * is for.
+ */
+function pricingOf(product: FeeProduct | undefined, gate: Gate): Pricing {
+  return { product: product ?? "transfer", partner: gate.keyId };
 }
 
 function source(chain: string): SourceId {
@@ -79,7 +95,7 @@ export function endpoints(service: EndpointService, guard: Guard) {
         guard,
         from: "query",
         input: QuoteRequestSchema,
-        run: async (q) => {
+        run: async (q, gate) => {
           const r = route(q.from, q.to);
           // Only Solana's price depends on the recipient (opening its USDC account costs more).
           const opensAccount =
@@ -91,6 +107,7 @@ export function endpoints(service: EndpointService, guard: Guard) {
             amount: units(q.amount),
             ...(q.speed ? { speed: q.speed } : {}),
             opensAccount,
+            pricing: pricingOf(q.product, gate),
           });
           return quoteToWire(priced.quote);
         },
@@ -102,7 +119,7 @@ export function endpoints(service: EndpointService, guard: Guard) {
         guard,
         from: "body",
         input: TransferRequestSchema,
-        run: async (r) =>
+        run: async (r, gate) =>
           buildToWire(
             await service.buildTransfer({
               ...route(r.from, r.to),
@@ -113,6 +130,7 @@ export function endpoints(service: EndpointService, guard: Guard) {
               ...(r.maxTotalFee !== undefined
                 ? { maxTotalFee: parseUsdcAmount(r.maxTotalFee) ?? 0n }
                 : {}),
+              pricing: pricingOf(r.product, gate),
             }),
           ),
         output: TransferBuildSchema,

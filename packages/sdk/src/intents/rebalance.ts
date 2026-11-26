@@ -17,9 +17,14 @@
  * never holds anything. If the deposit address expires before Circle's mint lands, 1Click refunds
  * to `toWallet`, the market maker's own address on `to`.
  *
- * The withdrawal is the one step that needs a 1Click partner API key (`generate-intent` and
+ * The withdrawal is the one step that needs a 1Click partner API key or JWT (`generate-intent` and
  * `submit-intent` are partner endpoints). Market makers onboarded through partners.near-intents.org
  * have one; it is passed in and only ever sent to 1Click.
+ *
+ * Xebra prices the burn as a rebalance: every quote and build here says `product: "rebalance"`.
+ * With a Xebra market-maker API key on the client (`createXebraClient({ apiKey })`) that is 0.01%
+ * capped at 2 USDC a move, plus 0.01; without one, the ordinary 0.01% plus 0.01. `estimate` names the rule
+ * that priced it (`feeRule`).
  */
 
 import type { TransferBuild, Quote as XebraQuote } from "../api/schemas.js";
@@ -43,13 +48,22 @@ export type IntentSigningStandard =
 export interface OneClickOptions {
   /** Partner API key from partners.near-intents.org. Needed to withdraw; quotes work without. */
   apiKey?: string;
+  /**
+   * A 1Click partner JWT, the older form of the same credential, sent as `Authorization: Bearer`.
+   * Either this or `apiKey` lets the market maker withdraw; with both, both are sent.
+   */
+  jwt?: string;
   baseUrl?: string;
   /** Distribution-channel tag shown in NEAR Intents' records. Default "xebra". */
   referral?: string;
 }
 
 export interface RebalancerOptions {
-  /** A Xebra client (`createXebraClient()`). */
+  /**
+   * A Xebra client (`createXebraClient({ apiKey })`). A key Xebra has set up for market-maker
+   * rebalances earns the rebalance price: 0.01% capped at 2 USDC a move, plus 0.01. Without one,
+   * moves are priced as ordinary transfers.
+   */
   xebra: Pick<XebraClient, "routes" | "quote" | "createTransfer">;
   oneClick?: OneClickOptions;
   fetch?: typeof fetch;
@@ -117,6 +131,11 @@ export interface RebalanceEstimate {
     cctp: string;
     total: string;
   };
+  /**
+   * The Xebra fee rule that priced the CCTP leg: "rebalance-capped" when the client's market-maker
+   * key earned the rebalance price, "default" when it did not. Null from a server too old to say.
+   */
+  feeRule: string | null;
   /** Rough seconds end to end: withdrawal plus CCTP plus deposit. */
   seconds: number;
   /**
@@ -302,13 +321,14 @@ export function createRebalancer(opts: RebalancerOptions) {
   const base = (opts.oneClick?.baseUrl ?? ONECLICK_BASE_URL).replace(/\/+$/, "");
   const referral = opts.oneClick?.referral ?? "xebra";
   const apiKey = opts.oneClick?.apiKey;
+  const jwt = opts.oneClick?.jwt;
   const router = createIntentsRouter({ client: opts.xebra });
   let tokenCache: { at: number; list: IntentsToken[] } | null = null;
 
   function requireKey(): void {
-    if (!apiKey) {
+    if (!apiKey && !jwt) {
       throw new OneClickError(
-        "Withdrawing from NEAR Intents needs a 1Click partner API key (oneClick.apiKey).",
+        "Withdrawing from NEAR Intents needs a 1Click partner API key (oneClick.apiKey or oneClick.jwt).",
         0,
         { code: "missing_api_key" },
       );
@@ -331,6 +351,7 @@ export function createRebalancer(opts: RebalancerOptions) {
           Accept: "application/json",
           ...(body !== undefined ? { "Content-Type": "application/json" } : {}),
           ...(apiKey ? { "X-API-Key": apiKey } : {}),
+          ...(jwt ? { Authorization: `Bearer ${jwt}` } : {}),
         },
         ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
         signal: AbortSignal.timeout(timeoutMs),
@@ -459,6 +480,7 @@ export function createRebalancer(opts: RebalancerOptions) {
       to,
       amount: floorTo(amount, 6),
       ...(speed ? { speed } : {}),
+      product: "rebalance",
     } as Parameters<typeof opts.xebra.quote>[0]);
   }
 
@@ -517,6 +539,7 @@ export function createRebalancer(opts: RebalancerOptions) {
       amount: r.amount,
       arrives,
       fees: { withdraw: withdrawFee, cctp: cctpFee, total: sub(r.amount, arrives) },
+      feeRule: x.feeRule ?? null,
       seconds: w.timeEstimate + d.timeEstimate + (r.speed === "fast" ? 30 : 20 * 60),
       direct,
       better,
@@ -647,6 +670,7 @@ export function createRebalancer(opts: RebalancerOptions) {
       sender: r.fromWallet,
       amount: floorTo(amount, 6),
       maxTotalFee: r.maxTotalFee ?? x.fees.total,
+      product: "rebalance",
     });
     return { depositAddress: q.depositAddress, quote: q, xebra: x, build };
   }

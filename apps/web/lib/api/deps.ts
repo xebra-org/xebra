@@ -7,6 +7,7 @@ import type {
   EvmChain,
   EvmChainId,
   FeeParams,
+  FeeRule,
 } from "@xebra/sdk/core";
 import type { AptosBuildAnswer } from "../aptos/build";
 import type { AptosDestination } from "../aptos/config";
@@ -90,6 +91,12 @@ export interface Deps {
    * Xebra contract. A null entry turns that family's routes off; absent, no flat fee is charged
    * (tests of the older figures only: production always sets it).
    */
+  /**
+   * The fee table off-contract routes are priced from. Absent: `FEE_TABLE`, which names no
+   * market-maker key. Production adds the market-maker price for the keys named in
+   * `XEBRA_REBALANCE_KEY_IDS` (`lib/server/fee-table.ts`).
+   */
+  feeTable?: readonly FeeRule[];
   feeAddresses?: {
     evm: string | null;
     solana: string | null;

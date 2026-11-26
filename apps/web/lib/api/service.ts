@@ -15,11 +15,13 @@ import {
   CLAIM_ONLY_DOMAINS,
   EVM_CHAINS,
   type EvmChainId,
+  FEE_TABLE,
   type FeePlan,
+  type FeeProduct,
   type FeeTier,
   STELLAR_CCTP_DOMAIN,
   type WrapperTerms,
-  amountForBurn,
+  amountForBurnUnder,
   bytesToHex,
   checkAddressOn,
   checkSolanaAddress,
@@ -28,7 +30,7 @@ import {
   evmDestinationsFrom,
   evmSendsToStellar,
   evmSources,
-  flatFeeFor,
+  feeRuleFor,
   formatUsdc,
   formatUsdcAmount,
   forwardBoundHolds,
@@ -38,6 +40,7 @@ import {
   minimumWrapperAmount,
   planEvmFee,
   planWrapperFee,
+  priceFee,
   solanaAddressToBytes32,
   stellarBurnRecipient,
   stellarDestination,
@@ -95,7 +98,24 @@ export interface Quote {
   circleStatus: "ok" | "degraded" | null;
   /** Fees move; after this the quote should be asked for again. */
   expiresAt: string;
+  /**
+   * The fee-table rule that priced Xebra's fee (`FEE_TABLE`), or null where a Xebra contract
+   * prices it on-chain (Stellar sources, EVM sources through Xebra's wrapper).
+   */
+  feeRule: string | null;
 }
+
+/**
+ * Who is asking and for what, for Xebra's fee table: the product the request names, and the id of
+ * the caller's valid API key (null without one). A rebalance is priced as one only with a key.
+ */
+export interface Pricing {
+  product: FeeProduct;
+  partner: string | null;
+}
+
+/** An ordinary transfer from anyone: what every surface without a key (the page, MCP) asks. */
+export const ANYONE: Pricing = { product: "transfer", partner: null };
 
 /** A quote plus what produced it, for the surfaces that explain the figures. */
 export interface PricedQuote {
@@ -109,7 +129,7 @@ export interface PricedQuote {
    * Xebra's flat fee on a route without a Xebra contract, and the address it is paid to on the
    * source chain. The burn is the amount less this fee.
    */
-  flat?: { fee: bigint; address: string } | null;
+  flat?: { fee: bigint; address: string; rule: string } | null;
 }
 
 export type QuoteOption =
@@ -262,6 +282,7 @@ const floorToUnits = (stroops: bigint) => stroops / STROOPS_PER_UNIT;
 const WRAPPER_DEADLINE_SECS = 1_800;
 
 export function createService(deps: Deps, now: () => number = Date.now) {
+  const feeTable = deps.feeTable ?? FEE_TABLE;
   async function routes(): Promise<{ routes: RouteGroup[]; stellarContractRead: boolean }> {
     const stellar = await deps.stellarRoutes();
     const groups: RouteGroup[] = [
@@ -357,6 +378,8 @@ export function createService(deps: Deps, now: () => number = Date.now) {
       fees: Omit<Fees, "total">;
       minimum: bigint;
       maximum: bigint | null;
+      /** The fee rule that priced Xebra's fee; null where a contract prices it. */
+      feeRule?: string | null;
     },
     health: CircleHealth | null,
   ): Quote {
@@ -372,6 +395,7 @@ export function createService(deps: Deps, now: () => number = Date.now) {
       maximum: p.maximum,
       circleStatus: health ? (health.status === "ok" ? "ok" : "degraded") : null,
       expiresAt: new Date(now() + QUOTE_TTL_MS).toISOString(),
+      feeRule: p.feeRule ?? null,
     };
   }
 
@@ -558,7 +582,8 @@ export function createService(deps: Deps, now: () => number = Date.now) {
     from: SourceId,
     to: DestId,
     amount: bigint,
-  ): { fee: bigint; address: string } | null {
+    pricing: Pricing,
+  ): { fee: bigint; address: string; rule: string } | null {
     const family = feeFamily(from);
     if (!family || !deps.feeAddresses) return null;
     const address = deps.feeAddresses[family];
@@ -568,7 +593,18 @@ export function createService(deps: Deps, now: () => number = Date.now) {
         `Transfers from ${SOURCE_NAME(from)} are off for now: Xebra's fee address there is not set up.`,
       );
     }
-    return { fee: flatFeeFor(destinationDomain(to), amount), address };
+    const price = priceFee(amount, feeContext(from, to, pricing), feeTable);
+    return { fee: price.fee, address, rule: price.rule };
+  }
+
+  /** What the fee table matches a request on. */
+  function feeContext(from: SourceId, to: DestId, pricing: Pricing) {
+    return {
+      product: pricing.product,
+      partner: pricing.partner,
+      from: sourceDomainOf(from),
+      to: destinationDomain(to),
+    };
   }
 
   /**
@@ -580,8 +616,9 @@ export function createService(deps: Deps, now: () => number = Date.now) {
     amount: bigint,
     minBurn: bigint,
     maximum: bigint | null,
+    pricing: Pricing,
   ): { health: CircleHealth | null; options: QuoteOption[] } {
-    return unforwarded(from, "stellar", amount, minBurn, maximum);
+    return unforwarded(from, "stellar", amount, minBurn, maximum, pricing);
   }
 
   /**
@@ -595,10 +632,13 @@ export function createService(deps: Deps, now: () => number = Date.now) {
     amount: bigint,
     minBurn: bigint,
     maximum: bigint | null,
+    pricing: Pricing,
   ): { health: CircleHealth | null; options: QuoteOption[] } {
-    const flat = flatFee(from, to, amount);
+    const flat = flatFee(from, to, amount, pricing);
     const fee = flat?.fee ?? 0n;
-    const minimum = flat ? amountForBurn(destinationDomain(to), minBurn) : minBurn;
+    const minimum = flat
+      ? amountForBurnUnder(feeRuleFor(feeContext(from, to, pricing), feeTable), minBurn)
+      : minBurn;
     const quote = quoteOf(
       from,
       to,
@@ -609,6 +649,7 @@ export function createService(deps: Deps, now: () => number = Date.now) {
         fees: { xebra: fee, circle: 0n, delivery: 0n },
         minimum,
         maximum,
+        feeRule: flat?.rule ?? null,
       },
       null,
     );
@@ -636,10 +677,11 @@ export function createService(deps: Deps, now: () => number = Date.now) {
     health: CircleHealth,
     opensAccount: boolean,
     wrapper: { address: string; terms: WrapperTerms } | null,
+    pricing: Pricing,
   ): QuoteOption {
     const dest = routeDestination(to as Exclude<DestId, "stellar">);
     const destination = feeDestination(dest, opensAccount);
-    const flat = wrapper ? null : flatFee(from, to, units);
+    const flat = wrapper ? null : flatFee(from, to, units, pricing);
     const xebraFee = flat?.fee ?? 0n;
     const plan = wrapper
       ? planWrapperFee({
@@ -680,6 +722,7 @@ export function createService(deps: Deps, now: () => number = Date.now) {
             fees: { xebra: plan.xebraFee, circle: plan.speedFee, delivery: plan.deliveryFee },
             minimum,
             maximum: wrapper ? wrapper.terms.maxTransfer : null,
+            feeRule: flat?.rule ?? null,
           },
           health,
         ),
@@ -723,8 +766,11 @@ export function createService(deps: Deps, now: () => number = Date.now) {
     amount: bigint;
     /** Solana: Circle also opens the recipient's USDC account, which costs more. */
     opensAccount?: boolean;
+    /** Who is asking and for what. Default: an ordinary transfer from anyone. */
+    pricing?: Pricing;
   }): Promise<{ health: CircleHealth | null; options: QuoteOption[] }> {
     const opensAccount = q.opensAccount ?? false;
+    const pricing = q.pricing ?? ANYONE;
     if (q.amount <= 0n) throw new ApiError("invalid_amount", "The amount must be more than zero.");
     await checkRoute(q.from, q.to);
 
@@ -740,7 +786,7 @@ export function createService(deps: Deps, now: () => number = Date.now) {
       if (q.to === "stellar") {
         // Nothing forwards into Stellar, so Circle is paid nothing; Xebra's relayer completes it,
         // from 1 USDC (what it accepts from every source but Sui).
-        return relayedToStellar("aptos", q.amount, RELAYED_MIN_UNITS, cap);
+        return relayedToStellar("aptos", q.amount, RELAYED_MIN_UNITS, cap, pricing);
       }
       // Circle's Forwarding Service delivers, priced as every direct route is; no wrapper.
       const health = await circleFor("aptos", q.to, opensAccount);
@@ -753,7 +799,9 @@ export function createService(deps: Deps, now: () => number = Date.now) {
       }
       return {
         health,
-        options: [evmOption("aptos", q.to, q.amount, "standard", tier, health, opensAccount, null)],
+        options: [
+          evmOption("aptos", q.to, q.amount, "standard", tier, health, opensAccount, null, pricing),
+        ],
       };
     }
 
@@ -778,25 +826,35 @@ export function createService(deps: Deps, now: () => number = Date.now) {
           `Circle is not quoting Sui to ${DEST_NAME(q.to)} right now. Try again shortly.`,
         );
       }
-      const option = evmOption("sui", q.to, q.amount, "standard", tier, health, opensAccount, null);
+      const option = evmOption(
+        "sui",
+        q.to,
+        q.amount,
+        "standard",
+        tier,
+        health,
+        opensAccount,
+        null,
+        pricing,
+      );
       if (option.ok) option.priced.quote.maximum = deps.suiStellar.maxUnits;
       return { health, options: [option] };
     }
     if (q.from === "sui") {
       // Standard finality and no fee from Circle; Xebra's flat fee beside the burn.
-      return relayedToStellar("sui", q.amount, 1n, deps.suiStellar.maxUnits);
+      return relayedToStellar("sui", q.amount, 1n, deps.suiStellar.maxUnits, pricing);
     }
 
-    if (q.from === "solana") return solanaOptions(q.to, q.amount);
+    if (q.from === "solana") return solanaOptions(q.to, q.amount, pricing);
     if (q.from !== "stellar" && isClaimOnly(q.to)) {
       // Circle does not deliver there: no hook, no Circle fee, the recipient claims it. Fees
       // within a tenth of the amount, so about 0.10 at least with Xebra's 0.01.
-      return unforwarded(q.from, q.to, q.amount, CLAIM_ONLY_MIN_BURN, null);
+      return unforwarded(q.from, q.to, q.amount, CLAIM_ONLY_MIN_BURN, null, pricing);
     }
     if (q.to === "stellar" && q.from !== "stellar") {
       // An EVM chain into Stellar: no Circle fee, Standard only; Xebra's relayer completes it from
       // a 1 USDC burn. Never through the wrapper, whose burn cannot name Stellar's forwarder.
-      return relayedToStellar(q.from, q.amount, RELAYED_MIN_UNITS, null);
+      return relayedToStellar(q.from, q.amount, RELAYED_MIN_UNITS, null, pricing);
     }
 
     const health = await circleFor(q.from, q.to, opensAccount);
@@ -812,7 +870,7 @@ export function createService(deps: Deps, now: () => number = Date.now) {
     const options = tiers
       .filter((t): t is [Speed, FeeTier] => t[1] !== null)
       .map(([speed, tier]) =>
-        evmOption(from, q.to, q.amount, speed, tier, health, opensAccount, wrapper),
+        evmOption(from, q.to, q.amount, speed, tier, health, opensAccount, wrapper, pricing),
       );
     return { health, options };
   }
@@ -825,6 +883,7 @@ export function createService(deps: Deps, now: () => number = Date.now) {
   async function solanaOptions(
     to: DestId,
     amount: bigint,
+    pricing: Pricing,
   ): Promise<{ health: CircleHealth | null; options: QuoteOption[] }> {
     const cap = deps.solanaSource?.maxUnits ?? null;
     if (cap !== null && amount > cap) {
@@ -834,7 +893,9 @@ export function createService(deps: Deps, now: () => number = Date.now) {
         { maximum: cap },
       );
     }
-    if (to === "stellar") return relayedToStellar("solana", amount, RELAYED_MIN_UNITS, cap);
+    if (to === "stellar") {
+      return relayedToStellar("solana", amount, RELAYED_MIN_UNITS, cap, pricing);
+    }
     const health = await circleFor("solana", to, false);
     const tier = health.tiers.standard;
     if (!tier) {
@@ -844,7 +905,7 @@ export function createService(deps: Deps, now: () => number = Date.now) {
       );
     }
     const chain = EVM_CHAINS[to as EvmChainId];
-    const flat = flatFee("solana", to, amount);
+    const flat = flatFee("solana", to, amount, pricing);
     const xebraFee = flat?.fee ?? 0n;
     const plan = planEvmFee({ amount, tier, destination: chain, xebraFee });
     const minimum = suggestedEvmMinimum(minimumEvmAmount(tier, xebraFee));
@@ -881,6 +942,7 @@ export function createService(deps: Deps, now: () => number = Date.now) {
                 fees: { xebra: plan.xebraFee, circle: plan.speedFee, delivery: plan.deliveryFee },
                 minimum,
                 maximum: cap,
+                feeRule: flat?.rule ?? null,
               },
               health,
             ),
@@ -900,6 +962,8 @@ export function createService(deps: Deps, now: () => number = Date.now) {
     amount: bigint;
     speed?: Speed;
     opensAccount?: boolean;
+    /** Who is asking and for what. Default: an ordinary transfer from anyone. */
+    pricing?: Pricing;
   }): Promise<PricedQuote> {
     const speed = q.speed ?? "standard";
     const { options } = await quoteOptions(q);
@@ -1092,6 +1156,8 @@ export function createService(deps: Deps, now: () => number = Date.now) {
     speed?: Speed;
     /** The most the caller will let fees come to, typically the total it showed its user. */
     maxTotalFee?: bigint;
+    /** Priced exactly as `quote` prices the same request, so the build charges what it showed. */
+    pricing?: Pricing;
   }): Promise<{ quote: Quote; steps: TransferStep[] }> {
     const b = deps.build;
     if (!b) throw new Error("buildTransfer needs the build dependencies");
@@ -1147,6 +1213,7 @@ export function createService(deps: Deps, now: () => number = Date.now) {
       amount: r.amount,
       ...(r.speed ? { speed: r.speed } : {}),
       opensAccount,
+      ...(r.pricing ? { pricing: r.pricing } : {}),
     });
     if (r.maxTotalFee !== undefined && priced.quote.fees.total > r.maxTotalFee) {
       throw new ApiError(
