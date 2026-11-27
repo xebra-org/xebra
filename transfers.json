@@ -1,6 +1,6 @@
 {
   "about": "Every Xebra transfer found on chain: Stellar and Arc from Xebra's contract events; Solana, Sui and other EVM chains from payments into Xebra's fee address (in the burn's own transaction on Solana and Sui, tagged with Xebra's ERC-8021 code on EVM). Each row links to its transaction. Written by apps/web/scripts/transfers-record.mjs.",
-  "updatedAt": "2026-11-27T15:09:10.499Z",
+  "updatedAt": "2026-11-27T23:29:18.369Z",
   "totals": {
     "transfers": 6,
     "usdcSent": 19.880293,
@@ -19,8 +19,8 @@
     }
   },
   "cursors": {
-    "arc": "33434657",
-    "stellar": "65701215"
+    "arc": "33493903",
+    "stellar": "65707216"
   },
   "coverage": {
     "stellar": "2026-11-19T02:59:03.000Z"
