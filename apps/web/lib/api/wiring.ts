@@ -23,6 +23,7 @@ import { env } from "../env";
 import { getAllowance, getUsdcBalance6 } from "../evm-bridge";
 import { checkClaim, isAlreadyMinted } from "../evm-claim";
 import { type WrapperState, parseWrapperState } from "../evm-wrapper";
+import { liveHyperliquid } from "../hyperliquid/live";
 import { liveFeeTable } from "../server/fee-table";
 import { createTtlCache } from "../server/ttl-cache";
 import { SolanaSourceError } from "../solana-source/checks";
@@ -107,6 +108,9 @@ const suiRelay = createRelayKick({
   schedule: after,
 });
 
+/** Read once per server instance: the switch and fee address are deploy-time settings. */
+const HYPERLIQUID = liveHyperliquid();
+
 export const liveDeps: Deps = {
   siteUrl: SITE_URL,
   suiStellar: {
@@ -141,6 +145,8 @@ export const liveDeps: Deps = {
   aptos: { destinations: aptosDestinations(), maxUnits: aptosMaxUsdcBase() },
   evmRoutes: env.evmRoutes,
   feeAddresses: env.feeAddresses,
+  // Hyperliquid (HyperCore) as a source: off unless NEXT_PUBLIC_HYPERLIQUID_SOURCE=true.
+  ...(HYPERLIQUID ? { hyperliquid: HYPERLIQUID } : {}),
   feeTable: liveFeeTable,
   stellarRoutes,
   evmWrapperAddress: (chain) => wrapperFor(chain, env.arcUseWrapper),

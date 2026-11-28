@@ -103,6 +103,45 @@ export interface Deps {
     sui: string | null;
     aptos: string | null;
   };
+  /**
+   * Hyperliquid (HyperCore) as a source (`NEXT_PUBLIC_HYPERLIQUID_SOURCE`). Absent: off. Live
+   * wiring in `lib/hyperliquid/live.ts`.
+   */
+  hyperliquid?: HyperliquidDeps;
+}
+
+/** What a withdrawal from Hyperliquid reads. Nothing here signs or sends. */
+export interface HyperliquidDeps {
+  /**
+   * Xebra's fee address on HyperCore (`XEBRA_FEE_ADDRESS_HYPERCORE`). Null turns the route off:
+   * it is never served free.
+   */
+  feeAddress: string | null;
+  /** The most one withdrawal may move, 6-decimal units, or null for no cap. */
+  maxUnits: bigint | null;
+  /**
+   * What Circle's `CoreDepositWallet` keeps to deliver a forwarded withdrawal to `domain`
+   * (`calculateCrossChainWithdrawalFee(true, domain)`), `"paused"` when Circle has paused the
+   * contract, or null when it could not be read.
+   */
+  forwardFee(domain: number): Promise<bigint | "paused" | null>;
+  /**
+   * The account's withdrawable USDC on HyperCore (perps `withdrawable`, spot USDC less holds) and
+   * whether it has ever sent anything (Hyperliquid charges 1 USDC on an account's first outbound
+   * action). Null when it could not be read.
+   */
+  account(user: string): Promise<{ perps: bigint; spot: bigint; activated: boolean } | null>;
+  /**
+   * Hyperliquid's activation fee for `from` sending to `address` (`preTransferCheck`): 0 once
+   * `address` exists on HyperCore. Null when it could not be read.
+   */
+  activationFeeTo(address: string, from: string): Promise<bigint | null>;
+  /**
+   * Circle's burn of a withdrawal on HyperEVM, found by its signer and nonce from the
+   * `CrossChainWithdraw` event, `"not_found"` while Hyperliquid has not handed it over, or null
+   * when HyperEVM could not be read.
+   */
+  findBurn(user: string, nonce: number): Promise<{ txHash: string } | "not_found" | null>;
 }
 
 export interface BuildDeps {

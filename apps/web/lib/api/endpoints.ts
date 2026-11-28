@@ -98,8 +98,9 @@ export function endpoints(service: EndpointService, guard: Guard) {
         run: async (q, gate) => {
           const r = route(q.from, q.to);
           // Only Solana's price depends on the recipient (opening its USDC account costs more).
+          // (From Hyperliquid, Circle charges Solana one flat fee, so the recipient changes nothing.)
           const opensAccount =
-            r.to === "solana" && q.recipient
+            r.to === "solana" && r.from !== "hyperliquid" && q.recipient
               ? await service.solanaOpensAccount(q.recipient)
               : false;
           const priced = await service.quote({
@@ -108,6 +109,8 @@ export function endpoints(service: EndpointService, guard: Guard) {
             ...(q.speed ? { speed: q.speed } : {}),
             opensAccount,
             pricing: pricingOf(q.product, gate),
+            // Only Hyperliquid's price depends on the sender (a first withdrawal costs 1 USDC).
+            ...(r.from === "hyperliquid" && q.sender ? { sender: q.sender } : {}),
           });
           return quoteToWire(priced.quote);
         },
@@ -131,6 +134,7 @@ export function endpoints(service: EndpointService, guard: Guard) {
                 ? { maxTotalFee: parseUsdcAmount(r.maxTotalFee) ?? 0n }
                 : {}),
               pricing: pricingOf(r.product, gate),
+              ...(r.signatureChainId !== undefined ? { signatureChainId: r.signatureChainId } : {}),
             }),
           ),
         output: TransferBuildSchema,

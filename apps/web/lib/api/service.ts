@@ -8,6 +8,8 @@ import {
   buildAptosFeeStep,
   buildEvmBridge,
   buildEvmFeeStep,
+  buildHyperliquidFee,
+  buildHyperliquidWithdrawal,
   buildStellarBridge,
   normaliseAptosAddress,
 } from "@xebra/sdk/build";
@@ -19,6 +21,8 @@ import {
   type FeePlan,
   type FeeProduct,
   type FeeTier,
+  HYPERCORE,
+  HYPERLIQUID_DESTINATIONS,
   STELLAR_CCTP_DOMAIN,
   type WrapperTerms,
   amountForBurnUnder,
@@ -31,14 +35,20 @@ import {
   evmSendsToStellar,
   evmSources,
   feeRuleFor,
+  formatTransferId,
   formatUsdc,
   formatUsdcAmount,
   forwardBoundHolds,
+  hyperliquidDestinationDomain,
+  hyperliquidRefusal,
   isEvmChainId,
+  isHyperliquidDestination,
   minimumEvmAmount,
   minimumForwardedAmount,
   minimumWrapperAmount,
+  parseTransferId,
   planEvmFee,
+  planHyperliquidWithdrawal,
   planWrapperFee,
   priceFee,
   solanaAddressToBytes32,
@@ -65,7 +75,7 @@ import { ApiError } from "./errors";
  */
 
 export type Speed = "standard" | "fast";
-export type SourceId = "stellar" | "sui" | "solana" | "aptos" | EvmChainId;
+export type SourceId = "stellar" | "sui" | "solana" | "aptos" | "hyperliquid" | EvmChainId;
 export type DestId = "stellar" | "solana" | EvmChainId;
 
 export interface RouteGroup {
@@ -81,6 +91,8 @@ export interface Fees {
   circle: bigint;
   /** What Circle is paid to deliver on the destination. */
   delivery: bigint;
+  /** From Hyperliquid only: its one-time fee on an account's first withdrawal (0 after). */
+  activation?: bigint;
   total: bigint;
 }
 
@@ -130,6 +142,11 @@ export interface PricedQuote {
    * source chain. The burn is the amount less this fee.
    */
   flat?: { fee: bigint; address: string; rule: string } | null;
+  /** From Hyperliquid: the withdrawal's split, and the CCTP domain it is sent to. */
+  hyperliquid?: {
+    plan: Extract<ReturnType<typeof planHyperliquidWithdrawal>, { ok: true }>;
+    domain: number;
+  } | null;
 }
 
 export type QuoteOption =
@@ -150,6 +167,8 @@ export interface TransferStatus {
   claimUrl: string | null;
   /** Circle's state word, for the MCP tool's text. */
   circleState: string;
+  /** From Hyperliquid only: Circle's burn on HyperEVM, once Hyperliquid has handed it over. */
+  burnTx?: string | null;
 }
 
 const QUOTE_TTL_MS = 60_000;
@@ -184,26 +203,30 @@ function mintUnreadable(): ApiError {
 
 function checkSender(from: SourceId, sender: string): void {
   const ok =
-    from === "stellar"
-      ? StrKey.isValidEd25519PublicKey(sender)
-      : from === "sui"
-        ? SUI_ADDRESS.test(sender)
-        : from === "solana"
-          ? checkSolanaAddress(sender).ok
-          : from === "aptos"
-            ? normaliseAptosAddress(sender) !== null
-            : checkAddressOn(EVM_CHAINS[from], sender).ok;
+    from === "hyperliquid"
+      ? checkAddressOn(EVM_CHAINS.hyperevm, sender).ok
+      : from === "stellar"
+        ? StrKey.isValidEd25519PublicKey(sender)
+        : from === "sui"
+          ? SUI_ADDRESS.test(sender)
+          : from === "solana"
+            ? checkSolanaAddress(sender).ok
+            : from === "aptos"
+              ? normaliseAptosAddress(sender) !== null
+              : checkAddressOn(EVM_CHAINS[from], sender).ok;
   if (!ok) {
     const who =
-      from === "stellar"
-        ? "Stellar account (G...)"
-        : from === "sui"
-          ? "Sui address (0x + 64 hex)"
-          : from === "solana"
-            ? "Solana wallet address"
-            : from === "aptos"
-              ? "Aptos address (0x + hex)"
-              : `${EVM_CHAINS[from].name} address`;
+      from === "hyperliquid"
+        ? "Hyperliquid account (the 0x address of the wallet you trade with)"
+        : from === "stellar"
+          ? "Stellar account (G...)"
+          : from === "sui"
+            ? "Sui address (0x + 64 hex)"
+            : from === "solana"
+              ? "Solana wallet address"
+              : from === "aptos"
+                ? "Aptos address (0x + hex)"
+                : `${EVM_CHAINS[from].name} address`;
     throw new ApiError("invalid_request", `sender must be the ${who} that will sign.`);
   }
 }
@@ -256,20 +279,29 @@ function short(have: bigint, need: bigint, chain: string, note = ""): ApiError {
 const STROOPS_PER_UNIT = 10n;
 
 const SOURCE_NAME = (id: SourceId): string =>
-  id === "stellar"
-    ? "Stellar"
-    : id === "sui"
-      ? "Sui"
-      : id === "solana"
-        ? "Solana"
-        : id === "aptos"
-          ? "Aptos"
-          : EVM_CHAINS[id].name;
+  id === "hyperliquid"
+    ? "Hyperliquid"
+    : id === "stellar"
+      ? "Stellar"
+      : id === "sui"
+        ? "Sui"
+        : id === "solana"
+          ? "Solana"
+          : id === "aptos"
+            ? "Aptos"
+            : EVM_CHAINS[id].name;
 const DEST_NAME = (id: DestId): string =>
   id === "stellar" ? "Stellar" : id === "solana" ? "Solana" : EVM_CHAINS[id].name;
 
 export function isSourceId(v: string): v is SourceId {
-  return v === "stellar" || v === "sui" || v === "solana" || v === "aptos" || isEvmChainId(v);
+  return (
+    v === "stellar" ||
+    v === "sui" ||
+    v === "solana" ||
+    v === "aptos" ||
+    v === "hyperliquid" ||
+    isEvmChainId(v)
+  );
 }
 export function isDestId(v: string): v is DestId {
   return v === "stellar" || v === "solana" || isEvmChainId(v);
@@ -352,6 +384,20 @@ export function createService(deps: Deps, now: () => number = Date.now) {
         to: aptos.map((id) => ({ id, name: DEST_NAME(id), speeds: ["standard"] })),
       });
     }
+    // Hyperliquid, to every chain Circle delivers a HyperCore withdrawal to; listed only while
+    // Xebra's fee address there is set, so it is never served free. Standard only: Circle's
+    // contract burns at finality, about five seconds on HyperEVM.
+    if (deps.hyperliquid?.feeAddress) {
+      groups.push({
+        from: "hyperliquid",
+        name: "Hyperliquid",
+        to: HYPERLIQUID_DESTINATIONS.map((id) => ({
+          id,
+          name: DEST_NAME(id),
+          speeds: ["standard"],
+        })),
+      });
+    }
     return { routes: groups, stellarContractRead: stellar.domains !== null };
   }
 
@@ -383,14 +429,17 @@ export function createService(deps: Deps, now: () => number = Date.now) {
     },
     health: CircleHealth | null,
   ): Quote {
-    const { xebra, circle, delivery } = p.fees;
+    const { xebra, circle, delivery, activation } = p.fees;
     return {
       from,
       to,
       speed,
       amount,
       recipientGets: p.recipientGets,
-      fees: { xebra, circle, delivery, total: xebra + circle + delivery },
+      fees:
+        activation === undefined
+          ? { xebra, circle, delivery, total: xebra + circle + delivery }
+          : { xebra, circle, delivery, activation, total: xebra + circle + delivery + activation },
       minimum: p.minimum,
       maximum: p.maximum,
       circleStatus: health ? (health.status === "ok" ? "ok" : "degraded") : null,
@@ -401,15 +450,17 @@ export function createService(deps: Deps, now: () => number = Date.now) {
 
   async function circleFor(from: SourceId, to: DestId, newAccount: boolean): Promise<CircleHealth> {
     const src =
-      from === "stellar"
-        ? STELLAR_CCTP_DOMAIN
-        : from === "sui"
-          ? SUI_CCTP_DOMAIN
-          : from === "solana"
-            ? SOLANA_DOMAIN
-            : from === "aptos"
-              ? APTOS_CCTP_DOMAIN
-              : EVM_CHAINS[from as EvmChainId].cctpDomainId;
+      from === "hyperliquid"
+        ? HYPERCORE.burnDomain
+        : from === "stellar"
+          ? STELLAR_CCTP_DOMAIN
+          : from === "sui"
+            ? SUI_CCTP_DOMAIN
+            : from === "solana"
+              ? SOLANA_DOMAIN
+              : from === "aptos"
+                ? APTOS_CCTP_DOMAIN
+                : EVM_CHAINS[from as EvmChainId].cctpDomainId;
     const dst =
       to === "solana"
         ? stellarDestination("solana").domain
@@ -555,6 +606,9 @@ export function createService(deps: Deps, now: () => number = Date.now) {
   /** Where Xebra's flat fee is paid from: null where a Xebra contract takes its own fee. */
   function feeFamily(from: SourceId): "evm" | "solana" | "sui" | "aptos" | null {
     if (from === "stellar") return null;
+    // Priced by `hyperliquidOptions`, from its own fee address. Never "no fee" by falling through.
+    if (from === "hyperliquid")
+      throw new Error("Hyperliquid's fee is priced by hyperliquidOptions");
     if (from === "solana" || from === "sui" || from === "aptos") return from;
     return "evm";
   }
@@ -768,10 +822,20 @@ export function createService(deps: Deps, now: () => number = Date.now) {
     opensAccount?: boolean;
     /** Who is asking and for what. Default: an ordinary transfer from anyone. */
     pricing?: Pricing;
+    /**
+     * From Hyperliquid: the signer, whose first withdrawal costs Hyperliquid's 1 USDC. Absent: the
+     * quote assumes an account that has withdrawn before, and the build prices it exactly.
+     */
+    sender?: string;
+    /** From Hyperliquid: the sender's account, when the caller has already read it. */
+    hyperliquidAccount?: { perps: bigint; spot: bigint; activated: boolean };
   }): Promise<{ health: CircleHealth | null; options: QuoteOption[] }> {
     const opensAccount = q.opensAccount ?? false;
     const pricing = q.pricing ?? ANYONE;
     if (q.amount <= 0n) throw new ApiError("invalid_amount", "The amount must be more than zero.");
+    if (q.from === "hyperliquid") {
+      return hyperliquidOptions(q.to, q.amount, pricing, q.sender, q.hyperliquidAccount);
+    }
     await checkRoute(q.from, q.to);
 
     if (q.from === "aptos") {
@@ -875,6 +939,137 @@ export function createService(deps: Deps, now: () => number = Date.now) {
     return { health, options };
   }
 
+  /** Hyperliquid's dependencies, or the refusal a person reads when the route is off. */
+  function hyperliquidOn(): NonNullable<Deps["hyperliquid"]> & { feeAddress: string } {
+    const hl = deps.hyperliquid;
+    if (!hl) {
+      throw new ApiError(
+        "route_unavailable",
+        "Withdrawals from Hyperliquid are not switched on here.",
+      );
+    }
+    const feeAddress = hl.feeAddress;
+    if (!feeAddress) {
+      throw new ApiError(
+        "route_unavailable",
+        "Withdrawals from Hyperliquid are off for now: Xebra's fee address there is not set up.",
+      );
+    }
+    return { ...hl, feeAddress };
+  }
+
+  /**
+   * A withdrawal from Hyperliquid, Standard only. Circle's `CoreDepositWallet` sets its own fee per
+   * destination (read live), Xebra's fee is the table's, paid as a second signed send on HyperCore,
+   * and a first withdrawal from an account also pays Hyperliquid's 1 USDC. `amount` is everything
+   * that leaves the Hyperliquid balance.
+   */
+  async function hyperliquidOptions(
+    to: DestId,
+    amount: bigint,
+    pricing: Pricing,
+    sender: string | undefined,
+    known: { perps: bigint; spot: bigint; activated: boolean } | undefined,
+  ): Promise<{ health: CircleHealth | null; options: QuoteOption[] }> {
+    // Refused by destination first, in its own words, before anything is read: to Stellar the
+    // USDC would be stuck for good.
+    const refused = hyperliquidRefusal(to);
+    if (refused || !isHyperliquidDestination(to)) {
+      throw new ApiError(
+        "route_unavailable",
+        refused?.reason ?? `Hyperliquid withdrawals do not go to ${DEST_NAME(to)}.`,
+        { from: "hyperliquid", to },
+      );
+    }
+    const hl = hyperliquidOn();
+    if (hl.maxUnits !== null && amount > hl.maxUnits) {
+      throw new ApiError(
+        "amount_above_maximum",
+        `Withdrawals from Hyperliquid take at most ${formatUsdcAmount(hl.maxUnits)} USDC each for now.`,
+        { maximum: hl.maxUnits },
+      );
+    }
+    const domain = hyperliquidDestinationDomain(to);
+    const forwardFee = await upstream("Circle's Hyperliquid contract", () => hl.forwardFee(domain));
+    if (forwardFee === null) {
+      throw new ApiError(
+        "upstream_unavailable",
+        "Circle's fee for this withdrawal could not be read from HyperEVM just now, so no price can be given. Try again shortly.",
+      );
+    }
+    if (forwardFee === "paused") {
+      throw new ApiError(
+        "upstream_unavailable",
+        "Circle has paused withdrawals from Hyperliquid for now. Your USDC stays in your Hyperliquid balance. Try again later.",
+      );
+    }
+    let account = known ?? null;
+    if (!account && sender) {
+      checkSender("hyperliquid", sender.trim());
+      account = await upstream("Your Hyperliquid account", () => hl.account(sender.trim()));
+      if (!account) {
+        throw new ApiError(
+          "upstream_unavailable",
+          "Your Hyperliquid account could not be read just now, and the price depends on it. Try again shortly.",
+        );
+      }
+    }
+    const activationFee = account && !account.activated ? HYPERCORE.activationFee : 0n;
+    const rule = feeRuleFor(feeContext("hyperliquid", to, pricing), feeTable);
+    const plan = planHyperliquidWithdrawal({ amount, rule, forwardFee, activationFee });
+    if (!plan.ok) {
+      return {
+        health: null,
+        options: [
+          {
+            speed: "standard",
+            ok: false,
+            error: new ApiError(
+              plan.kind === "minimum" ? "amount_below_minimum" : "invalid_amount",
+              plan.reason,
+              { minimum: plan.minimum },
+            ),
+          },
+        ],
+      };
+    }
+    const quote = quoteOf(
+      "hyperliquid",
+      to,
+      "standard",
+      amount,
+      {
+        recipientGets: plan.received,
+        fees: {
+          xebra: plan.xebraFee,
+          circle: 0n,
+          delivery: plan.forwardFee,
+          activation: plan.activationFee,
+        },
+        minimum: plan.minimum,
+        maximum: hl.maxUnits,
+        feeRule: rule.id,
+      },
+      null,
+    );
+    return {
+      health: null,
+      options: [
+        {
+          speed: "standard",
+          ok: true,
+          priced: {
+            quote,
+            stellar: null,
+            evm: null,
+            flat: { fee: plan.xebraFee, address: hl.feeAddress, rule: rule.id },
+            hyperliquid: { plan, domain },
+          },
+        },
+      ],
+    };
+  }
+
   /**
    * Solana's one speed, Standard. To Stellar: no Circle fee, a burn of at least 1 USDC (what the
    * relayer completes). To an EVM chain: Circle's delivery fee, priced as every direct EVM route
@@ -964,6 +1159,9 @@ export function createService(deps: Deps, now: () => number = Date.now) {
     opensAccount?: boolean;
     /** Who is asking and for what. Default: an ordinary transfer from anyone. */
     pricing?: Pricing;
+    /** From Hyperliquid: the signer (a first withdrawal costs Hyperliquid's 1 USDC). */
+    sender?: string;
+    hyperliquidAccount?: { perps: bigint; spot: bigint; activated: boolean };
   }): Promise<PricedQuote> {
     const speed = q.speed ?? "standard";
     const { options } = await quoteOptions(q);
@@ -1009,6 +1207,7 @@ export function createService(deps: Deps, now: () => number = Date.now) {
   }
 
   async function transferStatus(r: { chain: SourceId; tx: string }): Promise<TransferStatus> {
+    if (r.chain === "hyperliquid") return hyperliquidStatus(r.tx);
     if (r.chain === "sui") return suiStatus(r.tx.trim());
     if (r.chain === "solana") return solanaStatus(r.tx.trim());
     if (r.chain === "aptos") {
@@ -1158,12 +1357,15 @@ export function createService(deps: Deps, now: () => number = Date.now) {
     maxTotalFee?: bigint;
     /** Priced exactly as `quote` prices the same request, so the build charges what it showed. */
     pricing?: Pricing;
+    /** From Hyperliquid: the chain the signing wallet is on. Default Arbitrum (42161). */
+    signatureChainId?: number | undefined;
   }): Promise<{ quote: Quote; steps: TransferStep[] }> {
     const b = deps.build;
     if (!b) throw new Error("buildTransfer needs the build dependencies");
     const sender = r.sender.trim();
     const recipient = r.recipient.trim();
     checkSender(r.from, sender);
+    if (r.from === "hyperliquid") return buildHyperliquid({ ...r, sender, recipient }, b);
 
     // The recipient, read the way the destination needs it.
     let opensAccount = false;
@@ -1491,8 +1693,226 @@ export function createService(deps: Deps, now: () => number = Date.now) {
     return { quote: priced.quote, steps };
   }
 
+  /**
+   * A withdrawal from Hyperliquid: the signed `sendToEvmWithData`, then Xebra's fee, both
+   * user-signed Hyperliquid actions (no gas). Checks what it can before anyone signs: the
+   * destination, the recipient, the balance it leaves, and that Xebra's fee account exists on
+   * HyperCore (sending to a new account would cost the sender Hyperliquid's 1 USDC).
+   */
+  async function buildHyperliquid(
+    r: {
+      to: DestId;
+      amount: bigint;
+      sender: string;
+      recipient: string;
+      maxTotalFee?: bigint;
+      pricing?: Pricing;
+      signatureChainId?: number | undefined;
+    },
+    b: NonNullable<Deps["build"]>,
+  ): Promise<{ quote: Quote; steps: TransferStep[] }> {
+    const refused = hyperliquidRefusal(r.to);
+    if (refused || !isHyperliquidDestination(r.to)) {
+      throw new ApiError(
+        "route_unavailable",
+        refused?.reason ?? `Hyperliquid withdrawals do not go to ${DEST_NAME(r.to)}.`,
+        { from: "hyperliquid", to: r.to },
+      );
+    }
+    const hl = hyperliquidOn();
+    const to = r.to;
+
+    // The recipient, as Circle's contract takes it: an EVM address, or on Solana the USDC token
+    // account (never the wallet) plus the wallet that owns it, for Circle to open it if needed.
+    let recipient: Parameters<typeof buildHyperliquidWithdrawal>[0]["recipient"];
+    if (to === "solana") {
+      const check = checkSolanaAddress(r.recipient);
+      if (!check.ok) {
+        throw new ApiError(
+          "invalid_recipient",
+          `That is not a Solana address: ${sentence(check.error ?? r.recipient)}`,
+        );
+      }
+      const found = await upstream("The recipient's Solana account", () =>
+        b.solanaRecipient(r.recipient),
+      );
+      if (found.status === "unknown") {
+        throw new ApiError(
+          "upstream_unavailable",
+          "The recipient's USDC account on Solana could not be looked up just now. Try again shortly.",
+        );
+      }
+      recipient = { encoding: "base58", tokenAccount: found.tokenAccount, owner: r.recipient };
+    } else {
+      const check = checkAddressOn(EVM_CHAINS[to], r.recipient);
+      if (!check.ok) {
+        throw new ApiError(
+          "invalid_recipient",
+          `That is not a valid ${EVM_CHAINS[to].name} address: ${sentence(check.error ?? r.recipient)}`,
+        );
+      }
+      recipient = { encoding: "hex", address: r.recipient };
+    }
+
+    const account = await upstream("Your Hyperliquid account", () => hl.account(r.sender));
+    if (!account) {
+      throw new ApiError(
+        "upstream_unavailable",
+        "Your Hyperliquid balance could not be read just now. Try again shortly.",
+      );
+    }
+    const priced = await quote({
+      from: "hyperliquid",
+      to,
+      amount: r.amount,
+      sender: r.sender,
+      hyperliquidAccount: account,
+      ...(r.pricing ? { pricing: r.pricing } : {}),
+    });
+    if (r.maxTotalFee !== undefined && priced.quote.fees.total > r.maxTotalFee) {
+      throw new ApiError(
+        "fee_above_limit",
+        `Fees are now ${formatUsdcAmount(priced.quote.fees.total)} USDC, above the ${formatUsdcAmount(r.maxTotalFee)} USDC limit. Quote again.`,
+        { total: priced.quote.fees.total, limit: r.maxTotalFee },
+      );
+    }
+    const split = priced.hyperliquid;
+    if (!split) throw new Error("a Hyperliquid quote without its split");
+
+    // Everything leaves one balance, so the fee can follow the withdrawal from the same place.
+    const balance = account.perps >= r.amount ? "perps" : account.spot >= r.amount ? "spot" : null;
+    if (!balance) {
+      const best = account.perps > account.spot ? account.perps : account.spot;
+      if (account.perps + account.spot >= r.amount) {
+        throw new ApiError(
+          "insufficient_balance",
+          `Your USDC is split between Perps (${formatUsdcAmount(account.perps)}) and Spot (${formatUsdcAmount(account.spot)}) on Hyperliquid. Move it so one of them holds ${formatUsdcAmount(r.amount)}, then try again.`,
+          { have: best, need: r.amount },
+        );
+      }
+      throw short(
+        best,
+        r.amount,
+        "Hyperliquid",
+        " That is what you can withdraw now: USDC held as margin for open positions or orders does not count.",
+      );
+    }
+
+    // Sending to an account HyperCore has never seen costs the sender 1 USDC. Xebra's fee account
+    // is activated once by Xebra; until it is, nobody is charged for it.
+    const activation = await upstream("Hyperliquid's account check", () =>
+      hl.activationFeeTo(hl.feeAddress, r.sender),
+    );
+    if (activation === null) {
+      throw new ApiError(
+        "upstream_unavailable",
+        "Hyperliquid could not be asked about Xebra's fee account just now. Try again shortly.",
+      );
+    }
+    if (activation > 0n) {
+      console.error("Xebra's HyperCore fee address is not activated", hl.feeAddress);
+      throw new ApiError(
+        "route_unavailable",
+        "Withdrawals from Hyperliquid are paused for a moment while Xebra sets up its fee account there. Nothing was sent. Try again later.",
+      );
+    }
+
+    const nonce = now();
+    const signatureChainId = r.signatureChainId ?? 42161;
+    const id = formatTransferId(r.sender, nonce);
+    const withdrawal = buildHyperliquidWithdrawal({
+      amount: split.plan.withdraw,
+      balance,
+      destinationDomain: split.domain,
+      recipient,
+      nonce,
+      signatureChainId,
+    });
+    const fee = buildHyperliquidFee({
+      feeAddress: hl.feeAddress,
+      amount: split.plan.xebraFee,
+      balance,
+      nonce: nonce + 1,
+      signatureChainId,
+    });
+    const from = balance === "spot" ? "Spot" : "Perps";
+    const expiresAt = priced.quote.expiresAt;
+    return {
+      quote: priced.quote,
+      steps: [
+        {
+          id: "burn",
+          chain: "hyperliquid",
+          description: `Withdraw ${formatUsdcAmount(split.plan.withdraw)} USDC from your Hyperliquid ${from} balance; Circle burns it on HyperEVM and delivers ${formatUsdcAmount(split.plan.received)} USDC on ${DEST_NAME(to)}. Sign both steps, then post this one to Hyperliquid first. Track it as GET /v1/transfers/hyperliquid/${id}. Signed after ${expiresAt}, build it again first: the fee may have moved.`,
+          tx: withdrawal,
+          expiresAt,
+        },
+        {
+          id: "fee",
+          chain: "hyperliquid",
+          description: `Xebra's fee: ${formatUsdcAmount(split.plan.xebraFee)} USDC from your Hyperliquid ${from} balance to Xebra. Post it to Hyperliquid after the withdrawal.`,
+          tx: fee,
+          expiresAt,
+        },
+      ],
+    };
+  }
+
+  /**
+   * A withdrawal from Hyperliquid, named `<sender>:<nonce>` or by its HyperEVM burn's hash: pending
+   * until Hyperliquid hands it to Circle, then Circle's own record of the burn on HyperEVM.
+   */
+  async function hyperliquidStatus(asked: string): Promise<TransferStatus> {
+    const tx = asked.trim().toLowerCase();
+    const asCircle = async (burn: string): Promise<TransferStatus> => {
+      const s = await circleStatus("hyperevm", burn);
+      return { ...s, chain: "hyperliquid", tx, burnTx: burn };
+    };
+    if (/^0x[0-9a-f]{64}$/.test(tx)) return asCircle(tx);
+    const id = parseTransferId(tx);
+    if (!id) {
+      throw new ApiError(
+        "invalid_request",
+        "tx must be <sender>:<nonce> (the withdrawal's signer and the nonce it was signed with) or the HyperEVM burn's 0x hash.",
+      );
+    }
+    const hl = deps.hyperliquid;
+    if (!hl) {
+      throw new ApiError(
+        "route_unavailable",
+        "Withdrawals from Hyperliquid are not switched on here.",
+      );
+    }
+    const found = await upstream("HyperEVM", () => hl.findBurn(id.user, id.nonce));
+    if (found === null) {
+      throw new ApiError(
+        "upstream_unavailable",
+        "HyperEVM could not be read just now. That does not mean the withdrawal failed. Try again shortly.",
+      );
+    }
+    if (found === "not_found") {
+      // Hyperliquid hands a withdrawal to Circle within seconds. Long after, the likeliest reason
+      // is that Hyperliquid refused it, and then nothing left the balance.
+      const late = now() - id.nonce > 30 * 60_000;
+      return {
+        state: "pending",
+        chain: "hyperliquid",
+        tx,
+        deliveryTx: null,
+        reason: late
+          ? "Hyperliquid has not handed this withdrawal to Circle. If Hyperliquid refused it, the USDC is still in your Hyperliquid balance: check it there."
+          : "Hyperliquid has not handed it to Circle yet. This usually takes seconds.",
+        claimUrl: null,
+        circleState: "queued",
+        burnTx: null,
+      };
+    }
+    return asCircle(found.txHash.toLowerCase());
+  }
+
   /** The CCTP domain a transfer from this chain is burned on. */
   function sourceDomainOf(chain: SourceId): number {
+    if (chain === "hyperliquid") return HYPERCORE.burnDomain;
     return chain === "stellar"
       ? STELLAR_CCTP_DOMAIN
       : chain === "sui"
@@ -1675,6 +2095,13 @@ export function createService(deps: Deps, now: () => number = Date.now) {
     const b = deps.build;
     if (!b) throw new Error("buildClaim needs the build dependencies");
     const payer = r.payer.trim();
+    if (r.chain === "hyperliquid") {
+      // Circle burned it on HyperEVM; that burn is what is claimed.
+      throw new ApiError(
+        "invalid_request",
+        "A withdrawal from Hyperliquid is claimed by its HyperEVM burn: send chain hyperevm and the burnTx from its status.",
+      );
+    }
 
     // A Sui burn to Stellar is minted by a Stellar payer through Circle's forwarder; one to an EVM
     // chain or Solana is claimed there like any other burn, below. The payer says which.

@@ -163,6 +163,17 @@
           },
           {
             "in": "query",
+            "name": "sender",
+            "schema": {
+              "description": "Optional. From Hyperliquid, pass it: an account's first withdrawal costs Hyperliquid's one-time 1 USDC, and the quote includes that.",
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
+            },
+            "description": "Optional. From Hyperliquid, pass it: an account's first withdrawal costs Hyperliquid's one-time 1 USDC, and the quote includes that."
+          },
+          {
+            "in": "query",
             "name": "product",
             "schema": {
               "$ref": "#/components/schemas/Product"
@@ -356,10 +367,10 @@
               "type": "string",
               "minLength": 1,
               "maxLength": 128,
-              "description": "The burn's transaction hash or Sui digest."
+              "description": "The burn's transaction hash or Sui digest. From Hyperliquid: `<sender>:<nonce>` (the withdrawal's signer and nonce), or the HyperEVM burn's hash."
             },
             "required": true,
-            "description": "The burn's transaction hash or Sui digest."
+            "description": "The burn's transaction hash or Sui digest. From Hyperliquid: `<sender>:<nonce>` (the withdrawal's signer and nonce), or the HyperEVM burn's hash."
           }
         ],
         "responses": {
@@ -576,6 +587,7 @@
           "solana",
           "sui",
           "aptos",
+          "hyperliquid",
           "avalanche",
           "optimism",
           "arbitrum",
@@ -660,6 +672,13 @@
           },
           "product": {
             "$ref": "#/components/schemas/Product"
+          },
+          "signatureChainId": {
+            "description": "From Hyperliquid only: the chain id the signing wallet is on (wallets refuse typed data for another chain). Default 42161, Arbitrum.",
+            "example": 42161,
+            "type": "integer",
+            "exclusiveMinimum": 0,
+            "maximum": 9007199254740991
           }
         },
         "required": [
@@ -945,6 +964,10 @@
             "description": "What Circle is paid to deliver on the destination.",
             "$ref": "#/components/schemas/AmountOut"
           },
+          "activation": {
+            "description": "From Hyperliquid only: Hyperliquid's one-time fee on an account's first withdrawal. Absent on other routes.",
+            "$ref": "#/components/schemas/AmountOut"
+          },
           "total": {
             "$ref": "#/components/schemas/AmountOut"
           }
@@ -1225,6 +1248,126 @@
               "functionArguments"
             ],
             "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "kind": {
+                "type": "string",
+                "const": "hyperliquid"
+              },
+              "exchangeUrl": {
+                "type": "string",
+                "const": "https://api.hyperliquid.xyz/exchange"
+              },
+              "nonce": {
+                "type": "integer",
+                "exclusiveMinimum": 0,
+                "maximum": 9007199254740991
+              },
+              "action": {
+                "type": "object",
+                "propertyNames": {
+                  "type": "string"
+                },
+                "additionalProperties": {
+                  "type": [
+                    "string",
+                    "number"
+                  ]
+                }
+              },
+              "typedData": {
+                "type": "object",
+                "properties": {
+                  "domain": {
+                    "type": "object",
+                    "properties": {
+                      "name": {
+                        "type": "string",
+                        "const": "HyperliquidSignTransaction"
+                      },
+                      "version": {
+                        "type": "string",
+                        "const": "1"
+                      },
+                      "chainId": {
+                        "type": "integer",
+                        "exclusiveMinimum": 0,
+                        "maximum": 9007199254740991
+                      },
+                      "verifyingContract": {
+                        "type": "string",
+                        "const": "0x0000000000000000000000000000000000000000"
+                      }
+                    },
+                    "required": [
+                      "name",
+                      "version",
+                      "chainId",
+                      "verifyingContract"
+                    ],
+                    "additionalProperties": false
+                  },
+                  "types": {
+                    "type": "object",
+                    "propertyNames": {
+                      "type": "string"
+                    },
+                    "additionalProperties": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "name": {
+                            "type": "string"
+                          },
+                          "type": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "name",
+                          "type"
+                        ],
+                        "additionalProperties": false
+                      }
+                    }
+                  },
+                  "primaryType": {
+                    "type": "string"
+                  },
+                  "message": {
+                    "type": "object",
+                    "propertyNames": {
+                      "type": "string"
+                    },
+                    "additionalProperties": {
+                      "type": [
+                        "string",
+                        "number"
+                      ]
+                    }
+                  }
+                },
+                "required": [
+                  "domain",
+                  "types",
+                  "primaryType",
+                  "message"
+                ],
+                "additionalProperties": false
+              }
+            },
+            "required": [
+              "kind",
+              "exchangeUrl",
+              "nonce",
+              "action",
+              "typedData"
+            ],
+            "additionalProperties": false,
+            "description": "A Hyperliquid action: sign `typedData` (EIP-712, no gas), then POST `{ action, nonce, signature: { r, s, v } }` to `exchangeUrl`."
           }
         ],
         "description": "A transaction for the user's wallet to sign.",
@@ -1270,6 +1413,12 @@
               {
                 "type": "null"
               }
+            ]
+          },
+          "burnTx": {
+            "type": [
+              "string",
+              "null"
             ]
           }
         },

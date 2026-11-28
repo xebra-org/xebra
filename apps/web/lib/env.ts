@@ -73,6 +73,7 @@ const RAW = {
   NEXT_PUBLIC_EVM_TO_STELLAR: process.env.NEXT_PUBLIC_EVM_TO_STELLAR,
   NEXT_PUBLIC_STELLAR_SENDS_TO: process.env.NEXT_PUBLIC_STELLAR_SENDS_TO,
   NEXT_PUBLIC_STELLAR_TO_SUI: process.env.NEXT_PUBLIC_STELLAR_TO_SUI,
+  NEXT_PUBLIC_HYPERLIQUID_SOURCE: process.env.NEXT_PUBLIC_HYPERLIQUID_SOURCE,
   NEXT_PUBLIC_ARC_USE_WRAPPER: process.env.NEXT_PUBLIC_ARC_USE_WRAPPER,
   NEXT_PUBLIC_STELLAR_ESCROW_CONTRACT_ID: process.env.NEXT_PUBLIC_STELLAR_ESCROW_CONTRACT_ID,
   NEXT_PUBLIC_STELLAR_CCTP_WRAPPER_CONTRACT_ID:
@@ -196,6 +197,12 @@ export const env = {
    * Circle does not deliver to Sui). Every such transfer is minted by its owner at `/claim`.
    */
   stellarToSui: optional("NEXT_PUBLIC_STELLAR_TO_SUI") === "1",
+  /**
+   * Offer "From: Hyperliquid" on the bridge screen. Exactly `true` to switch on; off by default.
+   * Necessary and not sufficient: the server must also have Xebra's HyperCore fee address
+   * (`XEBRA_FEE_ADDRESS_HYPERCORE`), and `/api/hyperliquid/config` says whether it does.
+   */
+  hyperliquidSource: optional("NEXT_PUBLIC_HYPERLIQUID_SOURCE") === "true",
   /**
    * Send transfers out of a chain through Xebra's fee wrapper where one is pinned
    * (`XEBRA_WRAPPERS` in `packages/sdk/src/core/chains/evm.ts`), instead of calling Circle directly. Exactly `1` to

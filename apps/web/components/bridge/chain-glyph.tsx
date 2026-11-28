@@ -32,6 +32,8 @@ export type Chain =
   | "sei"
   | "xdc"
   | "hyperevm"
+  /** Hyperliquid's own ledger (HyperCore), a source only; drawn with Hyperliquid's mark. */
+  | "hyperliquid"
   | "ethereum"
   | "linea"
   | "plume"
@@ -63,6 +65,7 @@ const SRC: Record<Chain, string> = {
   sei: "/chains/sei.png",
   xdc: "/chains/xdc.png",
   hyperevm: "/chains/hyperevm.png",
+  hyperliquid: "/chains/hyperevm.png",
   ethereum: "/chains/ethereum.png",
   linea: "/chains/linea.png",
   plume: "/chains/plume.png",
@@ -113,6 +116,7 @@ export const CHAIN_NAMES: Record<Chain, string> = {
   sei: "Sei",
   xdc: "XDC",
   hyperevm: "HyperEVM",
+  hyperliquid: "Hyperliquid",
   ethereum: "Ethereum",
   linea: "Linea",
   plume: "Plume",

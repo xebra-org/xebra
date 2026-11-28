@@ -4,6 +4,7 @@
  */
 export * from "./aptos.js";
 export * from "./evm.js";
+export * from "./hypercore.js";
 export * from "./stellar.js";
 export * from "./sui.js";
 export * from "./sui-mint.js";

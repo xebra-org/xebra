@@ -1,9 +1,12 @@
 import { EVM_CHAIN_IDS, type EvmChainId, isEvmChainId } from "./evm.js";
 
-/** Every chain a transfer can start or end on, as the public API names it. */
-export type ChainId = "stellar" | "solana" | "sui" | "aptos" | EvmChainId;
+/**
+ * Every chain a transfer can start or end on, as the public API names it. `hyperliquid` is
+ * Hyperliquid's own ledger (HyperCore), a source only; `hyperevm` is its EVM chain.
+ */
+export type ChainId = "stellar" | "solana" | "sui" | "aptos" | "hyperliquid" | EvmChainId;
 
-const NON_EVM = ["stellar", "solana", "sui", "aptos"] as const;
+const NON_EVM = ["stellar", "solana", "sui", "aptos", "hyperliquid"] as const;
 
 export const CHAIN_IDS: readonly ChainId[] = [...NON_EVM, ...EVM_CHAIN_IDS];
 

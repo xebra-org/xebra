@@ -1,0 +1,115 @@
+---
+title: Withdraw from Hyperliquid
+description: Move USDC out of a Hyperliquid account straight to an EVM chain, Arc or Solana, with two gas-free signatures and Circle delivering it.
+---
+
+Hyperliquid's own Withdraw button sends USDC to Arbitrum, Base, Ethereum and Polygon. Through Xebra the
+same account withdraws straight to every chain Circle delivers to: Solana, Arc, Avalanche, OP Mainnet,
+Monad and the rest. The source is `hyperliquid` (Hyperliquid's own ledger, HyperCore; `hyperevm` is its
+EVM chain, a different source).
+
+<Callout type="warn">
+New route, behind a switch. Read `GET /v1/routes` before offering it: when `from: "hyperliquid"` is not
+listed, it is off. Never to Stellar: see [below](#not-to-stellar).
+</Callout>
+
+## How it works
+
+1. The user signs a Hyperliquid message, `sendToEvmWithData`, in the wallet they trade with. No gas,
+   no chain switch. It must be their main wallet: Hyperliquid's API and agent wallets cannot withdraw.
+2. Hyperliquid debits the balance and hands the USDC to Circle's `CoreDepositWallet` on HyperEVM, which
+   burns it with CCTP (domain 19) and asks Circle's Forwarding Service to deliver it.
+3. Circle attests it in seconds and mints it on the destination.
+
+Xebra's fee is a second signed message, a USDC send on Hyperliquid. Nothing of the user's is ever held by
+Xebra: the two signatures are the only authority, and they go straight to Hyperliquid.
+
+## Fees
+
+| Figure | What it is |
+|---|---|
+| `fees.delivery` | Circle's fee, set by `CoreDepositWallet` per destination: 0.20 USDC to most chains, 1.20 to Ethereum, 0.50 to Solana (read live) |
+| `fees.activation` | Hyperliquid's one-time 1 USDC on an account's first withdrawal, 0 after. Pass `sender` to the quote to have it priced |
+| `fees.xebra` | 0.01% plus 0.01 USDC |
+
+`amount` is everything that leaves the Hyperliquid balance; `recipientGets` is `amount - fees.total`.
+An amount the fees would swallow answers [`amount_below_minimum`](/docs/errors/amount_below_minimum).
+The withdrawal and the fee leave the same balance, perps or spot, whichever holds the whole amount.
+
+## The steps
+
+`createTransfer` returns two steps, both `tx.kind: "hyperliquid"`:
+
+| `id` | What it does |
+|---|---|
+| `burn` | The withdrawal, `sendToEvmWithData` |
+| `fee` | Xebra's fee, a `usdSend` (perps) or `spotSend` (spot) |
+
+Each `tx` holds `typedData` (EIP-712, for `eth_signTypedData_v4`), the `action`, its `nonce` and
+`exchangeUrl`. Ask for **both** signatures first, then post the withdrawal, then the fee:
+`hyperliquidExchangeBody(tx, signature)` from `@xebra/sdk/build` makes the body Hyperliquid takes.
+
+Pass `signatureChainId`, the chain the wallet is on, to `createTransfer`: wallets refuse typed data
+signed for another chain. Hyperliquid accepts any chain id as long as the action names the same one.
+The default is 42161 (Arbitrum).
+
+```ts
+import { createXebraClient } from "@xebra/sdk";
+import { hyperliquidExchangeBody } from "@xebra/sdk/build";
+
+const xebra = createXebraClient();
+const sender = "0xYourHyperliquidAccount...";
+
+const { steps } = await xebra.createTransfer({
+  from: "hyperliquid",
+  to: "solana",
+  amount: "25",
+  sender,
+  recipient: "RecipientSolanaWallet...",
+  signatureChainId: 42161,
+});
+
+// Both signatures first: declining either sends nothing.
+const signed = [];
+for (const step of steps) {
+  if (step.tx.kind !== "hyperliquid") throw new Error(`unexpected ${step.tx.kind} step`);
+  const signature = await wallet.request({
+    method: "eth_signTypedData_v4",
+    params: [sender, JSON.stringify(step.tx.typedData)],
+  });
+  signed.push({ tx: step.tx, signature });
+}
+
+// Then the withdrawal, then the fee.
+for (const { tx, signature } of signed) {
+  const res = await fetch(tx.exchangeUrl, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(hyperliquidExchangeBody(tx, signature)),
+  });
+  const answer = await res.json();
+  if (answer.status !== "ok") throw new Error(`Hyperliquid refused it: ${answer.response}`);
+}
+```
+
+## Track it
+
+A withdrawal has no transaction hash until Circle burns it, so it is tracked as
+`<sender>:<nonce>`, the signer and the withdrawal step's `nonce`:
+
+```
+GET /v1/transfers/hyperliquid/0xyourhyperliquidaccount...:1795870421000
+```
+
+It is `pending` until Hyperliquid hands it to Circle (usually seconds), then follows Circle's record of the
+burn. The status carries `burnTx`, the burn on HyperEVM; the same hash works as the `tx` too. A delivery
+that did not complete is claimed like any burn from HyperEVM: [`/claim`](/docs/guides/claim-a-stuck-transfer)
+with that `burnTx` and source domain 19.
+
+## Not to Stellar
+
+Hyperliquid cannot send USDC straight to Stellar: Circle's Hyperliquid contract cannot meet Stellar's
+delivery rules, and Circle says USDC sent that way is stuck for good. Xebra refuses it with
+[`route_unavailable`](/docs/errors/route_unavailable). Withdraw to Base or your HyperEVM wallet first,
+then send from there to Stellar. Sui and Aptos are not offered yet, nor the chains Circle does not deliver
+to (Injective, Morph, Pharos).

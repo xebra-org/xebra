@@ -3,7 +3,13 @@ import { EVM_CHAINS, isEvmChainId } from "@xebra/sdk/core";
 
 const ROUTES_URL = "https://api.xebra.exchange/v1/routes";
 
-const OTHER_NAMES: Record<string, string> = { stellar: "Stellar", solana: "Solana", sui: "Sui" };
+const OTHER_NAMES: Record<string, string> = {
+  stellar: "Stellar",
+  solana: "Solana",
+  sui: "Sui",
+  aptos: "Aptos",
+  hyperliquid: "Hyperliquid",
+};
 
 export function chainName(id: string): string {
   return isEvmChainId(id) ? EVM_CHAINS[id].name : (OTHER_NAMES[id] ?? id);

@@ -7,6 +7,7 @@ import {
   evmSources,
   hasDeepLink,
   isEvmChainId,
+  isHyperliquidDestination,
   parseDeepLink,
 } from "@xebra/sdk/core";
 import type React from "react";
@@ -14,6 +15,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { SuiTransfer, hasRememberedSuiTransfer } from "../../app/sui/sui-client";
 import { recallSuiEvm } from "../../app/sui/sui-evm";
 import { env, isCctpRailConfigured } from "../../lib/env";
+import { recallHyperliquidTransfer } from "../../lib/hyperliquid/client";
 import { nextPollDelay } from "../../lib/poll-backoff";
 import { SiteFooter } from "../site/site-footer";
 import { TopBar } from "../site/top-bar";
@@ -32,6 +34,7 @@ import {
 import { CHAIN_NAMES, type Chain } from "./chain-glyph";
 import { ChainPicker, PickerLabel } from "./chain-picker";
 import { EvmBridgeForm } from "./evm-bridge-form";
+import { HyperliquidBridgeForm, type HyperliquidSourceConfig } from "./hyperliquid-bridge-form";
 import {
   SolanaBridgeForm,
   type SolanaSourceConfig,
@@ -54,7 +57,7 @@ import { StellarBridgeForm } from "./stellar-bridge-form";
  * Where a transfer can start: Stellar, through the wrapper; Sui, Solana or Aptos, when the server
  * switches them on; or an EVM chain, straight to Circle.
  */
-type SourceId = "stellar" | "sui" | "solana" | "aptos" | EvmChainId;
+type SourceId = "stellar" | "sui" | "solana" | "aptos" | "hyperliquid" | EvmChainId;
 
 /** What `/api/sui-stellar/config` says about the Sui source: absent until it answers, and when it is off. */
 interface SuiSource {
@@ -294,6 +297,51 @@ export function HomeClient({ children }: { children?: React.ReactNode }) {
       if (timer) clearTimeout(timer);
     };
   }, []);
+  // Hyperliquid, behind `NEXT_PUBLIC_HYPERLIQUID_SOURCE` (off by default) and the server's say-so:
+  // the server knows whether Xebra's fee address there is set. Switched on without it, the source
+  // is shown as unavailable with the reason, never as a free route.
+  const [hyperliquid, setHyperliquid] = useState<HyperliquidSourceConfig | null>(null);
+  useEffect(() => {
+    if (!env.hyperliquidSource) return;
+    let live = true;
+    (async () => {
+      try {
+        const r = await fetch("/api/hyperliquid/config", { cache: "no-store" });
+        if (!r.ok) throw new Error(`HTTP ${r.status}`);
+        const c = (await r.json()) as {
+          enabled?: boolean;
+          available?: boolean;
+          reason?: string;
+          destinations?: unknown;
+          maxUsdc?: string | null;
+        } | null;
+        if (!live || !c?.enabled) return;
+        // Only names this build knows: a newer server cannot make the page render a chain it lacks.
+        const destinations = Array.isArray(c.destinations)
+          ? c.destinations.filter(
+              (id): id is HyperliquidSourceConfig["destinations"][number] =>
+                typeof id === "string" && isHyperliquidDestination(id),
+            )
+          : [];
+        setHyperliquid({
+          available: c.available === true && destinations.length > 0,
+          reason: typeof c.reason === "string" ? c.reason : null,
+          destinations,
+          maxUsdc: c.maxUsdc ?? null,
+        });
+        if (recallHyperliquidTransfer() && !parseDeepLink(window.location.search).from) {
+          setFrom("hyperliquid");
+        }
+      } catch {
+        // Unreachable config: the source stays hidden. A withdrawal already sent is carried by
+        // Hyperliquid and Circle whatever this page shows.
+      }
+    })();
+    return () => {
+      live = false;
+    };
+  }, []);
+
   // The top bar's wallet modal: a Sui tab too once Sui is a source here.
   const connect = useCallback(
     () =>
@@ -317,6 +365,7 @@ export function HomeClient({ children }: { children?: React.ReactNode }) {
       ...(sui || (suiFailed && suiDigest) ? (["sui"] as const) : []),
       ...(solana || (solanaFailed && solanaTransfer) ? (["solana"] as const) : []),
       ...(aptos || (aptosFailed && aptosTransfer) ? (["aptos"] as const) : []),
+      ...(hyperliquid ? (["hyperliquid"] as const) : []),
       ...evmSources(env.evmRoutes),
     ],
     [
@@ -329,6 +378,7 @@ export function HomeClient({ children }: { children?: React.ReactNode }) {
       aptos,
       aptosFailed,
       aptosTransfer,
+      hyperliquid,
     ],
   );
   const manyRoutes = sources.length > 1;
@@ -489,6 +539,14 @@ export function HomeClient({ children }: { children?: React.ReactNode }) {
                     claimHref={solanaClaimHref(solanaTransfer.tx)}
                   />
                 </div>
+              ) : null
+            ) : from === "hyperliquid" ? (
+              hyperliquid ? (
+                <HyperliquidBridgeForm
+                  config={hyperliquid}
+                  sourcePicker={sourcePicker}
+                  onBusyChange={setBusy}
+                />
               ) : null
             ) : from === "aptos" && aptos ? (
               <AptosBridgeForm source={aptos} sourcePicker={sourcePicker} onBusyChange={setBusy} />

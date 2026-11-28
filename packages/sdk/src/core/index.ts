@@ -16,4 +16,5 @@ export * from "./fees/evm.js";
 export * from "./fees/flat.js";
 export * from "./fees/stellar.js";
 export * from "./fees/table.js";
+export * from "./hypercore.js";
 export * from "./tag.js";
