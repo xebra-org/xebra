@@ -42,6 +42,8 @@ interface Destination {
   chain: string;
   decimals: number;
   recipientHint: string;
+  /** Where the wrong kind of address loses money (an exchange deposit that needs a tag). */
+  note?: string;
 }
 
 interface PathPrice {
@@ -553,7 +555,11 @@ export function NearIntentsClient() {
               <Field
                 id="ni-recipient"
                 label="Recipient"
-                hint={destination ? `Their ${destination.chain} account.` : undefined}
+                hint={
+                  destination
+                    ? (destination.note ?? `Their ${destination.chain} account.`)
+                    : undefined
+                }
               >
                 <Input
                   id="ni-recipient"

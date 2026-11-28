@@ -1,3 +1,4 @@
+import { PlanInputError } from "../../../lib/near-intents/errors";
 import { OneClickError } from "../../../lib/near-intents/oneclick";
 import type { PlanRequest } from "../../../lib/near-intents/plan";
 
@@ -42,6 +43,10 @@ function isTimeout(err: unknown): boolean {
 }
 
 export function failure(err: unknown, _status?: number): Response {
+  if (err instanceof PlanInputError) {
+    return Response.json({ error: err.message }, { status: err.status });
+  }
+
   if (err instanceof OneClickError) {
     const status = err.status >= 500 ? 502 : 422;
     return Response.json({ error: err.message }, { status });
