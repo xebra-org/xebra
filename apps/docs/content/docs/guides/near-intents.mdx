@@ -271,4 +271,12 @@ live with `xebra.quote`, never from this table.
 
 [xebra.exchange/near-intents](https://xebra.exchange/near-intents) does all of the above with a
 Stellar wallet: it prices both paths side by side, asks for one signature, and follows both legs.
+
+It delivers to 19 chains Circle's CCTP does not reach, among them XRP, Dogecoin, Litecoin, Bitcoin Cash,
+Dash, Cardano, BNB Chain, Gnosis, Berachain, Scroll and Aleo, alongside Bitcoin, Zcash, Tron, TON and NEAR.
+Those depend on NEAR Intents, not on Circle alone: Xebra's leg ends at the deposit address on Base. Counted
+honestly, that is 29 chains on Circle's own rails and 48 in total with NEAR Intents. The list, each chain's
+address rules and the quotes behind it are in
+[`docs/near-intents-destinations.md`](https://github.com/xebra-org/xebra/blob/main/docs/near-intents-destinations.md).
+XRP is delivered to a plain `r` address only: 1Click cannot add a destination tag yet.
 Its source is in [`apps/web/lib/near-intents`](https://github.com/xebra-org/xebra/tree/main/apps/web/lib/near-intents).
