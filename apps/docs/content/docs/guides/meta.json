@@ -5,6 +5,7 @@
     "api-keys",
     "send-from-stellar",
     "send-from-evm",
+    "withdraw-from-hyperliquid",
     "sui-to-stellar",
     "track-a-transfer",
     "my-transfer-is-stuck",

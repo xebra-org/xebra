@@ -7,6 +7,15 @@ description: What changed in the Xebra API and SDK, newest first.
 
 **API**:
 
+- Withdraw from Hyperliquid (behind a switch; listed in `GET /v1/routes` only once on): a new
+  source, `hyperliquid`, to every EVM chain Circle delivers to, Arc and Solana. `POST /v1/transfers`
+  returns two `tx.kind: "hyperliquid"` steps (EIP-712 typed data to sign, the action to post to
+  Hyperliquid) and takes an optional `signatureChainId`. `GET /v1/quote` takes an optional `sender`;
+  Hyperliquid quotes carry `fees.activation`. A withdrawal is tracked as
+  `GET /v1/transfers/hyperliquid/<sender>:<nonce>`, and its status carries `burnTx`. Never to Stellar:
+  refused, because the USDC would be stuck. See
+  [Withdraw from Hyperliquid](/docs/guides/withdraw-from-hyperliquid).
+
 - Market-maker rebalances: `GET /v1/quote` and `POST /v1/transfers` take an optional
   `product`, `"transfer"` (the default) or `"rebalance"`. A rebalance with an API key that Xebra
   has set up for market-maker rebalances is priced at 0.01% capped at 2 USDC a move, plus
