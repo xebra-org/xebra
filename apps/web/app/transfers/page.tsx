@@ -10,13 +10,13 @@ import {
   loadTransfersRecord,
 } from "../../lib/transfers-record";
 
-// The record is rewritten hourly; read it again every ten minutes.
+// The record is rewritten through the day; read it again every ten minutes.
 export const revalidate = 600;
 
 export const metadata = pageMetadata({
   title: "Transfers",
   description:
-    "Transfers made with Xebra, read from the chains. Each row links to its transaction on the chain's explorer.",
+    "Every Xebra transfer we can prove on chain, read from the chains. Each row links to its transactions on the chains' own explorers.",
   path: "/transfers",
 });
 
@@ -35,8 +35,13 @@ const usdc = (n: number | null) =>
 function proofLabel(t: RecordedTransfer): string {
   if (t.proof === "contract") return "Xebra's contract";
   if (t.proof === "fee-in-burn") return "Fee in the same transaction";
+  if (t.proof === "relayed") return "Delivered by Xebra";
+  if (t.proof === "listed") return "Early transfer";
   return t.tagged ? "Tagged fee payment" : "Fee payment";
 }
+
+const count = (n: number, one: string, many: string) =>
+  `${n.toLocaleString("en-US")} ${n === 1 ? one : many}`;
 
 const when = (iso: string) =>
   new Date(iso).toLocaleString("en-GB", {
@@ -52,16 +57,20 @@ const short = (tx: string) => (tx.length > 14 ? `${tx.slice(0, 6)}...${tx.slice(
 
 export default async function Page() {
   const result = await loadTransfersRecord();
+  const totals = result.ok ? result.record.totals : null;
   return (
     <>
       <ContentHeader current="/transfers" />
       <main id="content" className="mx-auto w-full max-w-4xl px-4 pt-14 sm:px-5 sm:pt-20">
-        <h1 className="text-3xl font-semibold tracking-tight text-bone sm:text-4xl">
-          Xebra transfers, on chain
+        <h1 className="text-3xl font-semibold tracking-tight text-balance text-bone sm:text-4xl">
+          {totals && totals.transfers > 0
+            ? `${count(totals.transfers, "transfer", "transfers")} across ${count(totals.chains, "chain", "chains")}`
+            : "Xebra transfers, on chain"}
         </h1>
-        <p className="mt-4 max-w-[60ch] text-[0.9375rem] leading-relaxed text-bone/60">
-          Each row is a transaction you can open on the chain&rsquo;s own explorer. The list is read
-          from the chains every hour, not from our servers.
+        <p className="mt-4 max-w-[60ch] text-[0.9375rem] leading-relaxed text-pretty text-bone/60">
+          Every transfer made with Xebra that we can prove on chain, including the team&rsquo;s own.
+          Each row opens on the chain&rsquo;s own explorer. The list is read from the chains, not
+          from our servers.
         </p>
 
         {!result.ok ? (
@@ -74,13 +83,14 @@ export default async function Page() {
           </div>
         ) : (
           <>
-            <dl className="mt-12 grid grid-cols-1 gap-6 border-y border-bone/10 py-6 sm:grid-cols-3">
+            <dl className="mt-12 grid grid-cols-2 gap-6 border-y border-bone/10 py-6 sm:grid-cols-4">
               <Stat
                 label="Transfers"
                 value={result.record.totals.transfers.toLocaleString("en-US")}
               />
-              <Stat label="USDC sent" value={usdc(result.record.totals.usdcSent) ?? "0"} />
-              <Stat label="Xebra fees, USDC" value={usdc(result.record.totals.xebraFees) ?? "0"} />
+              <Stat label="USDC moved" value={usdc(result.record.totals.usdcSent) ?? "0"} />
+              <Stat label="Chains" value={result.record.totals.chains.toLocaleString("en-US")} />
+              <Stat label="Routes" value={result.record.totals.routes.toLocaleString("en-US")} />
             </dl>
 
             {result.record.transfers.length === 0 ? (
@@ -91,12 +101,25 @@ export default async function Page() {
               <TransferList transfers={result.record.transfers} />
             )}
 
-            {Object.entries(result.record.coverage).map(([source, since]) => (
-              <p key={source} className="mt-6 text-xs text-bone/50">
-                {chainName(source) ?? source} transfers before {when(since)} UTC are not in this
-                list yet.
-              </p>
-            ))}
+            {Object.entries(result.record.contracts)
+              .filter(([, c]) => c.counted > c.listed)
+              .map(([chain, c]) => (
+                <p key={chain} className="mt-6 max-w-[65ch] text-xs leading-relaxed text-bone/50">
+                  Xebra&rsquo;s {chainName(chain) ?? chain} contracts have counted{" "}
+                  {count(c.counted, "transfer", "transfers")}; {c.listed}{" "}
+                  {c.listed === 1 ? "is" : "are"} listed here.{" "}
+                  {c.counted - c.listed === 1
+                    ? "The other one was sent from a wallet this list cannot look up yet."
+                    : `The other ${c.counted - c.listed} were sent from wallets this list cannot look up yet.`}
+                </p>
+              ))}
+            {Object.keys(result.record.contracts).length === 0 &&
+              Object.entries(result.record.coverage).map(([source, since]) => (
+                <p key={source} className="mt-6 text-xs text-bone/50">
+                  {chainName(source) ?? source} transfers before {when(since)} UTC are not in this
+                  list yet.
+                </p>
+              ))}
             <p className="mt-2 text-xs text-bone/40">
               Last read from the chains {when(result.record.updatedAt)} UTC.
             </p>
@@ -118,6 +141,16 @@ export default async function Page() {
             <span className="text-bone">Tagged fee payment:</span> from other EVM chains, the fee is
             paid in its own transaction marked with Xebra&rsquo;s code. A sender who declines that
             payment does not appear here.
+          </p>
+          <p>
+            <span className="text-bone">Delivered by Xebra:</span> into Stellar, Xebra&rsquo;s own
+            account signed the transaction that delivered the USDC. The row links the send and the
+            delivery.
+          </p>
+          <p>
+            <span className="text-bone">Early transfer:</span> sent before the route had a Xebra
+            contract or fee. Circle&rsquo;s own record confirms it, and the row links the send and
+            the delivery so you can check both.
           </p>
           <p>
             The list is written by{" "}
@@ -166,7 +199,7 @@ function TransferList({ transfers }: { transfers: RecordedTransfer[] }) {
             <th className="pb-3 text-right font-normal">Sent</th>
             <th className="pb-3 text-right font-normal">Xebra fee</th>
             <th className="pb-3 pl-6 font-normal">Proof</th>
-            <th className="pb-3 font-normal">Transaction</th>
+            <th className="pb-3 font-normal">Transactions</th>
           </tr>
         </thead>
         <tbody className="divide-y divide-bone/[0.07]">
@@ -177,8 +210,8 @@ function TransferList({ transfers }: { transfers: RecordedTransfer[] }) {
               <td className="py-3 text-right font-mono tabular-nums">{usdc(t.amount) ?? "-"}</td>
               <td className="py-3 text-right font-mono tabular-nums">{usdc(t.xebraFee) ?? "-"}</td>
               <td className="py-3 pl-6 text-bone/60">{proofLabel(t)}</td>
-              <td className="py-3">
-                <TxLink t={t} />
+              <td className="py-3 whitespace-nowrap">
+                <TxLinks t={t} />
               </td>
             </tr>
           ))}
@@ -198,7 +231,7 @@ function TransferList({ transfers }: { transfers: RecordedTransfer[] }) {
               {when(t.at)} UTC. {proofLabel(t)}.
             </p>
             <p className="mt-1">
-              <TxLink t={t} />
+              <TxLinks t={t} />
             </p>
           </li>
         ))}
@@ -213,15 +246,24 @@ function route(t: RecordedTransfer): string {
   return to ? `${from} to ${to}` : `From ${from}`;
 }
 
-function TxLink({ t }: { t: RecordedTransfer }) {
+const LINK =
+  "font-mono text-xs text-signal underline underline-offset-2 focus-visible:outline focus-visible:outline-1 focus-visible:outline-offset-2 focus-visible:outline-signal";
+
+/** The send, and the delivery when the record has it. */
+function TxLinks({ t }: { t: RecordedTransfer }) {
   return (
-    <a
-      href={t.sourceTxUrl}
-      target="_blank"
-      rel="noopener noreferrer"
-      className="font-mono text-xs text-signal underline underline-offset-2"
-    >
-      {short(t.sourceTx)}
-    </a>
+    <>
+      <a href={t.sourceTxUrl} target="_blank" rel="noopener noreferrer" className={LINK}>
+        {short(t.sourceTx)}
+      </a>
+      {t.deliveryTx && t.deliveryTxUrl ? (
+        <>
+          <span className="px-1.5 text-xs text-bone/35">then</span>
+          <a href={t.deliveryTxUrl} target="_blank" rel="noopener noreferrer" className={LINK}>
+            {short(t.deliveryTx)}
+          </a>
+        </>
+      ) : null}
+    </>
   );
 }
