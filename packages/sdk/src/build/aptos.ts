@@ -138,7 +138,7 @@ export interface AptosBurnArgsJson {
  *     when Circle must open it.
  *   - **Stellar**: Circle's `CctpForwarder` as both the mint recipient and the only caller, the
  *     forwarder's hook naming the account, and no fee: nothing forwards into Stellar, so Circle
- *     has nothing to be paid for. Build the recipient with `stellarBurnRecipient("G...")`.
+ *     has nothing to be paid for. Build the recipient with `stellarBurnRecipient("G...")` (or an M... deposit address).
  *
  * Throws on anything else, so no wallet is ever asked to sign it.
  */

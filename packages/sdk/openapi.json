@@ -649,7 +649,7 @@
             "type": "string",
             "minLength": 1,
             "maxLength": 128,
-            "description": "Who receives, on the destination."
+            "description": "Who receives, on the destination. On Stellar: a G... account, or a muxed M... address (an exchange deposit address), whose G... account must hold a USDC trustline."
           },
           "speed": {
             "$ref": "#/components/schemas/Speed"
