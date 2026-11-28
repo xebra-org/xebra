@@ -1,7 +1,14 @@
 import { Connection, type Transaction } from "@solana/web3.js";
 import { rpc } from "@stellar/stellar-sdk";
 import type { CircleHealth } from "@xebra/cctp-client";
-import { buildSuiBurn, buildSuiForwardStep } from "@xebra/sdk/build";
+import {
+  AlreadyMintedError,
+  SuiCctpPausedError,
+  WrongSuiCallerError,
+  buildSuiBurn,
+  buildSuiForwardStep,
+  buildSuiMintStep,
+} from "@xebra/sdk/build";
 import { EVM_CHAINS, type FeeParams, stellarDestinations, wrapperFor } from "@xebra/sdk/core";
 import { after } from "next/server";
 import { GET as aptosStatus } from "../../app/api/aptos/status/route";
@@ -107,6 +114,43 @@ const suiRelay = createRelayKick({
   schedule: after,
 });
 
+/**
+ * The same, for burns from an EVM chain into Stellar (`/api/stellar-inbound/complete`) and for
+ * burns into Sui from Stellar or an EVM chain (`/api/stellar-sui/complete`). Keyed `src:tx`, so one
+ * burn is relayed once per cooldown.
+ */
+function inboundRelay(path: string, load: () => Promise<(req: Request) => Promise<Response>>) {
+  const kick = createRelayKick({
+    async run(key) {
+      const [src, tx] = key.split(":");
+      const handler = await load();
+      return readJsonAnyStatus(
+        await handler(
+          new Request(`${ORIGIN}${path}`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ src: Number(src), tx }),
+          }),
+        ),
+      );
+    },
+    schedule: after,
+  });
+  return (tx: string, srcDomain: number) => kick(`${srcDomain}:${tx}`);
+}
+// The relayer handlers are loaded on first use: the routes they pull in (Sui keypairs, the Stellar
+// SDK's transaction code) are not needed to answer most requests, and loading them all up front
+// slows the first call on a cold instance.
+const stellarInboundRelay = inboundRelay(
+  "/api/stellar-inbound/complete",
+  async () => (await import("../../app/api/stellar-inbound/complete/route")).POST,
+);
+// Burns into Sui, from Stellar (src 27) or an EVM chain: the one Sui relayer.
+const suiMintRelay = inboundRelay(
+  "/api/stellar-sui/complete",
+  async () => (await import("../../app/api/stellar-sui/complete/route")).POST,
+);
+
 export const liveDeps: Deps = {
   siteUrl: SITE_URL,
   suiStellar: {
@@ -138,6 +182,9 @@ export const liveDeps: Deps = {
       ),
     );
   },
+  stellarInboundRelay,
+  stellarToSui: env.stellarToSui,
+  suiMintRelay,
   aptos: { destinations: aptosDestinations(), maxUnits: aptosMaxUsdcBase() },
   evmRoutes: env.evmRoutes,
   feeAddresses: env.feeAddresses,
@@ -259,6 +306,17 @@ export const liveDeps: Deps = {
       };
     },
     suiClaim: (digest, payer) => planClaim(digest, payer),
+    async suiMint(p) {
+      try {
+        return { state: "ready", step: await buildSuiMintStep(suiClient(), p) };
+      } catch (err) {
+        if (err instanceof AlreadyMintedError) return { state: "delivered" };
+        if (err instanceof WrongSuiCallerError || err instanceof SuiCctpPausedError) {
+          return { state: "refused", reason: err.message };
+        }
+        throw err;
+      }
+    },
     async solanaBurn(p) {
       try {
         let target: Parameters<typeof buildSolanaSourceBurn>[0]["target"];

@@ -20,8 +20,9 @@ import type { WrapperSettings } from "../evm-wrapper";
 
 export interface StellarRoutes {
   /**
-   * What the bridge page would offer for a send from Stellar right now, less Sui: the API only
-   * builds transfers Circle delivers, and Sui is claimed at `/claim`.
+   * What the bridge page would offer for a send from Stellar right now, less Sui, which the
+   * service adds itself from `stellarToSui` and the committed domains (Circle does not deliver
+   * there; Xebra's Sui relayer or the recipient mints it).
    */
   destinations: DeliveredDestination[];
   /** The wrapper's committed domains, or null when the contract could not be read. */
@@ -82,6 +83,23 @@ export interface Deps {
    * answers it. Null if unreadable.
    */
   stellarInboundStatus?(tx: string, srcDomain: number): Promise<Record<string, unknown> | null>;
+  /**
+   * Hand an attested EVM burn into Stellar to the relayer (`/api/stellar-inbound/complete`), as
+   * `suiRelay` does for Sui burns. Same answers. Absent: nothing relays from a status read.
+   */
+  stellarInboundRelay?(tx: string, srcDomain: number): Promise<Record<string, unknown> | null>;
+  /**
+   * Stellar to Sui is switched on (`NEXT_PUBLIC_STELLAR_TO_SUI`). Sui is listed only while the
+   * wrapper also has domain 8 committed without forwarding. Absent or false: not offered.
+   */
+  stellarToSui?: boolean;
+  /**
+   * Hand an attested burn into Sui to Xebra's Sui relayer (`/api/stellar-sui/complete`), from
+   * Stellar (`srcDomain` 27: wrapper burns only) or from an EVM chain named in
+   * `NEXT_PUBLIC_EVM_TO_SUI`. The relayer's word, or `scheduled` while a run this call started is
+   * going. Absent: nothing relays from a status read.
+   */
+  suiMintRelay?(tx: string, srcDomain: number): Promise<Record<string, unknown> | null>;
   /** An Aptos burn to Stellar's progress, as `/api/aptos/status` answers it. Null if unreadable. */
   aptosStatus?(tx: string): Promise<Record<string, unknown> | null>;
   /** What building a transaction reads. Absent where nothing is built (the MCP tools). */
@@ -211,6 +229,19 @@ export interface BuildDeps {
     payer: string,
     srcDomain: number,
   ): Promise<{ ok: true; xdr: string } | { ok: false; reason: string; delivered?: boolean }>;
+  /**
+   * The Sui mint of a burn into Sui, for `sender` to sign and pay the gas: built and run once
+   * without executing. `delivered` when the message was already minted. Absent: no Sui claims.
+   */
+  suiMint?(p: {
+    sender: string;
+    message: string;
+    attestation: string;
+  }): Promise<
+    | { state: "ready"; step: TransferStep }
+    | { state: "delivered" }
+    | { state: "refused"; reason: string }
+  >;
   /** The Stellar mint of a Sui burn, with `payer` paying the fee. */
   suiClaim(
     digest: string,

@@ -539,6 +539,12 @@ export interface EnabledRoutes {
    * Absent means none.
    */
   evmToStellar?: readonly EvmChainId[];
+  /**
+   * EVM chains, Arc included, that send to Sui. Circle does not deliver to Sui: the burn mints
+   * straight to the recipient's Sui address with any caller allowed, and Xebra's Sui relayer (or the
+   * recipient, at `/claim`) submits the mint. Absent means none.
+   */
+  evmToSui?: readonly EvmChainId[];
 }
 
 export const NO_ROUTES: EnabledRoutes = {
@@ -547,6 +553,7 @@ export const NO_ROUTES: EnabledRoutes = {
   evmMesh: [],
   evmToSolana: [],
   evmToStellar: [],
+  evmToSui: [],
 };
 
 /** The mesh's chains, if there are at least two of them; one chain alone reaches nothing. */
@@ -561,7 +568,8 @@ export function hasEvmRoutes(routes: EnabledRoutes): boolean {
     routes.arcReceivesFrom.length > 0 ||
     meshOf(routes).length > 0 ||
     (routes.evmToSolana?.length ?? 0) > 0 ||
-    (routes.evmToStellar?.length ?? 0) > 0
+    (routes.evmToStellar?.length ?? 0) > 0 ||
+    (routes.evmToSui?.length ?? 0) > 0
   );
 }
 
@@ -589,9 +597,13 @@ export function evmSources(routes: EnabledRoutes): EvmChainId[] {
       routes.arcReceivesFrom.includes(id) ||
       mesh.includes(id) ||
       (routes.evmToSolana?.includes(id) ?? false) ||
-      (routes.evmToStellar?.includes(id) ?? false),
+      (routes.evmToStellar?.includes(id) ?? false) ||
+      (routes.evmToSui?.includes(id) ?? false),
   );
-  const arcSends = routes.arcSendsTo.length > 0 || (routes.evmToStellar?.includes("arc") ?? false);
+  const arcSends =
+    routes.arcSendsTo.length > 0 ||
+    (routes.evmToStellar?.includes("arc") ?? false) ||
+    (routes.evmToSui?.includes("arc") ?? false);
   return arcSends ? [...peers, "arc"] : peers;
 }
 
@@ -645,6 +657,20 @@ export function parseEvmToStellar(raw: string | null | undefined): EvmChainId[] 
 /** Whether `source` may send to Stellar in this build. */
 export function evmSendsToStellar(source: EvmChainId, routes: EnabledRoutes): boolean {
   return routes.evmToStellar?.includes(source) ?? false;
+}
+
+/**
+ * `NEXT_PUBLIC_EVM_TO_SUI`: EVM chains, Arc included, that send to Sui (minted by Xebra's Sui
+ * relayer, or by the recipient at `/claim`). `evmDestinationsFrom` does not list Sui; callers add
+ * it from this list, as they do Stellar.
+ */
+export function parseEvmToSui(raw: string | null | undefined): EvmChainId[] {
+  return parseRouteList("NEXT_PUBLIC_EVM_TO_SUI", raw, EVM_CHAIN_IDS);
+}
+
+/** Whether `source` may send to Sui in this build. */
+export function evmSendsToSui(source: EvmChainId, routes: EnabledRoutes): boolean {
+  return routes.evmToSui?.includes(source) ?? false;
 }
 
 /** `NEXT_PUBLIC_ARC_SENDS_TO`: where Arc may send. EVM chains and `solana`. */

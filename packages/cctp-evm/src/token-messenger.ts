@@ -46,6 +46,8 @@ export const ZERO_BYTES32: Hex = `0x${"00".repeat(32)}`;
 /** Solana's CCTP domain: the one destination here whose recipient is not an EVM address. */
 export const SOLANA_DOMAIN = 5;
 export const STELLAR_DOMAIN = 27;
+/** Sui's CCTP domain. Circle does not deliver there: a burn to Sui is minted by whoever submits it. */
+export const SUI_DOMAIN = 8;
 
 const BYTES32 = /^0x[0-9a-fA-F]{64}$/;
 
@@ -83,7 +85,13 @@ export type BurnRecipient =
    * named in `hookData`. Circle's Forwarding Service does not deliver to Stellar, so someone must
    * call the forwarder's `mint_and_forward`; Xebra's relayer does, and anyone else may.
    */
-  | { kind: "stellar"; forwarder: Hex; hookData: Hex };
+  | { kind: "stellar"; forwarder: Hex; hookData: Hex }
+  /**
+   * Sui: the recipient's 32-byte Sui address, minted to directly. No hook (Circle does not deliver
+   * to Sui) and a zero `destinationCaller`, so the recipient, or Xebra's Sui relayer paying the
+   * gas, can submit the mint.
+   */
+  | { kind: "sui"; address: Hex };
 
 /** Circle's two speeds, as the finality a burn asks for. */
 export const FINALITY = { fast: 1000, standard: 2000 } as const;
@@ -199,6 +207,27 @@ export function recipientAndHook(
     throw new CctpEvmError(
       "invalid_recipient",
       "a burn to Stellar must go to Circle's forwarder with a Stellar recipient",
+    );
+  }
+  // Sui before the string case: an EVM address left-padded to 32 bytes is a well-formed Sui
+  // address nobody holds the key to, so the mint would be lost for good.
+  if (typeof recipient !== "string" && recipient.kind === "sui") {
+    if (destinationDomain !== SUI_DOMAIN) {
+      throw new CctpEvmError("invalid_recipient", "a Sui recipient can only receive a burn to Sui");
+    }
+    const address = recipient.address.toLowerCase() as Hex;
+    if (!BYTES32.test(address) || address === ZERO_BYTES32) {
+      throw new CctpEvmError(
+        "invalid_recipient",
+        "the Sui recipient must be a non-zero 32-byte address (0x and 64 hex)",
+      );
+    }
+    return { mintRecipient: address, hookData: "0x", destinationCaller: ZERO_BYTES32 };
+  }
+  if (destinationDomain === SUI_DOMAIN) {
+    throw new CctpEvmError(
+      "invalid_recipient",
+      "a burn to Sui needs a Sui address (0x and 64 hex) as its recipient, never an EVM address",
     );
   }
   if (typeof recipient === "string") {

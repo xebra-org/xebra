@@ -31,8 +31,9 @@ import { useWallets } from "../wallet/wallet-provider";
  */
 
 const DECLINED = /reject|denied|cancel/i;
-const STANDARD_ETA =
-  "Circle attests it once the chain has finalised the burn, usually 15 to 20 minutes, then Xebra completes the mint on Stellar.";
+const SUI_ADDRESS = /^0x[0-9a-fA-F]{64}$/;
+const eta = (source: EvmChain, destName: string) =>
+  `Circle attests it once ${source.name} has finalised the burn (${source.standardEta}), then Xebra completes the mint on ${destName}.`;
 
 type Delivery =
   | { kind: "waiting" }
@@ -43,15 +44,20 @@ type Delivery =
 export function EvmStellarPanel({
   source,
   to = null,
+  toSui = false,
   onBusyChange,
 }: {
   source: EvmChain;
   /** A chain the recipient claims on; absent for Stellar. */
   to?: EvmChain | null;
+  /** Sui instead of Stellar: Xebra's Sui relayer submits the mint, or the recipient at /claim. */
+  toSui?: boolean;
   onBusyChange?: (busy: boolean) => void;
 }) {
-  const destId = to ? to.id : "stellar";
-  const destName = to ? to.name : "Stellar";
+  const sui = !to && toSui;
+  const destId = to ? to.id : sui ? "sui" : "stellar";
+  const destName = to ? to.name : sui ? "Sui" : "Stellar";
+  const claimHref = (tx: string) => `/claim?tx=${tx}&src=${source.cctpDomainId}`;
   const { connections, stellarKit, open: openWallets } = useWallets();
   const stellarAddress = connections.stellar?.address ?? null;
   const [claiming, setClaiming] = useState(false);
@@ -78,7 +84,9 @@ export function EvmStellarPanel({
 
   const recipientOk = to
     ? checkAddressOn(to, recipient).ok
-    : StrKey.isValidEd25519PublicKey(recipient.trim());
+    : sui
+      ? SUI_ADDRESS.test(recipient.trim()) && !/^0x0+$/.test(recipient.trim())
+      : StrKey.isValidEd25519PublicKey(recipient.trim());
   const amountOk = /^\d{1,12}(\.\d{1,6})?$/.test(amount.trim()) && Number(amount) > 0;
   const busy = step !== null || sent !== null;
 
@@ -119,17 +127,28 @@ export function EvmStellarPanel({
       if (asking.current) return;
       asking.current = true;
       try {
-        const res = await fetch("/api/stellar-inbound/complete", {
-          method: "POST",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify({ src: source.cctpDomainId, tx: sent.tx }),
-        });
+        const res = await fetch(
+          sui ? "/api/stellar-sui/complete" : "/api/stellar-inbound/complete",
+          {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({ src: source.cctpDomainId, tx: sent.tx }),
+          },
+        );
         const body = (await res.json().catch(() => ({}))) as {
           status?: string;
           hash?: string;
           reason?: string;
         };
         if (cancelled) return;
+        if (res.status === 404) {
+          // The relayer is switched off here: the recipient finishes it at /claim.
+          setDelivery({
+            kind: "stuck",
+            message: `Xebra's relayer is not running here, so the mint on ${destName} is done by hand.`,
+          });
+          return;
+        }
         if (body.status === "delivered" || (body.status === "submitted" && body.hash)) {
           setDelivery({ kind: "done", hash: body.hash ?? null });
         } else if (body.status === "refused" || body.status === "failed") {
@@ -152,7 +171,7 @@ export function EvmStellarPanel({
       cancelled = true;
       clearInterval(timer);
     };
-  }, [sent, to, source.cctpDomainId]);
+  }, [sent, to, sui, destName, source.cctpDomainId]);
 
   async function send() {
     if (!wallet?.provider || !wallet.address) {
@@ -222,7 +241,7 @@ export function EvmStellarPanel({
         </InsetTray>
         <a
           className="text-sm text-bone/70 underline underline-offset-4 hover:text-bone"
-          href={`/claim?tx=${sent.tx}&src=${source.cctpDomainId}`}
+          href={claimHref(sent.tx)}
         >
           Claim it on {to.name}
         </a>
@@ -237,22 +256,32 @@ export function EvmStellarPanel({
           tone={delivery.kind === "stuck" ? "alarm" : "signal"}
           title={
             delivery.kind === "done"
-              ? "Delivered on Stellar"
+              ? `Delivered on ${destName}`
               : delivery.kind === "stuck"
                 ? "The mint needs a hand"
                 : "Burn submitted"
           }
         >
           {delivery.kind === "done"
-            ? "The USDC is in the recipient's Stellar account."
+            ? `The USDC is in the recipient's ${destName} ${sui ? "wallet" : "account"}.`
             : delivery.kind === "stuck"
-              ? `${delivery.message} The USDC is not lost: anyone holding Circle's attestation can complete the mint, and you can do it from a Stellar wallet for a few hundredths of an XLM.`
-              : STANDARD_ETA}
+              ? sui
+                ? `${delivery.message} The USDC is not lost: the recipient can mint it with any Sui wallet, for a little SUI gas.`
+                : `${delivery.message} The USDC is not lost: anyone holding Circle's attestation can complete the mint, and you can do it from a Stellar wallet for a few hundredths of an XLM.`
+              : eta(source, destName)}
         </Notice>
         <InsetTray className="py-3">
           <span className="tabular block truncate font-mono text-xs text-bone/45">{sent.tx}</span>
         </InsetTray>
-        {delivery.kind === "stuck" && (
+        {delivery.kind === "stuck" && sui && (
+          <a
+            className="text-sm text-bone/70 underline underline-offset-4 hover:text-bone"
+            href={claimHref(sent.tx)}
+          >
+            Claim it on Sui
+          </a>
+        )}
+        {delivery.kind === "stuck" && !sui && (
           <Button
             size="lg"
             disabled={claiming}
@@ -311,13 +340,17 @@ export function EvmStellarPanel({
         hint={
           to
             ? `Any ${to.name} address. Check it carefully: a CCTP transfer cannot be reversed.`
-            : "An existing account that already holds a USDC trustline. Starts with G."
+            : sui
+              ? "A Sui wallet address: 0x and 64 characters. Not an EVM address: a CCTP transfer cannot be reversed."
+              : "An existing account that already holds a USDC trustline. Starts with G."
         }
         error={
           recipient.trim() !== "" && !recipientOk
             ? to
               ? `That is not a valid ${to.name} address.`
-              : "That is not a Stellar account address."
+              : sui
+                ? "That is not a Sui address (0x and 64 characters)."
+                : "That is not a Stellar account address."
             : null
         }
       >
@@ -327,7 +360,7 @@ export function EvmStellarPanel({
           spellCheck={false}
           value={recipient}
           onChange={(e) => setRecipient(e.target.value)}
-          placeholder={to ? "0x…" : "G..."}
+          placeholder={to || sui ? "0x…" : "G..."}
           className="h-12 font-mono text-xs"
           invalid={recipient.trim() !== "" && !recipientOk}
           disabled={busy}
@@ -356,7 +389,7 @@ export function EvmStellarPanel({
               hint={
                 to
                   ? `Circle does not deliver to ${to.name}; the recipient claims it there.`
-                  : "Circle does not deliver into Stellar; Xebra's relayer completes the mint."
+                  : `Circle does not deliver into ${destName}; Xebra's relayer completes the mint.`
               }
             />
             <DataRow label="Xebra fee" value={`−${quote.fees.xebra} USDC`} />
