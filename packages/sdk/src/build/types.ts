@@ -48,7 +48,8 @@ export type UnsignedTx =
    */
   | {
       kind: "hyperliquid";
-      exchangeUrl: string;
+      /** Hyperliquid's own endpoint, and only that: a client posts the signed action here. */
+      exchangeUrl: "https://api.hyperliquid.xyz/exchange";
       /** The action's nonce, in milliseconds: the body's `nonce`. */
       nonce: number;
       /** The action as Hyperliquid takes it, `type` and `signatureChainId` included. */

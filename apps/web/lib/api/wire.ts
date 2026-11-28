@@ -33,6 +33,8 @@ export function quoteToWire(q: Quote): WireQuote {
       xebra: amount(q.fees.xebra),
       circle: amount(q.fees.circle),
       delivery: amount(q.fees.delivery),
+      // Hyperliquid only; other routes send no such field.
+      ...(q.fees.activation !== undefined ? { activation: amount(q.fees.activation) } : {}),
       total: amount(q.fees.total),
     },
     minimum: amount(q.minimum),
@@ -59,6 +61,7 @@ export function statusToWire(s: TransferStatus): WireStatus {
     deliveryTx: s.deliveryTx,
     reason: s.reason,
     claimUrl: s.claimUrl,
+    ...(s.burnTx !== undefined ? { burnTx: s.burnTx } : {}),
   };
 }
 
