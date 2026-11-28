@@ -27,6 +27,12 @@ import {
 } from "../../lib/poll-backoff";
 import { feeDestination, routeDestination } from "../../lib/route-destination";
 import { type RecipientResolution, resolveRecipient } from "../../lib/solana-recipient";
+import {
+  STELLAR_RECIPIENT_INVALID,
+  STELLAR_RECIPIENT_PLACEHOLDER,
+  readStellarRecipient,
+  stellarRecipientHint,
+} from "../../lib/stellar-recipient";
 import { claimOnStellar } from "../../lib/sui-stellar/claim-client";
 import { fromClassified } from "../../lib/user-error";
 import {
@@ -212,9 +218,9 @@ export function AptosBridgeForm({
     const r = recipient.trim();
     if (r === "") return { ok: false as const, error: null };
     if (toStellar) {
-      return /^G[A-Z2-7]{55}$/.test(r)
+      return readStellarRecipient(r)
         ? { ok: true as const, error: null }
-        : { ok: false as const, error: "That is not a Stellar account address (G...)." };
+        : { ok: false as const, error: STELLAR_RECIPIENT_INVALID };
     }
     const c = evm ? checkAddressOn(evm, r) : checkSolanaAddress(r);
     return c.ok
@@ -520,7 +526,7 @@ export function AptosBridgeForm({
           label={`${nameOf(to)} address`}
           hint={
             toStellar
-              ? "An existing account that already holds a USDC trustline. Starts with G."
+              ? stellarRecipientHint(recipient)
               : to === "solana"
                 ? solana?.status === "missing"
                   ? "This wallet has no USDC account yet. Circle opens one during delivery, for a higher fee."
@@ -538,7 +544,13 @@ export function AptosBridgeForm({
               setRecipient(e.target.value);
               setError(null);
             }}
-            placeholder={toStellar ? "G..." : to === "solana" ? "Recipient wallet" : "0x…"}
+            placeholder={
+              toStellar
+                ? STELLAR_RECIPIENT_PLACEHOLDER
+                : to === "solana"
+                  ? "Recipient wallet"
+                  : "0x…"
+            }
             className="h-12 font-mono text-xs"
             invalid={recipientCheck.error !== null}
           />

@@ -27,6 +27,12 @@ import {
   shouldShowPollNotice,
 } from "../../lib/poll-backoff";
 import { waitForSignature } from "../../lib/solana-confirm";
+import {
+  STELLAR_RECIPIENT_INVALID,
+  STELLAR_RECIPIENT_PLACEHOLDER,
+  readStellarRecipient,
+  stellarRecipientHint,
+} from "../../lib/stellar-recipient";
 import { claimOnStellar } from "../../lib/sui-stellar/claim-client";
 import { fromClassified } from "../../lib/user-error";
 import { type ClassifiedError, classifyWalletError } from "../../lib/wallet-error";
@@ -383,13 +389,13 @@ export function SolanaBridgeForm({
 
   const recipientOk =
     to === "stellar"
-      ? /^G[A-Z2-7]{55}$/.test(recipient.trim())
+      ? readStellarRecipient(recipient) !== null
       : chain !== null && checkAddressOn(chain, recipient.trim()).ok;
   const recipientError =
     recipient.trim() === "" || recipientOk
       ? null
       : to === "stellar"
-        ? "That is not a Stellar account address."
+        ? STELLAR_RECIPIENT_INVALID
         : chain
           ? (checkAddressOn(chain, recipient.trim()).error ??
             `That is not a ${chain.name} address.`)
@@ -697,7 +703,7 @@ export function SolanaBridgeForm({
             label={`${nameOf(to)} address`}
             hint={
               to === "stellar"
-                ? "An existing account that already holds a USDC trustline. Starts with G."
+                ? stellarRecipientHint(recipient)
                 : `The wallet that receives USDC on ${nameOf(to)}. Circle delivers it; you need no ${chain?.nativeCurrency.symbol ?? "gas"}.`
             }
             error={recipientError}
@@ -711,7 +717,7 @@ export function SolanaBridgeForm({
                 setRecipient(e.target.value);
                 setError(null);
               }}
-              placeholder={to === "stellar" ? "G..." : "0x…"}
+              placeholder={to === "stellar" ? STELLAR_RECIPIENT_PLACEHOLDER : "0x…"}
               className="h-12 font-mono text-xs"
               invalid={recipientError !== null}
             />
