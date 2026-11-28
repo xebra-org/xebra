@@ -14,6 +14,12 @@ import { Notice } from "../../components/ui/notice";
 import { useWallets } from "../../components/wallet/wallet-provider";
 import { reportError } from "../../lib/format-error";
 import {
+  STELLAR_RECIPIENT_INVALID,
+  STELLAR_RECIPIENT_PLACEHOLDER,
+  readStellarRecipient,
+  stellarRecipientHint,
+} from "../../lib/stellar-recipient";
+import {
   findBurnAfterFailure,
   isDeclined,
   lastSuiBurn,
@@ -215,7 +221,7 @@ export function SuiTransfer({
   const amountOk =
     /^\d{1,12}(\.\d{1,6})?$/.test(amount.trim()) &&
     Number(amount) > Number(formatUsdc6(XEBRA_FLAT_FEE.deliver));
-  const recipientOk = /^G[A-Z2-7]{55}$/.test(recipient.trim());
+  const recipientOk = readStellarRecipient(recipient) !== null;
   const canSend = Boolean(wallet && account) && amountOk && recipientOk && step === "idle";
 
   async function send() {
@@ -469,10 +475,8 @@ export function SuiTransfer({
       <Field
         id="sui-recipient"
         label="Stellar address"
-        hint="An existing account that already holds a USDC trustline. Starts with G."
-        error={
-          recipient.trim() !== "" && !recipientOk ? "That is not a Stellar account address." : null
-        }
+        hint={stellarRecipientHint(recipient)}
+        error={recipient.trim() !== "" && !recipientOk ? STELLAR_RECIPIENT_INVALID : null}
       >
         <Input
           id="sui-recipient"
@@ -480,7 +484,7 @@ export function SuiTransfer({
           spellCheck={false}
           value={recipient}
           onChange={(e) => setRecipient(e.target.value)}
-          placeholder="G..."
+          placeholder={STELLAR_RECIPIENT_PLACEHOLDER}
           className="h-12 font-mono text-xs"
           invalid={recipient.trim() !== "" && !recipientOk}
         />

@@ -54,6 +54,11 @@ import { ARC_GAS_RESERVE_UNITS, spendableUsdc } from "../evm-bridge";
 import { termsFor } from "../evm-wrapper";
 import { formatError } from "../format-error";
 import { feeDestination, routeDestination } from "../route-destination";
+import {
+  STELLAR_RECIPIENT_FORMAT,
+  readStellarRecipient,
+  stellarRecipientProblem,
+} from "../stellar-recipient";
 import { SUI_CCTP_DOMAIN } from "../sui-stellar/config";
 import type { Deps } from "./deps";
 import { ApiError } from "./errors";
@@ -1175,27 +1180,15 @@ export function createService(deps: Deps, now: () => number = Date.now) {
       solana = { tokenAccount: found.tokenAccount, owner: found.owner };
       mintRecipient = found.tokenAccount;
     } else if (r.to === "stellar") {
-      if (!StrKey.isValidEd25519PublicKey(recipient)) {
-        throw new ApiError(
-          "invalid_recipient",
-          "The recipient must be a Stellar account address starting with G.",
-        );
-      }
+      // A G... account, or a muxed M... address (an exchange's deposit address): the hook carries
+      // it whole, and the trustline checked is the G... account's (`lib/stellar-recipient`).
+      const into = readStellarRecipient(recipient);
+      if (!into) throw new ApiError("invalid_recipient", STELLAR_RECIPIENT_FORMAT);
       const account = await upstream("The recipient's Stellar account", () =>
-        b.stellarAccount(recipient),
+        b.stellarAccount(into.account),
       );
-      if (!account.exists) {
-        throw new ApiError(
-          "invalid_recipient",
-          "That Stellar account does not exist yet. It needs XLM to be created and a USDC trustline before it can receive.",
-        );
-      }
-      if (!account.hasTrustline) {
-        throw new ApiError(
-          "invalid_recipient",
-          "That Stellar account has no USDC trustline. Add one, then try again.",
-        );
-      }
+      const problem = stellarRecipientProblem(into, account);
+      if (problem) throw new ApiError("invalid_recipient", problem);
     } else {
       const check = checkAddressOn(EVM_CHAINS[r.to], recipient);
       if (!check.ok || !check.bytes) {

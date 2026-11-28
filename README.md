@@ -185,7 +185,9 @@ new. Injective, Morph and Pharos (Circle does not deliver to them) come with cla
 
 Two build-time lists switch them on, one direction at a time: `NEXT_PUBLIC_ARC_SENDS_TO` (chain
 names, `solana`, or `all`) and `NEXT_PUBLIC_ARC_RECEIVES_FROM` (EVM chains that may send into Arc).
-Production is built with `NEXT_PUBLIC_ARC_SENDS_TO=all` and no `NEXT_PUBLIC_ARC_RECEIVES_FROM`.
+Production is built with `NEXT_PUBLIC_ARC_SENDS_TO=all`. `NEXT_PUBLIC_ARC_RECEIVES_FROM=all` adds
+every EVM chain into Arc (24 routes), priced like every other EVM route: Xebra's 0.01% plus 0.01
+USDC as its own transfer next to the burn, and Fast wherever Circle runs it from the source chain.
 
 ## Stellar to the EVM chains
 

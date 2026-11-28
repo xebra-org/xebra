@@ -1,6 +1,5 @@
 "use client";
 
-import { StrKey } from "@stellar/stellar-sdk";
 import { type Quote, createXebraClient } from "@xebra/sdk";
 import { type EvmChain, checkAddressOn } from "@xebra/sdk/core";
 import type React from "react";
@@ -8,6 +7,12 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import type { Hex } from "viem";
 import { ensureChain, sendTransaction, waitForReceipt } from "../../lib/evm-rpc";
 import { reportError } from "../../lib/format-error";
+import {
+  STELLAR_RECIPIENT_INVALID,
+  STELLAR_RECIPIENT_PLACEHOLDER,
+  readStellarRecipient,
+  stellarRecipientHint,
+} from "../../lib/stellar-recipient";
 import { claimOnStellar } from "../../lib/sui-stellar/claim-client";
 import { Button } from "../ui/button";
 import { DataRow } from "../ui/data-row";
@@ -78,7 +83,7 @@ export function EvmStellarPanel({
 
   const recipientOk = to
     ? checkAddressOn(to, recipient).ok
-    : StrKey.isValidEd25519PublicKey(recipient.trim());
+    : readStellarRecipient(recipient) !== null;
   const amountOk = /^\d{1,12}(\.\d{1,6})?$/.test(amount.trim()) && Number(amount) > 0;
   const busy = step !== null || sent !== null;
 
@@ -311,13 +316,13 @@ export function EvmStellarPanel({
         hint={
           to
             ? `Any ${to.name} address. Check it carefully: a CCTP transfer cannot be reversed.`
-            : "An existing account that already holds a USDC trustline. Starts with G."
+            : stellarRecipientHint(recipient)
         }
         error={
           recipient.trim() !== "" && !recipientOk
             ? to
               ? `That is not a valid ${to.name} address.`
-              : "That is not a Stellar account address."
+              : STELLAR_RECIPIENT_INVALID
             : null
         }
       >
@@ -327,7 +332,7 @@ export function EvmStellarPanel({
           spellCheck={false}
           value={recipient}
           onChange={(e) => setRecipient(e.target.value)}
-          placeholder={to ? "0x…" : "G..."}
+          placeholder={to ? "0x…" : STELLAR_RECIPIENT_PLACEHOLDER}
           className="h-12 font-mono text-xs"
           invalid={recipient.trim() !== "" && !recipientOk}
           disabled={busy}

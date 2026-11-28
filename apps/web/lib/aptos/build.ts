@@ -1,4 +1,3 @@
-import { StrKey } from "@stellar/stellar-sdk";
 import type { CircleHealth } from "@xebra/cctp-client";
 import {
   APTOS_BURN_SCRIPT,
@@ -26,6 +25,11 @@ import {
   verifyMessage,
 } from "@xebra/sdk/core";
 import { feeDestination, routeDestination } from "../route-destination";
+import {
+  STELLAR_RECIPIENT_FORMAT,
+  readStellarRecipient,
+  stellarRecipientProblem,
+} from "../stellar-recipient";
 import { type AptosDestination, aptosDestinationDomain, isAptosDestination } from "./config";
 import { type SimulationResult, describeVmStatus, maxGasFor } from "./node";
 
@@ -131,22 +135,14 @@ export async function buildAptosTransfer(
   let opensAccount = false;
   let tokenAccount: string | undefined;
   if (to === "stellar") {
-    // G... accounts only: a contract has no trustline to check, so a mint to one cannot be
-    // checked before it is burned.
-    if (!StrKey.isValidEd25519PublicKey(recipientIn)) {
-      return no(400, "The recipient must be a Stellar account address starting with G.");
-    }
-    const account = await deps.stellarAccount(recipientIn);
-    if (!account.exists) {
-      return no(
-        422,
-        "That Stellar account does not exist yet. It needs XLM to be created and a USDC trustline before it can receive.",
-      );
-    }
-    if (!account.hasTrustline) {
-      return no(422, "That Stellar account has no USDC trustline. Add one, then try again.");
-    }
-    recipient = stellarBurnRecipient(recipientIn);
+    // A G... account or an M... deposit address, never a contract: a contract has no trustline to
+    // check, so a mint to one cannot be checked before it is burned. For an M... address the
+    // trustline checked is its G... account's; the hook names the M... address whole.
+    const into = readStellarRecipient(recipientIn);
+    if (!into) return no(400, STELLAR_RECIPIENT_FORMAT);
+    const problem = stellarRecipientProblem(into, await deps.stellarAccount(into.account));
+    if (problem) return no(422, problem);
+    recipient = stellarBurnRecipient(into.address);
   } else if (to === "solana") {
     const owner = checkSolanaAddress(recipientIn);
     if (!owner.ok || !owner.bytes) {

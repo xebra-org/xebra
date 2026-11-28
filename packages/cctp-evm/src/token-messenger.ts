@@ -250,24 +250,26 @@ export function recipientAndHook(
 
 /**
  * The forwarder's hook: a 32-byte header whose last four bytes are the length of what follows,
- * then a Stellar address as text (G... account or C... contract, 56 characters). The address itself
- * is checked where it is encoded (`@xebra/sdk`); this checks the frame, so a truncated or padded
- * hook never reaches a wallet.
+ * then a Stellar address as text: a G... account or C... contract (56 characters), or a muxed M...
+ * account (69 characters, the deposit address an exchange hands out), all three of which Circle's
+ * CctpForwarder pays. The address itself is checked where it is encoded (`@xebra/sdk`); this
+ * checks the frame, so a truncated or padded hook never reaches a wallet.
  */
 function checkStellarHook(hook: Hex): void {
   if (!/^0x[0-9a-fA-F]*$/.test(hook) || hook.length % 2 !== 0) {
     throw new CctpEvmError("invalid_recipient", "the Stellar hook is not hex");
   }
   const bytes = Buffer.from(hook.slice(2), "hex");
-  if (bytes.length !== 32 + 56)
+  const length = bytes.length - 32;
+  if (length !== 56 && length !== 69)
     throw new CctpEvmError(
       "invalid_recipient",
-      "the Stellar hook must carry one 56-character address",
+      "the Stellar hook must carry one address: 56 characters (G... or C...) or 69 (M...)",
     );
-  if (bytes.readUInt32BE(28) !== 56) {
+  if (bytes.readUInt32BE(28) !== length) {
     throw new CctpEvmError("invalid_recipient", "the Stellar hook's length field is wrong");
   }
   const text = bytes.subarray(32).toString("ascii");
-  if (!/^[GC][A-Z2-7]{55}$/.test(text))
+  if (!/^[GC][A-Z2-7]{55}$/.test(text) && !/^M[A-Z2-7]{68}$/.test(text))
     throw new CctpEvmError("invalid_recipient", "the Stellar hook does not name an address");
 }

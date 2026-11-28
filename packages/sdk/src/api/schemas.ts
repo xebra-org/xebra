@@ -177,11 +177,10 @@ export const TransferRequestSchema = z
     to: ChainIdSchema,
     amount: AmountSchema,
     sender: z.string().min(1).max(128).meta({ description: "The address that signs and pays." }),
-    recipient: z
-      .string()
-      .min(1)
-      .max(128)
-      .meta({ description: "Who receives, on the destination." }),
+    recipient: z.string().min(1).max(128).meta({
+      description:
+        "Who receives, on the destination. On Stellar: a G... account, or a muxed M... address (an exchange deposit address), whose G... account must hold a USDC trustline.",
+    }),
     speed: SpeedSchema.optional(),
     maxTotalFee: AmountOutSchema.optional().meta({
       description: "Refuse if fees have risen above this, typically the total you showed.",

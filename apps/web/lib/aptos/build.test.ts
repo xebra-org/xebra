@@ -238,6 +238,41 @@ describe("buildAptosTransfer to Stellar", () => {
     expect(circle).not.toHaveBeenCalled();
   });
 
+  it("takes a muxed M... deposit address: whole in the hook, the trustline checked on its G...", async () => {
+    // STELLAR_G with the id 1234567890.
+    const muxed = "MBZXN7PIRZGNMHGA7MUUUF4GWPY5AYPV6LY4UV2GL6VJGIQRXFDNMAAAAAAETFQC2KFIW";
+    const stellarAccount = vi.fn(async () => ({ exists: true, hasTrustline: true }));
+    const { d } = fakes({
+      stellarAccount,
+      // The real simulated Stellar message, with the hook the burn asks for in place of its own.
+      simulate: async (args) => {
+        const real = Buffer.from(SIM_STELLAR.slice(2), "hex");
+        const head = real.subarray(0, 148 + 228);
+        const hook = Buffer.from(args.hookData.slice(2), "hex");
+        return {
+          ok: true,
+          gasUsed: 362n,
+          message: `0x${Buffer.concat([head, hook]).toString("hex")}` as const,
+        };
+      },
+    });
+    const r = await buildAptosTransfer({ ...toStellar, recipient: muxed }, d);
+    expect(r.status).toBe(200);
+    expect(argsOf(r.body).hookData).toBe(
+      `0x${Buffer.from(stellarForwardHook(muxed)).toString("hex")}`,
+    );
+    expect(stellarAccount).toHaveBeenCalledWith(STELLAR_G);
+    const noLine = fakes({ stellarAccount: async () => ({ exists: true, hasTrustline: false }) });
+    const refused = await buildAptosTransfer({ ...toStellar, recipient: muxed }, noLine.d);
+    expect(refused.status).toBe(422);
+    expect(JSON.stringify(refused.body)).toContain(STELLAR_G);
+    const broken = await buildAptosTransfer(
+      { ...toStellar, recipient: `${muxed.slice(0, -1)}A` },
+      fakes().d,
+    );
+    expect(broken.status).toBe(400);
+  });
+
   it("refuses an account that cannot receive, and anything but a G... account", async () => {
     const none = fakes({ stellarAccount: async () => ({ exists: false, hasTrustline: false }) });
     expect((await buildAptosTransfer(toStellar, none.d)).status).toBe(422);

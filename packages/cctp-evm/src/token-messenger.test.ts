@@ -191,6 +191,43 @@ describe("a burn to Stellar", () => {
     ).toThrow();
   });
 
+  it("carries a muxed M... recipient (an exchange deposit address) the same way", () => {
+    const M = "MBZXN7PIRZGNMHGA7MUUUF4GWPY5AYPV6LY4UV2GL6VJGIQRXFDNMAAAAAAETFQC2KFIW";
+    const text = Buffer.from(M, "utf8");
+    const head = Buffer.alloc(32);
+    head.writeUInt32BE(text.length, 28);
+    const hook = `0x${Buffer.concat([head, text]).toString("hex")}` as const;
+    const data = burn({
+      destinationDomain: 27,
+      recipient: { ...toStellar, hookData: hook },
+      maxFee: 0n,
+    });
+    const { args } = decodeFunctionData({ abi: tokenMessengerAbi, data });
+    expect(args[7]).toBe(hook);
+    expect(Buffer.from(String(args[7]).slice(2), "hex").subarray(32).toString()).toBe(M);
+    // A G... text padded to M's length, or an M... length field on a G... text, is refused.
+    const padded = Buffer.alloc(32);
+    padded.writeUInt32BE(69, 28);
+    const wrong = `0x${Buffer.concat([padded, Buffer.from(`${G}${"A".repeat(13)}`)]).toString("hex")}`;
+    expect(() =>
+      burn({
+        destinationDomain: 27,
+        recipient: { ...toStellar, hookData: wrong as `0x${string}` },
+        maxFee: 0n,
+      }),
+    ).toThrow(/hook/);
+    const short = Buffer.alloc(32);
+    short.writeUInt32BE(69, 28);
+    const lying = `0x${Buffer.concat([short, body]).toString("hex")}`;
+    expect(() =>
+      burn({
+        destinationDomain: 27,
+        recipient: { ...toStellar, hookData: lying as `0x${string}` },
+        maxFee: 0n,
+      }),
+    ).toThrow(/hook/);
+  });
+
   it("refuses a Stellar recipient anywhere but Stellar, and a hook whose length is wrong", () => {
     expect(() => burn({ destinationDomain: 6, recipient: toStellar })).toThrow(/Stellar/);
     const bad = `${HOOK.slice(0, -2)}` as `0x${string}`;

@@ -1,7 +1,11 @@
-import { StrKey } from "@stellar/stellar-sdk";
 import { InsufficientUsdcError, SUI_ADDRESS, buildBurn } from "@xebra/sdk/build";
 import { formatUsdcAmount, parseUsdcAmount } from "@xebra/sdk/core";
 import { FeeAddressMissing, flatFeeOn } from "../../../../lib/server/flat-fee";
+import {
+  STELLAR_RECIPIENT_FORMAT,
+  readStellarRecipient,
+  stellarRecipientProblem,
+} from "../../../../lib/stellar-recipient";
 import { suiClient } from "../../../../lib/sui-stellar/client";
 import {
   maxUsdcBase,
@@ -42,14 +46,10 @@ export async function POST(request: Request): Promise<Response> {
   if (!SUI_ADDRESS.test(sender)) {
     return Response.json({ error: "That is not a Sui address." }, { status: 400 });
   }
-  // G... accounts only for now. A contract recipient has no trustline to check, and the pilot
-  // does not need it.
-  if (!StrKey.isValidEd25519PublicKey(recipient)) {
-    return Response.json(
-      { error: "The recipient must be a Stellar account address starting with G." },
-      { status: 400 },
-    );
-  }
+  // A G... account or an M... deposit address; no contracts: a contract recipient has no
+  // trustline to check, and the pilot does not need it.
+  const into = readStellarRecipient(recipient);
+  if (!into) return Response.json({ error: STELLAR_RECIPIENT_FORMAT }, { status: 400 });
   if (amount === null) {
     return Response.json({ error: "Enter an amount of USDC, up to 6 decimals." }, { status: 400 });
   }
@@ -72,22 +72,9 @@ export async function POST(request: Request): Promise<Response> {
         { status: 422 },
       );
     }
-    const status = await recipientStatus(recipient);
-    if (!status.exists) {
-      return Response.json(
-        {
-          error:
-            "That Stellar account does not exist yet. It needs XLM to be created and a USDC trustline before it can receive.",
-        },
-        { status: 422 },
-      );
-    }
-    if (!status.hasTrustline) {
-      return Response.json(
-        { error: "That Stellar account has no USDC trustline. Add one, then try again." },
-        { status: 422 },
-      );
-    }
+    // The trustline is the G... account's; an M... address goes into the hook whole.
+    const problem = stellarRecipientProblem(into, await recipientStatus(into.account));
+    if (problem) return Response.json({ error: problem }, { status: 422 });
 
     const { transaction } = await buildBurn(suiClient(), {
       sender,

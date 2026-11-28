@@ -57,8 +57,35 @@ export function stellarBurnRecipient(recipient: string): {
   };
 }
 
+/**
+ * What Circle's CctpForwarder pays: a G... account, a C... contract, or a muxed M... account (a G...
+ * account plus a numeric id, which is how exchanges tell their deposits apart). The hook carries
+ * the M... text whole, so the id reaches the exchange with the USDC.
+ */
 export function isStellarRecipient(value: string): boolean {
-  return StrKey.isValidEd25519PublicKey(value) || StrKey.isValidContract(value);
+  return (
+    StrKey.isValidEd25519PublicKey(value) ||
+    StrKey.isValidContract(value) ||
+    StrKey.isValidMed25519PublicKey(value)
+  );
+}
+
+/**
+ * The G... account whose trustline a transfer to `recipient` needs: the account itself, or the one
+ * a muxed M... address belongs to (the id is not an account and has no trustline of its own). Null
+ * for a contract, which has no trustline, and for anything that is not a Stellar address.
+ */
+export function stellarAccountOf(recipient: string): string | null {
+  if (StrKey.isValidEd25519PublicKey(recipient)) return recipient;
+  if (!StrKey.isValidMed25519PublicKey(recipient)) return null;
+  // The first 32 bytes of a muxed key are the account's ed25519 key; the last 8 are the id.
+  const raw = StrKey.decodeMed25519PublicKey(recipient);
+  return StrKey.encodeEd25519PublicKey(Buffer.from(raw.subarray(0, 32)));
+}
+
+/** Whether `recipient` is a muxed M... address (an exchange deposit address, usually). */
+export function isMuxedStellarAddress(recipient: string): boolean {
+  return StrKey.isValidMed25519PublicKey(recipient);
 }
 
 /**

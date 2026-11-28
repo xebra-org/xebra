@@ -179,8 +179,13 @@ Arc → Base went through on mainnet on 2026-10-15: 0.78 USDC delivered as 0.725
 Circle's `feeExecuted` equal to `maxFee` (forward tx `0xcfd8f187…7563`). The other routes between Arc
 and the EVM chains were proven on testnet on 2026-10-14. They call Circle directly and charge no fee of ours: the EVM fee wrapper is
 deployed on Arc mainnet but not switched on (`NEXT_PUBLIC_ARC_USE_WRAPPER`,
-[`go-live.md`](./go-live.md#turning-on-the-arc-wrapper)). EVM chains → Arc is off in production (`NEXT_PUBLIC_ARC_RECEIVES_FROM`
-unset).
+[`go-live.md`](./go-live.md#turning-on-the-arc-wrapper)). EVM chains → Arc is switched on by `NEXT_PUBLIC_ARC_RECEIVES_FROM` (a chain list or `all`;
+unset means none, and it was unset in production until 2026-11-28). It needs no other change: the
+burn goes straight to Circle on the source chain with the forwarding hook, Circle delivers on Arc
+(domain 26) and keeps its fee out of the burn, and Xebra's flat fee (0.01% plus 0.01 USDC) is a
+plain USDC transfer to `NEXT_PUBLIC_XEBRA_FEE_ADDRESS_EVM` right after it, as on the mesh. Fast is
+offered from every chain Circle runs it on. `apps/web/lib/api/evm-to-arc.test.ts` holds the route
+count, the price and the burn.
 
 Stellar → the EVM chains other than Arc waits on the wrapper, one 48-hour proposal per chain
 ([`admin-panel.md`](./admin-panel.md#adding-a-chain)). Base (domain 6) was proposed on 2026-10-15 and

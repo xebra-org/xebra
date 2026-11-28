@@ -1,4 +1,4 @@
-import { Account, rpc } from "@stellar/stellar-sdk";
+import { Account, MuxedAccount, rpc } from "@stellar/stellar-sdk";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("../env", () => ({
@@ -71,5 +71,20 @@ describe("recipientStatus", () => {
       hasTrustline: false,
       balance: 0n,
     });
+  });
+
+  it("looks a muxed M... deposit address up as the G... account it belongs to", async () => {
+    const muxed = new MuxedAccount(new Account(RECIPIENT, "0"), "77").accountId();
+    const getAccount = vi
+      .spyOn(rpc.Server.prototype, "getAccount")
+      .mockResolvedValueOnce(new Account(RECIPIENT, "100"));
+    const simulate = vi.spyOn(rpc.Server.prototype, "simulateTransaction").mockResolvedValueOnce({
+      error: "Error(Contract, #1): trustline entry is missing for account",
+    } as unknown as rpc.Api.SimulateTransactionResponse);
+
+    const status = await recipientStatus(muxed);
+    expect(getAccount).toHaveBeenCalledWith(RECIPIENT);
+    expect(simulate).toHaveBeenCalledOnce();
+    expect(status).toEqual({ exists: true, hasTrustline: false, balance: 0n });
   });
 });

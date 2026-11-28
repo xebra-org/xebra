@@ -1,11 +1,13 @@
-import { StrKey } from "@stellar/stellar-base";
+import { Account, Keypair, MuxedAccount, StrKey } from "@stellar/stellar-base";
 import { encodeDepositForBurnWithHook } from "@xebra/cctp-evm";
 import { describe, expect, it } from "vitest";
 import {
   STELLAR_CCTP_FORWARDER,
   burnDestinationCaller,
   forwarderAsSuiAddress,
+  isStellarRecipient,
   parseMessage,
+  stellarAccountOf,
   stellarBurnRecipient,
   stellarForwardHook,
   verifyMessage,
@@ -13,6 +15,9 @@ import {
 
 const TOKEN_MESSENGER = "CAE2G5Z77UP7GYPYGFOWFGW7C7J6I4YP2AFGSADRKQY62SYUFLPNFTXL";
 const RECIPIENT = "GBZXN7PIRZGNMHGA7MUUUF4GWPY5AYPV6LY4UV2GL6VJGIQRXFDNMADI";
+/** RECIPIENT with the numeric id 1234567890: what an exchange hands out as a deposit address. */
+const MUXED = "MBZXN7PIRZGNMHGA7MUUUF4GWPY5AYPV6LY4UV2GL6VJGIQRXFDNMAAAAAAETFQC2KFIW";
+const CONTRACT = "CAE2G5Z77UP7GYPYGFOWFGW7C7J6I4YP2AFGSADRKQY62SYUFLPNFTXL";
 
 /**
  * The CCTP message Sui's mainnet contracts emitted when this exact burn was simulated on 2026-11-05
@@ -68,6 +73,62 @@ describe("stellarForwardHook", () => {
   it("matches the hook inside a message Sui really emitted", () => {
     const parsed = parseMessage(REAL_MESSAGE);
     expect(Buffer.from(stellarForwardHook(RECIPIENT)).equals(parsed.hookData)).toBe(true);
+  });
+});
+
+describe("muxed (M...) recipients", () => {
+  it("are what stellar-base builds for that account and id", () => {
+    expect(new MuxedAccount(new Account(RECIPIENT, "0"), "1234567890").accountId()).toBe(MUXED);
+  });
+
+  it("are Stellar recipients, as G... and C... are; anything else is not", () => {
+    expect(isStellarRecipient(MUXED)).toBe(true);
+    expect(isStellarRecipient(RECIPIENT)).toBe(true);
+    expect(isStellarRecipient(CONTRACT)).toBe(true);
+    // A broken checksum, a truncated one, lower case, a secret seed, an EVM address.
+    expect(isStellarRecipient(`${MUXED.slice(0, -1)}A`)).toBe(false);
+    expect(isStellarRecipient(MUXED.slice(0, 56))).toBe(false);
+    expect(isStellarRecipient(MUXED.toLowerCase())).toBe(false);
+    expect(isStellarRecipient(Keypair.random().secret())).toBe(false);
+    expect(isStellarRecipient("0x1111111111111111111111111111111111111111")).toBe(false);
+  });
+
+  it("go into the hook as the whole 69-character M... text, which reads back unchanged", () => {
+    const hook = Buffer.from(stellarForwardHook(MUXED));
+    expect(hook.length).toBe(32 + 69);
+    expect(hook.subarray(0, 28).equals(Buffer.alloc(28))).toBe(true);
+    expect(hook.readUInt32BE(28)).toBe(69);
+    expect(hook.subarray(32).toString("utf8")).toBe(MUXED);
+  });
+
+  it("survive a whole burn message: verifyMessage returns the M... address the hook names", () => {
+    const real = parseMessage(REAL_MESSAGE);
+    const head = REAL_MESSAGE.subarray(0, REAL_MESSAGE.length - real.hookData.length);
+    const message = Buffer.concat([head, Buffer.from(stellarForwardHook(MUXED))]);
+    expect(verifyMessage(message, { tokenMessenger: TOKEN_MESSENGER }).recipient).toBe(MUXED);
+  });
+
+  it("are checked for a trustline on the account they belong to", () => {
+    expect(stellarAccountOf(MUXED)).toBe(RECIPIENT);
+    expect(stellarAccountOf(RECIPIENT)).toBe(RECIPIENT);
+    // A contract has no account and no trustline.
+    expect(stellarAccountOf(CONTRACT)).toBeNull();
+    expect(stellarAccountOf("nonsense")).toBeNull();
+  });
+
+  it("build an EVM burn the encoder accepts", () => {
+    const r = stellarBurnRecipient(MUXED);
+    expect(Buffer.from(r.hookData.slice(2), "hex").subarray(32).toString()).toBe(MUXED);
+    expect(() =>
+      encodeDepositForBurnWithHook({
+        amount: 5_000_000n,
+        destinationDomain: 27,
+        recipient: r,
+        burnToken: "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
+        maxFee: 0n,
+        minFinalityThreshold: 2000,
+      }),
+    ).not.toThrow();
   });
 });
 

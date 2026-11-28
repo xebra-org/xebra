@@ -13,6 +13,11 @@ The recipient cannot receive USDC on the destination: the address is malformed f
 
 Read `detail`, which says which. A Stellar recipient needs an existing account and a USDC trustline before anything is sent to it.
 
+A Stellar recipient is a `G...` account or a muxed `M...` address (the deposit address an exchange
+hands out: a `G...` account plus a numeric id). For an `M...` address the trustline that counts is
+its `G...` account's, and `detail` names that account. `C...` contracts are refused on routes into
+Stellar.
+
 ## Example
 
 ```json

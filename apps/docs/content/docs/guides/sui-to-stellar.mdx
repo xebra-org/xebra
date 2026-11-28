@@ -21,8 +21,10 @@ only while it is switched on.
 ## What you need
 
 - The sender's Sui address: `0x` and 64 hex characters. It must hold enough USDC, and SUI for gas.
-- The recipient's Stellar account (`G...`). It must already exist and have a USDC trustline. If not,
-  the API refuses with [`invalid_recipient`](/docs/errors/invalid_recipient) before anything is signed.
+- The recipient's Stellar account (`G...`), or an exchange deposit address (`M...`, a muxed
+  account: the `G...` account plus the exchange's deposit id, carried whole to Stellar). The account
+  must already exist and have a USDC trustline. If not, the API refuses with
+  [`invalid_recipient`](/docs/errors/invalid_recipient) before anything is signed.
 - A Sui wallet that implements the Wallet Standard's `sui:signAndExecuteTransaction`.
 - Nothing on Stellar for the usual case: the relayer pays for the mint. Only if it cannot finish a
   transfer (see [If the relayer cannot finish it](#if-the-relayer-cannot-finish-it)) do you need a
