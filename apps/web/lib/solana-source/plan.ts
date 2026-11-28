@@ -7,6 +7,7 @@ import {
   checkAddressOn,
   stellarForwardHook,
 } from "@xebra/sdk/core";
+import { STELLAR_RECIPIENT_FORMAT, readStellarRecipient } from "../stellar-recipient";
 import { STELLAR_CCTP_DOMAIN } from "./config";
 
 /**
@@ -49,8 +50,8 @@ export function stellarForwarderBytes(forwarder: string = STELLAR_CCTP_FORWARDER
 
 /**
  * The burn's parameters. Throws on a recipient that is not valid for the destination, on a Stellar
- * recipient that is not a G... account, and on an EVM burn without a delivery fee (Circle would not
- * forward it, and the USDC would wait for a claim).
+ * recipient that is not a G... account or M... deposit address, and on an EVM burn without a
+ * delivery fee (Circle would not forward it, and the USDC would wait for a claim).
  */
 export function solanaBurnParams(
   target: SolanaBurnTarget,
@@ -58,10 +59,9 @@ export function solanaBurnParams(
   maxFee: bigint,
 ): DepositForBurnWithHookParams {
   if (target.kind === "stellar") {
-    // G... accounts only, as on the Sui pilot: a contract recipient has no trustline to check first.
-    if (!StrKey.isValidEd25519PublicKey(target.recipient)) {
-      throw new Error("The Stellar recipient must be an account address starting with G.");
-    }
+    // G... accounts and M... deposit addresses only, as on the Sui pilot: a contract recipient has
+    // no trustline to check first. An M... address goes into the hook whole.
+    if (!readStellarRecipient(target.recipient)) throw new Error(STELLAR_RECIPIENT_FORMAT);
     if (maxFee !== 0n) throw new Error("A burn to Stellar carries no fee.");
     const forwarder = stellarForwarderBytes();
     return {

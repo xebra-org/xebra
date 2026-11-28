@@ -14,6 +14,8 @@ import {
   STELLAR_CCTP_FORWARDER,
   SUI_DOMAIN,
   type VerifiedBurn,
+  isMuxedStellarAddress,
+  stellarAccountOf,
   verifyMessage,
 } from "@xebra/sdk/core";
 import { APTOS_CCTP_DOMAIN, aptosDestinations } from "../aptos/config";
@@ -69,7 +71,15 @@ function isAccountNotFoundError(err: unknown): boolean {
   return false;
 }
 
-export async function recipientStatus(recipient: string): Promise<RecipientStatus> {
+/**
+ * Whether `address` can receive USDC: the account exists and holds a USDC trustline. A muxed M...
+ * address (an exchange's deposit address) is read as the G... account it belongs to, which is the
+ * account that holds the trustline and receives the mint; the id is not an account.
+ */
+export async function recipientStatus(address: string): Promise<RecipientStatus> {
+  const recipient = isMuxedStellarAddress(address)
+    ? (stellarAccountOf(address) ?? address)
+    : address;
   const server = stellarRpc();
   let account: Awaited<ReturnType<rpc.Server["getAccount"]>>;
   try {
@@ -98,6 +108,22 @@ export async function recipientStatus(recipient: string): Promise<RecipientStatu
   }
   const held = sim.result ? scValToNative(sim.result.retval) : 0n;
   return { exists: true, hasTrustline: true, balance: BigInt(held as bigint | number | string) };
+}
+
+/**
+ * Why the recipient a burn names cannot be paid yet. For an M... deposit address, names the G...
+ * account whose trustline is missing, since that is not the address the sender typed.
+ */
+function cannotReceive(address: string, status: RecipientStatus): string {
+  const account = isMuxedStellarAddress(address) ? stellarAccountOf(address) : null;
+  if (account) {
+    return status.exists
+      ? `The deposit address belongs to the Stellar account ${account}, which has no USDC trustline. The exchange has to add one; the transfer can be completed after that.`
+      : `The deposit address belongs to the Stellar account ${account}, which does not exist on Stellar yet. The transfer can be completed once it exists and holds a USDC trustline.`;
+  }
+  return status.exists
+    ? "The recipient has no USDC trustline. Add one, then try again."
+    : "The recipient account does not exist on Stellar yet. Fund it, add a USDC trustline, then try again.";
 }
 
 /**
@@ -260,12 +286,7 @@ export async function planClaim(
   }
   const recipient = await recipientStatus(burn.recipient);
   if (!recipient.exists || !recipient.hasTrustline) {
-    return {
-      ok: false,
-      reason: recipient.exists
-        ? "The recipient has no USDC trustline. Add one, then try again."
-        : "The recipient account does not exist on Stellar yet. Fund it, add a USDC trustline, then try again.",
-    };
+    return { ok: false, reason: cannotReceive(burn.recipient, recipient) };
   }
   const server = stellarRpc();
   const account = await server.getAccount(payer);
@@ -325,12 +346,7 @@ export async function completeBurn(
     // A mint to an account without a trustline cannot land, and the USDC would sit at the forwarder.
     const recipient = await recipientStatus(burn.recipient);
     if (!recipient.exists || !recipient.hasTrustline) {
-      return {
-        status: "refused",
-        reason: recipient.exists
-          ? "The recipient has no USDC trustline. Add one, then try again."
-          : "The recipient account does not exist on Stellar yet. Fund it, add a USDC trustline, then try again.",
-      };
+      return { status: "refused", reason: cannotReceive(burn.recipient, recipient) };
     }
 
     const keypair = Keypair.fromSecret(relayerSecret);

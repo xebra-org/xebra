@@ -1,5 +1,5 @@
 import { PublicKey } from "@solana/web3.js";
-import { StrKey } from "@stellar/stellar-sdk";
+import { Account, MuxedAccount, StrKey } from "@stellar/stellar-sdk";
 import { FORWARD_HOOK } from "@xebra/cctp-evm";
 import { buildDepositForBurnWithHookInstruction } from "@xebra/cctp-solana";
 import { EVM_CHAINS, STELLAR_CCTP_FORWARDER, parseMessage, verifyMessage } from "@xebra/sdk/core";
@@ -110,6 +110,24 @@ describe("a Solana burn to Stellar", () => {
     expect(() => verifyMessage(message, { tokenMessenger: STELLAR_TOKEN_MESSENGER })).toThrow(
       "not a burn from Sui",
     );
+  });
+
+  it("takes a muxed M... deposit address, whole in the hook, and the relayer reads it back", () => {
+    const muxed = new MuxedAccount(new Account(STELLAR_BURNS[0].recipient, "0"), "42").accountId();
+    const p = solanaBurnParams({ kind: "stellar", recipient: muxed }, 974_600_000n, 0n);
+    const hook = Buffer.from(p.hookData);
+    expect(hook.readUInt32BE(28)).toBe(69);
+    expect(hook.subarray(32).toString("utf8")).toBe(muxed);
+    // The real attested message with this hook in place of the G... one.
+    const message = Buffer.from(ATTESTED_STELLAR_MESSAGE.slice(2), "hex");
+    const head = message.subarray(0, message.length - parseMessage(message).hookData.length);
+    const withMuxed = Buffer.concat([head, hook]);
+    expect(
+      verifyMessage(withMuxed, { tokenMessenger: STELLAR_TOKEN_MESSENGER, sources: [5] }).recipient,
+    ).toBe(muxed);
+    expect(() =>
+      solanaBurnParams({ kind: "stellar", recipient: `${muxed.slice(0, -1)}2` }, 5_000_000n, 0n),
+    ).toThrow(/starting with G, or .* M/);
   });
 
   it("refuses anything but a G... account, and any fee", () => {

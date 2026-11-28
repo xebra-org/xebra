@@ -9,6 +9,11 @@ import {
 import { type EvmChain, type FeePlan, XEBRA_TAG, formatUsdc6, planEvmFee } from "@xebra/sdk/core";
 import { env } from "../env";
 import { irisBaseUrl, irisBudget, irisFetch } from "../server/iris";
+import {
+  STELLAR_RECIPIENT_FORMAT,
+  readStellarRecipient,
+  stellarRecipientProblem,
+} from "../stellar-recipient";
 import { recipientStatus } from "../sui-stellar/stellar-side";
 import { SolanaSourceError } from "./checks";
 import { SOLANA_CCTP_DOMAIN, SOLANA_STELLAR_MIN_UNITS } from "./config";
@@ -78,16 +83,12 @@ export async function checkSolanaToStellar(recipient: string, amount: bigint): P
       { minimum: SOLANA_STELLAR_MIN_UNITS },
     );
   }
-  if (!/^G[A-Z2-7]{55}$/.test(recipient)) {
-    throw new SolanaSourceError(
-      "The recipient must be a Stellar account address starting with G.",
-      400,
-      "invalid_recipient",
-    );
-  }
+  // A G... account or an M... deposit address, whose trustline is its G... account's.
+  const into = readStellarRecipient(recipient);
+  if (!into) throw new SolanaSourceError(STELLAR_RECIPIENT_FORMAT, 400, "invalid_recipient");
   let status: Awaited<ReturnType<typeof recipientStatus>>;
   try {
-    status = await recipientStatus(recipient);
+    status = await recipientStatus(into.account);
   } catch {
     throw new SolanaSourceError(
       "Could not check the Stellar recipient just now. Nothing was burned; try again.",
@@ -95,20 +96,8 @@ export async function checkSolanaToStellar(recipient: string, amount: bigint): P
       "upstream_unavailable",
     );
   }
-  if (!status.exists) {
-    throw new SolanaSourceError(
-      "That Stellar account does not exist yet. It needs XLM to be created and a USDC trustline before it can receive.",
-      422,
-      "invalid_recipient",
-    );
-  }
-  if (!status.hasTrustline) {
-    throw new SolanaSourceError(
-      "That Stellar account has no USDC trustline. Add one, then try again.",
-      422,
-      "invalid_recipient",
-    );
-  }
+  const problem = stellarRecipientProblem(into, status);
+  if (problem) throw new SolanaSourceError(problem, 422, "invalid_recipient");
 }
 
 /**
