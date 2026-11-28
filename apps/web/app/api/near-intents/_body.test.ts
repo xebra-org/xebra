@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { OneClickError } from "../../../lib/near-intents/oneclick";
+import { PlanInputError } from "../../../lib/near-intents/plan";
 import { failure } from "./_body";
 
 describe("failure helper for NEAR Intents routes", () => {
@@ -38,6 +39,16 @@ describe("failure helper for NEAR Intents routes", () => {
     const resDom = failure(domTimeout);
     expect(resDom.status).toBe(504);
     expect(await resDom.json()).toEqual({ error: "The operation was aborted due to timeout" });
+  });
+
+  it("returns 400 with the sentence for people when the input is wrong", async () => {
+    const res = failure(
+      new PlanInputError("That isn't an XRP address. XRP addresses start with r."),
+    );
+    expect(res.status).toBe(400);
+    expect(await res.json()).toEqual({
+      error: "That isn't an XRP address. XRP addresses start with r.",
+    });
   });
 
   it("returns 500 with fixed sentence and logs error for unexpected errors", async () => {

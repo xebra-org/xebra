@@ -6,7 +6,12 @@ import {
   toXebraChain,
   usdcChainOf,
 } from "@xebra/sdk/intents";
+import { PlanInputError } from "./errors";
 import * as oneclick from "./oneclick";
+import { RECIPIENT_RULES, recipientProblem } from "./recipients";
+import { type XrpAccount, xrpAccount, xrpDeliveryProblem } from "./xrpl";
+
+export { PlanInputError };
 
 /**
  * Prices a swap that starts with USDC on a CCTP chain (Stellar, Arc, or any EVM chain Xebra sends
@@ -106,7 +111,7 @@ export function legSeconds(from: Source): number {
 export function sourceOf(r: Pick<PlanRequest, "from">): Source {
   const chain = toXebraChain(r.from ?? "stellar");
   if (chain === "stellar" || (chain && isEvmChainId(chain))) return chain as Source;
-  throw new Error(`Swaps through Xebra start on Stellar or an EVM chain, not ${r.from}.`);
+  throw new PlanInputError(`Swaps through Xebra start on Stellar or an EVM chain, not ${r.from}.`);
 }
 
 /**
@@ -123,7 +128,7 @@ export function refundFor(from: Source, sender: string) {
 async function findTokens(destinationAsset: string, from: Source) {
   const list = await oneclick.tokens();
   const destination = list.find((t) => t.assetId === destinationAsset);
-  if (!destination) throw new Error("NEAR Intents does not list that asset.");
+  if (!destination) throw new PlanInputError("NEAR Intents does not list that asset.");
   const usdcOn = (chain: string) => list.find((t) => usdcChainOf(t) === chain);
   return { destination, sourceUsdc: usdcOn(from), usdcOn };
 }
@@ -153,21 +158,83 @@ export function request(
 
 function validate(r: PlanRequest): Source {
   const from = sourceOf(r);
-  if (parseUsdcAmount(r.amount) === null) throw new Error("Enter an amount of USDC, e.g. 25.");
+  if (parseUsdcAmount(r.amount) === null) {
+    throw new PlanInputError("Enter an amount of USDC, e.g. 25.");
+  }
   if (from === "stellar") {
-    intentsAccountFor(r.sender); // throws on anything but a Stellar account
+    try {
+      intentsAccountFor(r.sender);
+    } catch {
+      throw new PlanInputError("The sender must be a Stellar account address (it starts with G).");
+    }
   } else {
     const check = checkAddressOn(EVM_CHAINS[from], r.sender);
-    if (!check.ok) throw new Error(check.error ?? `Not an address on ${chainName(from)}.`);
+    if (!check.ok) {
+      throw new PlanInputError(check.error ?? `Not an address on ${chainName(from)}.`);
+    }
   }
-  if (!r.recipient.trim()) throw new Error("Enter who receives.");
+  if (!r.recipient.trim()) throw new PlanInputError("Enter who receives.");
   return from;
+}
+
+/**
+ * Refuses a recipient that cannot receive `destination`, before anything is quoted: its format and
+ * checksum on that chain, and for XRP what the ledger says about the account. Returns the XRP
+ * account, whose reserve is checked again once the amount is known.
+ */
+async function checkRecipient(
+  destination: oneclick.OneClickToken,
+  recipient: string,
+): Promise<XrpAccount | null> {
+  const problem = recipientProblem(destination.blockchain, recipient);
+  if (problem) throw new PlanInputError(problem);
+  if (destination.blockchain !== "xrp") return null;
+  let account: XrpAccount;
+  try {
+    account = await xrpAccount(recipient.trim());
+  } catch (err) {
+    throw new PlanInputError(err instanceof Error ? err.message : String(err), 503);
+  }
+  const refused = xrpDeliveryProblem(account);
+  if (refused) throw new PlanInputError(refused);
+  return account;
+}
+
+/**
+ * 1Click's answer in words a person can act on. Its "recipient is not valid" becomes the chain's
+ * own sentence, and a bridge minimum given in base units of `originDecimals` becomes USDC.
+ */
+export function explainQuoteError(
+  err: unknown,
+  blockchain: string,
+  originDecimals: number,
+): string {
+  const message = err instanceof Error ? err.message : String(err);
+  if (/recipient is not valid/i.test(message)) {
+    return Object.hasOwn(RECIPIENT_RULES, blockchain)
+      ? (RECIPIENT_RULES[blockchain]?.invalid ?? message)
+      : message;
+  }
+  const min = /amount is too low for bridge, try at least (\d+)/i.exec(message);
+  if (min?.[1]) {
+    return `NEAR Intents needs at least ${fromUnits(min[1], originDecimals)} USDC for this destination. Send more.`;
+  }
+  return message;
+}
+
+/** Base units to a decimal string, trailing zeros dropped. */
+function fromUnits(units: string, decimals: number): string {
+  const s = units.padStart(decimals + 1, "0");
+  const whole = s.slice(0, s.length - decimals);
+  const frac = s.slice(s.length - decimals).replace(/0+$/, "");
+  return frac ? `${whole}.${frac}` : whole;
 }
 
 /** Both prices, read-only. Nothing is reserved and no deposit address is issued. */
 export async function compare(r: PlanRequest): Promise<Comparison> {
   const from = validate(r);
   const { destination, sourceUsdc, usdcOn } = await findTokens(r.destinationAsset, from);
+  const xrp = await checkRecipient(destination, r.recipient);
 
   const direct: Promise<PathPrice> = (async () => {
     if (!sourceUsdc)
@@ -189,6 +256,8 @@ export async function compare(r: PlanRequest): Promise<Comparison> {
           from === "stellar" ? { depositMode: "MEMO" } : {},
         ),
       );
+      const refused = xrp && xrpDeliveryProblem(xrp, quote.minAmountOut);
+      if (refused) return { available: false, reason: refused };
       return {
         available: true,
         amountOut: quote.amountOutFormatted,
@@ -196,7 +265,10 @@ export async function compare(r: PlanRequest): Promise<Comparison> {
         timeEstimate: quote.timeEstimate,
       };
     } catch (err) {
-      return { available: false, reason: err instanceof Error ? err.message : String(err) };
+      return {
+        available: false,
+        reason: explainQuoteError(err, destination.blockchain, sourceUsdc.decimals),
+      };
     }
   })();
 
@@ -236,6 +308,8 @@ export async function compare(r: PlanRequest): Promise<Comparison> {
           r,
         ),
       );
+      const refused = xrp && xrpDeliveryProblem(xrp, quote.minAmountOut);
+      if (refused) return { available: false, hub, xebra: xq, reason: refused };
       return {
         available: true,
         hub,
@@ -249,7 +323,7 @@ export async function compare(r: PlanRequest): Promise<Comparison> {
         available: false,
         hub,
         xebra: xq,
-        reason: err instanceof Error ? err.message : String(err),
+        reason: explainQuoteError(err, destination.blockchain, hubUsdc.decimals),
       };
     }
   })();
@@ -283,7 +357,8 @@ export interface Prepared {
  */
 export async function prepare(r: PlanRequest): Promise<Prepared> {
   const from = validate(r);
-  const { usdcOn } = await findTokens(r.destinationAsset, from);
+  const { destination, usdcOn } = await findTokens(r.destinationAsset, from);
+  const xrp = await checkRecipient(destination, r.recipient);
   const hub = await router.pickHub(from);
   if (!hub) throw new Error(`Xebra reaches no NEAR Intents hub from ${chainName(from)} right now.`);
   const hubUsdc = usdcOn(hub);
@@ -295,19 +370,31 @@ export async function prepare(r: PlanRequest): Promise<Prepared> {
     amount: r.amount,
   });
   const refund = refundFor(from, r.sender);
-  const { quote } = await oneclick.quote(
-    request(
-      {
-        dry: false,
-        originAsset: hubUsdc.assetId,
-        amount: toUnits(xq.recipientGets, hubUsdc.decimals),
-        ...refund,
-      },
-      r,
-      { swapType: "FLEX_INPUT" },
-    ),
-  );
+  let quote: oneclick.Quote;
+  try {
+    ({ quote } = await oneclick.quote(
+      request(
+        {
+          dry: false,
+          originAsset: hubUsdc.assetId,
+          amount: toUnits(xq.recipientGets, hubUsdc.decimals),
+          ...refund,
+        },
+        r,
+        { swapType: "FLEX_INPUT" },
+      ),
+    ));
+  } catch (err) {
+    if (!(err instanceof oneclick.OneClickError)) throw err;
+    throw new oneclick.OneClickError(
+      explainQuoteError(err, destination.blockchain, hubUsdc.decimals),
+      err.status,
+    );
+  }
   if (!quote.depositAddress) throw new Error("NEAR Intents issued no deposit address.");
+  // The deposit address is issued but nothing has moved: refusing here costs the user nothing.
+  const refused = xrp && xrpDeliveryProblem(xrp, quote.minAmountOut);
+  if (refused) throw new PlanInputError(refused);
 
   const build = await router.buildDeposit({
     from,
