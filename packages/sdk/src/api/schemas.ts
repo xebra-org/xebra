@@ -68,6 +68,10 @@ export const QuoteRequestSchema = z.object({
     description:
       "Optional. For Solana, pass it: a wallet with no USDC account yet costs more to deliver to, and the quote includes that.",
   }),
+  sender: z.string().min(1).max(128).optional().meta({
+    description:
+      "Optional. From Hyperliquid, pass it: an account's first withdrawal costs Hyperliquid's one-time 1 USDC, and the quote includes that.",
+  }),
   product: ProductSchema.optional(),
 });
 
@@ -77,6 +81,10 @@ export const FeesSchema = z
     circle: AmountOutSchema.meta({ description: "Circle's transfer fee (Fast only)." }),
     delivery: AmountOutSchema.meta({
       description: "What Circle is paid to deliver on the destination.",
+    }),
+    activation: AmountOutSchema.optional().meta({
+      description:
+        "From Hyperliquid only: Hyperliquid's one-time fee on an account's first withdrawal. Absent on other routes.",
     }),
     total: AmountOutSchema,
   })
@@ -155,6 +163,29 @@ export const UnsignedTxSchema = z
       typeArguments: z.array(z.string()),
       functionArguments: z.array(z.string()),
     }),
+    z
+      .object({
+        kind: z.literal("hyperliquid"),
+        // Only Hyperliquid's own endpoint: a client that posts a signed action takes the URL from here.
+        exchangeUrl: z.literal("https://api.hyperliquid.xyz/exchange"),
+        nonce: z.number().int().positive(),
+        action: z.record(z.string(), z.union([z.string(), z.number()])),
+        typedData: z.object({
+          domain: z.object({
+            name: z.literal("HyperliquidSignTransaction"),
+            version: z.literal("1"),
+            chainId: z.number().int().positive(),
+            verifyingContract: z.literal("0x0000000000000000000000000000000000000000"),
+          }),
+          types: z.record(z.string(), z.array(z.object({ name: z.string(), type: z.string() }))),
+          primaryType: z.string(),
+          message: z.record(z.string(), z.union([z.string(), z.number()])),
+        }),
+      })
+      .meta({
+        description:
+          "A Hyperliquid action: sign `typedData` (EIP-712, no gas), then POST `{ action, nonce, signature: { r, s, v } }` to `exchangeUrl`.",
+      }),
   ])
   .meta({ id: "UnsignedTx", description: "A transaction for the user's wallet to sign." });
 
@@ -187,6 +218,11 @@ export const TransferRequestSchema = z
       description: "Refuse if fees have risen above this, typically the total you showed.",
     }),
     product: ProductSchema.optional(),
+    signatureChainId: z.number().int().positive().max(Number.MAX_SAFE_INTEGER).optional().meta({
+      description:
+        "From Hyperliquid only: the chain id the signing wallet is on (wallets refuse typed data for another chain). Default 42161, Arbitrum.",
+      example: 42161,
+    }),
   })
   .meta({ id: "TransferRequest" });
 
@@ -208,16 +244,20 @@ export const TransferStatusSchema = z
     reason: z.string().nullable(),
     /** Where the recipient can finish a delivery that did not complete on its own. */
     claimUrl: z.url().nullable(),
+    /**
+     * From Hyperliquid only: the HyperEVM transaction in which Circle burned the withdrawal, once
+     * Hyperliquid has handed it over.
+     */
+    burnTx: z.string().nullable().optional(),
   })
   .meta({ id: "TransferStatus" });
 
 export const TransferPathSchema = z.object({
   chain: ChainIdSchema,
-  tx: z
-    .string()
-    .min(1)
-    .max(128)
-    .meta({ description: "The burn's transaction hash or Sui digest." }),
+  tx: z.string().min(1).max(128).meta({
+    description:
+      "The burn's transaction hash or Sui digest. From Hyperliquid: `<sender>:<nonce>` (the withdrawal's signer and nonce), or the HyperEVM burn's hash.",
+  }),
 });
 
 export const ClaimRequestSchema = z

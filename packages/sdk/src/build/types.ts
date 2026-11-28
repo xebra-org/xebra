@@ -39,6 +39,31 @@ export type UnsignedTx =
       function: string;
       typeArguments: string[];
       functionArguments: string[];
+    }
+  /**
+   * A Hyperliquid action, signed as EIP-712 typed data and never sent as a transaction: the wallet
+   * signs `typedData` (`eth_signTypedData_v4`, on the chain `typedData.domain.chainId` names), and
+   * `{ action, nonce, signature: { r, s, v } }` is POSTed to `exchangeUrl`
+   * (`@xebra/sdk/build`'s `hyperliquidExchangeBody` makes it). No gas.
+   */
+  | {
+      kind: "hyperliquid";
+      exchangeUrl: string;
+      /** The action's nonce, in milliseconds: the body's `nonce`. */
+      nonce: number;
+      /** The action as Hyperliquid takes it, `type` and `signatureChainId` included. */
+      action: Record<string, string | number>;
+      typedData: {
+        domain: {
+          name: "HyperliquidSignTransaction";
+          version: "1";
+          chainId: number;
+          verifyingContract: "0x0000000000000000000000000000000000000000";
+        };
+        types: Record<string, Array<{ name: string; type: string }>>;
+        primaryType: string;
+        message: Record<string, string | number>;
+      };
     };
 
 /** One signature in a transfer, in the order the wallet should be asked. */
@@ -54,8 +79,8 @@ export interface TransferStep {
   description: string;
   /**
    * The transaction, by `kind`: `stellar` (`xdr`, `networkPassphrase`), `evm` (`chainId`, `to`,
-   * `data`, `value: "0"`), `sui` (`json`), `solana` (`transaction`, base64, unsigned), `aptos`
-   * and `aptos_call`.
+   * `data`, `value: "0"`), `sui` (`json`), `solana` (`transaction`, base64, unsigned), `aptos`,
+   * `aptos_call` and `hyperliquid` (typed data to sign, and the action to post).
    */
   tx: UnsignedTx;
   /** When the transaction stops being valid (ISO 8601), or null when it does not expire. */

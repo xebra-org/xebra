@@ -13,7 +13,7 @@ describe("package root type exports", () => {
     >();
     expectTypeOf<TransferStep["expiresAt"]>().toEqualTypeOf<string | null>();
     expectTypeOf<UnsignedTx["kind"]>().toEqualTypeOf<
-      "stellar" | "evm" | "sui" | "aptos" | "solana" | "aptos_call"
+      "stellar" | "evm" | "sui" | "aptos" | "solana" | "aptos_call" | "hyperliquid"
     >();
     expectTypeOf<TransferStep["tx"]>().toEqualTypeOf<UnsignedTx>();
 

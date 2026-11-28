@@ -4,7 +4,15 @@ import { describe, expect, it } from "vitest";
 import { SDK_VERSION } from "../version.js";
 import { ERROR_CODES, ERROR_STATUS } from "./errors.js";
 import { buildOpenApiDocument } from "./openapi.js";
-import { AmountSchema, ProblemSchema, TransferRequestSchema } from "./schemas.js";
+import {
+  AmountSchema,
+  FeesSchema,
+  ProblemSchema,
+  QuoteRequestSchema,
+  TransferRequestSchema,
+  TransferStatusSchema,
+  TransferStepSchema,
+} from "./schemas.js";
 
 const pkg = JSON.parse(readFileSync(new URL("../../package.json", import.meta.url), "utf8")) as {
   version: string;
@@ -29,6 +37,95 @@ describe("TransferRequestSchema", () => {
     const base = { from: "stellar", to: "base", amount: "10", sender: "G", recipient: "0x" };
     expect(TransferRequestSchema.safeParse(base).success).toBe(true);
     expect(TransferRequestSchema.safeParse({ ...base, maxFee: "1" }).success).toBe(false);
+  });
+});
+
+describe("Hyperliquid on the wire", () => {
+  const typedData = {
+    domain: {
+      name: "HyperliquidSignTransaction",
+      version: "1",
+      chainId: 42161,
+      verifyingContract: "0x0000000000000000000000000000000000000000",
+    },
+    types: { "HyperliquidTransaction:UsdSend": [{ name: "amount", type: "string" }] },
+    primaryType: "HyperliquidTransaction:UsdSend",
+    message: { amount: "0.011" },
+  };
+  const step = {
+    id: "fee",
+    chain: "hyperliquid",
+    description: "Xebra's fee.",
+    expiresAt: null,
+    tx: {
+      kind: "hyperliquid",
+      exchangeUrl: "https://api.hyperliquid.xyz/exchange",
+      nonce: 1795870421001,
+      action: { type: "usdSend", amount: "0.011", time: 1795870421001 },
+      typedData,
+    },
+  };
+
+  it("takes a step that is typed data to sign and an action to post", () => {
+    expect(TransferStepSchema.safeParse(step).success).toBe(true);
+  });
+
+  it("refuses one posted anywhere but Hyperliquid's exchange, or signed for another domain", () => {
+    const elsewhere = { ...step, tx: { ...step.tx, exchangeUrl: "https://evil.example/exchange" } };
+    expect(TransferStepSchema.safeParse(elsewhere).success).toBe(false);
+    const otherDomain = {
+      ...step,
+      tx: {
+        ...step.tx,
+        typedData: { ...typedData, domain: { ...typedData.domain, name: "Other" } },
+      },
+    };
+    expect(TransferStepSchema.safeParse(otherDomain).success).toBe(false);
+  });
+
+  it("lets a transfer name the wallet's chain for the signature, and a quote name the sender", () => {
+    const base = {
+      from: "hyperliquid",
+      to: "arc",
+      amount: "10",
+      sender: "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266",
+      recipient: "0x70997970C51812dc3A010C7d01b50e0d17dc79C8",
+    };
+    expect(TransferRequestSchema.safeParse({ ...base, signatureChainId: 42161 }).success).toBe(
+      true,
+    );
+    expect(TransferRequestSchema.safeParse({ ...base, signatureChainId: 0 }).success).toBe(false);
+    expect(TransferRequestSchema.safeParse({ ...base, signatureChainId: "42161" }).success).toBe(
+      false,
+    );
+    expect(
+      QuoteRequestSchema.safeParse({
+        from: "hyperliquid",
+        to: "arc",
+        amount: "10",
+        sender: base.sender,
+      }).success,
+    ).toBe(true);
+  });
+
+  it("shows Hyperliquid's one-time fee as its own figure, which other routes leave out", () => {
+    const fees = { xebra: "0.011", circle: "0", delivery: "0.2", total: "1.211" };
+    expect(FeesSchema.parse({ ...fees, activation: "1" }).activation).toBe("1");
+    expect(FeesSchema.safeParse(fees).success).toBe(true);
+  });
+
+  it("reports the HyperEVM burn on a status, when there is one", () => {
+    const status = {
+      state: "delivering",
+      chain: "hyperliquid",
+      tx: "0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266:1795870421000",
+      deliveryTx: null,
+      reason: null,
+      claimUrl: null,
+    };
+    expect(TransferStatusSchema.safeParse(status).success).toBe(true);
+    const burnTx = `0x${"ab".repeat(32)}`;
+    expect(TransferStatusSchema.parse({ ...status, burnTx }).burnTx).toBe(burnTx);
   });
 });
 
